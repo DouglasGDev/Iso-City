@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "module": "Node16",
+    "target": "es2020",
+    "moduleResolution": "Node16",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "outDir": "dist-test",
+    "rootDir": "../.."
+  },
+  "include": ["../../src/data/**/*.ts", "../../src/game/GameConfig.ts", "../../src/entities/types.ts", "../../src/systems/WeaponSystem.ts", "../../src/game/InputState.ts", "../../src/game/GameState.ts"]
+}

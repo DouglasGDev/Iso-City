@@ -1,0 +1,505 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Map = void 0;
+const IsoUtils_1 = require("./IsoUtils");
+/**
+ * O sprite ancora na ponta SUL (bottom-center).
+ * A base visível no chão é o losango iso = quadrado no mundo, de lado ≈ footprintW
+ * (NÃO usa footprintH — isso é altura do desenho, não profundidade no chão).
+ */
+function buildingGroundCollider(b) {
+    return {
+        x: b.x - b.footprintW,
+        y: b.y - b.footprintW,
+        width: b.footprintW,
+        height: b.footprintW,
+        type: 'BUILDING',
+    };
+}
+const LANDMARK_KINDS = [
+    { re: /^bld_policestation/, kind: 'police' },
+    { re: /^bld_hospital/, kind: 'hospital' },
+    { re: /^bld_firestation/, kind: 'firestation' },
+    { re: /^bld_church/, kind: 'church' },
+    { re: /^bld_gasstation/, kind: 'gasstation' },
+    { re: /^bld_clinic/, kind: 'clinic' },
+    { re: /^bld_autoshop/, kind: 'autoshop' },
+    { re: /^bld_(cafe|pizza|icecream|gunshop|fruitstand)/, kind: 'shop' },
+];
+class Map {
+    constructor(data, extraColliders = []) {
+        this.landmarks = [];
+        this.roadNodes = [];
+        /** Vizinhos com aresta direcionada respeitando faixa (mão única). */
+        this.roadOut = [];
+        /** Vizinhos sem mão única — usado no GPS quando a rota dirigida falha. */
+        this.roadUndirected = [];
+        this.roadNodeTiles = [];
+        this.sidewalkNodes = [];
+        this.sidewalkNeighbors = [];
+        this.colliderGrid = [];
+        this.colliderGridCols = 0;
+        this.colliderGridRows = 0;
+        this.sidewalkGrid = [];
+        this.roadGrid = [];
+        this.nodeGridCols = 0;
+        this.nodeGridRows = 0;
+        this.data = data;
+        const colliders = [...extraColliders];
+        const buildingColliders = [];
+        for (const b of data.buildings) {
+            const c = buildingGroundCollider(b);
+            colliders.push(c);
+            buildingColliders.push(c);
+        }
+        for (const p of data.props) {
+            if (p.collider) {
+                colliders.push({ ...p.collider, type: 'FENCE', coverHeight: p.key.includes('wire') ? 0 : 0.95 });
+            }
+            else if (/^prop_(trashcan|rocks|trunk)/.test(p.key)) {
+                colliders.push({ x: p.x - 0.22, y: p.y - 0.22, width: 0.44, height: 0.44,
+                    type: 'PROP', coverHeight: p.key.includes('trashcan') ? 0.95 : 0.7 });
+            }
+        }
+        this.staticColliders = colliders;
+        this.buildingColliders = buildingColliders;
+        this.buildColliderGrid(colliders);
+        this.buildRoadGraph();
+        this.buildSidewalkGraph();
+        this.buildNodeGrids();
+        this.buildLandmarks();
+    }
+    buildLandmarks() {
+        for (const b of this.data.buildings) {
+            const found = LANDMARK_KINDS.find((l) => l.re.test(b.key));
+            if (!found)
+                continue;
+            const cx = b.x - b.footprintW / 2;
+            const cy = b.y - b.footprintW / 2;
+            let front = this.nearestSidewalkPoint(cx, cy + b.footprintW * 0.55);
+            if (!front)
+                front = this.nearestSidewalkPoint(cx, cy);
+            if (!front)
+                continue;
+            this.landmarks.push({ kind: found.kind, key: b.key, x: cx, y: cy, front });
+        }
+    }
+    nearestSidewalkPoint(x, y) {
+        let best = null;
+        let bestD = 25; // até ~5 tiles
+        for (const n of this.sidewalkNodes) {
+            const d = Math.hypot(n.x - x, n.y - y);
+            if (d < bestD) {
+                bestD = d;
+                best = n;
+            }
+        }
+        return best;
+    }
+    landmarksOf(kind) {
+        return this.landmarks.filter((l) => l.kind === kind);
+    }
+    landmark(kind) {
+        return this.landmarks.find((l) => l.kind === kind) ?? null;
+    }
+    buildColliderGrid(colliders) {
+        const W = this.data.worldW;
+        const H = this.data.worldH;
+        const cs = Map.COLLIDER_CELL;
+        this.colliderGridCols = Math.max(1, Math.ceil(W / cs));
+        this.colliderGridRows = Math.max(1, Math.ceil(H / cs));
+        this.colliderGrid = Array.from({ length: this.colliderGridRows * this.colliderGridCols }, () => []);
+        for (const c of colliders) {
+            const gx0 = Math.max(0, Math.floor(c.x / cs));
+            const gy0 = Math.max(0, Math.floor(c.y / cs));
+            const gx1 = Math.min(this.colliderGridCols - 1, Math.floor((c.x + c.width) / cs));
+            const gy1 = Math.min(this.colliderGridRows - 1, Math.floor((c.y + c.height) / cs));
+            for (let gy = gy0; gy <= gy1; gy++) {
+                for (let gx = gx0; gx <= gx1; gx++) {
+                    this.colliderGrid[gy * this.colliderGridCols + gx].push(c);
+                }
+            }
+        }
+    }
+    buildNodeGrids() {
+        const W = this.data.worldW;
+        const H = this.data.worldH;
+        const cs = Map.NODE_CELL;
+        this.nodeGridCols = Math.max(1, Math.ceil(W / cs));
+        this.nodeGridRows = Math.max(1, Math.ceil(H / cs));
+        this.sidewalkGrid = Array.from({ length: this.nodeGridRows * this.nodeGridCols }, () => []);
+        this.roadGrid = Array.from({ length: this.nodeGridRows * this.nodeGridCols }, () => []);
+        for (let i = 0; i < this.sidewalkNodes.length; i++) {
+            const n = this.sidewalkNodes[i];
+            const gx = Math.min(this.nodeGridCols - 1, Math.max(0, Math.floor(n.x / cs)));
+            const gy = Math.min(this.nodeGridRows - 1, Math.max(0, Math.floor(n.y / cs)));
+            this.sidewalkGrid[gy * this.nodeGridCols + gx].push(i);
+        }
+        for (let i = 0; i < this.roadNodes.length; i++) {
+            const n = this.roadNodes[i];
+            const gx = Math.min(this.nodeGridCols - 1, Math.max(0, Math.floor(n.x / cs)));
+            const gy = Math.min(this.nodeGridRows - 1, Math.max(0, Math.floor(n.y / cs)));
+            this.roadGrid[gy * this.nodeGridCols + gx].push(i);
+        }
+    }
+    nearestInGrid(x, y, grid, nodes) {
+        if (nodes.length === 0)
+            return 0;
+        const cs = Map.NODE_CELL;
+        const gx = Math.floor(x / cs);
+        const gy = Math.floor(y / cs);
+        let best = 0;
+        let bestD = Infinity;
+        let found = false;
+        for (let ring = 0; ring <= 3; ring++) {
+            for (let dy = -ring; dy <= ring; dy++) {
+                for (let dx = -ring; dx <= ring; dx++) {
+                    if (ring > 0 && Math.abs(dx) !== ring && Math.abs(dy) !== ring)
+                        continue;
+                    const cx = gx + dx;
+                    const cy = gy + dy;
+                    if (cx < 0 || cy < 0 || cx >= this.nodeGridCols || cy >= this.nodeGridRows)
+                        continue;
+                    const bucket = grid[cy * this.nodeGridCols + cx];
+                    for (let k = 0; k < bucket.length; k++) {
+                        const i = bucket[k];
+                        const n = nodes[i];
+                        const d = (n.x - x) * (n.x - x) + (n.y - y) * (n.y - y);
+                        if (d < bestD) {
+                            bestD = d;
+                            best = i;
+                            found = true;
+                        }
+                    }
+                }
+            }
+            if (found)
+                return best;
+        }
+        for (let i = 0; i < nodes.length; i++) {
+            const n = nodes[i];
+            const d = (n.x - x) * (n.x - x) + (n.y - y) * (n.y - y);
+            if (d < bestD) {
+                bestD = d;
+                best = i;
+            }
+        }
+        return best;
+    }
+    allowsDirectedEdge(fromTx, fromTy, dx, dy) {
+        const { tilesW: W, tiles } = this.data;
+        const from = tiles[fromTy * W + fromTx];
+        const to = tiles[(fromTy + dy) * W + (fromTx + dx)];
+        const md = (0, IsoUtils_1.deltaToDir)(dx, dy);
+        if (from.lane && from.lane !== md)
+            return false;
+        if (to.lane && to.lane !== md)
+            return false;
+        if (!from.lane && !to.lane) {
+            // Continue the surrounding lanes through each 2x2 junction, including turns.
+            for (const step of [-1, 1, -2, 2]) {
+                const lane = this.laneAt(fromTx + dx * step + 0.5, fromTy + dy * step + 0.5);
+                if (lane && (dx !== 0) === (lane === 'SE' || lane === 'NW'))
+                    return lane === md;
+            }
+        }
+        return true;
+    }
+    buildRoadGraph() {
+        const { tilesW: W, tilesH: H, tiles } = this.data;
+        const index = {};
+        const key = (tx, ty) => `${tx},${ty}`;
+        for (let ty = 0; ty < H; ty++) {
+            for (let tx = 0; tx < W; tx++) {
+                if (tiles[ty * W + tx].kind !== 'road')
+                    continue;
+                const i = this.roadNodes.length;
+                index[key(tx, ty)] = i;
+                this.roadNodes.push({ x: tx + 0.5, y: ty + 0.5 });
+                this.roadNodeTiles.push({ tx, ty });
+                this.roadOut.push([]);
+                this.roadUndirected.push([]);
+            }
+        }
+        const dirs = [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+        ];
+        for (let ty = 0; ty < H; ty++) {
+            for (let tx = 0; tx < W; tx++) {
+                const a = index[key(tx, ty)];
+                if (a === undefined)
+                    continue;
+                for (const [dx, dy] of dirs) {
+                    const b = index[key(tx + dx, ty + dy)];
+                    if (b === undefined)
+                        continue;
+                    this.roadUndirected[a].push(b);
+                    if (this.allowsDirectedEdge(tx, ty, dx, dy)) {
+                        this.roadOut[a].push(b);
+                    }
+                }
+            }
+        }
+    }
+    buildSidewalkGraph() {
+        const { tilesW: W, tilesH: H, tiles } = this.data;
+        const index = {};
+        const key = (tx, ty) => `${tx},${ty}`;
+        const isRoad = (tx, ty) => tx >= 0 && ty >= 0 && tx < W && ty < H && tiles[ty * W + tx].kind === 'road';
+        const isBridge = (tx, ty) => isRoad(tx, ty) && !!tiles[ty * W + tx].bridge;
+        const isSidewalk = (tx, ty) => {
+            if (tx < 0 || ty < 0 || tx >= W || ty >= H)
+                return false;
+            const t = tiles[ty * W + tx];
+            if (t.kind === 'water')
+                return false;
+            if (t.kind === 'road') {
+                // Bridge decks and their dry approaches connect the two sidewalk banks.
+                return isBridge(tx, ty) || isBridge(tx + 1, ty) || isBridge(tx - 1, ty)
+                    || isBridge(tx, ty + 1) || isBridge(tx, ty - 1);
+            }
+            return isRoad(tx + 1, ty) || isRoad(tx - 1, ty) || isRoad(tx, ty + 1) || isRoad(tx, ty - 1);
+        };
+        this.sidewalkNodes.length = 0;
+        this.sidewalkNeighbors.length = 0;
+        for (let ty = 0; ty < H; ty++) {
+            for (let tx = 0; tx < W; tx++) {
+                if (!isSidewalk(tx, ty))
+                    continue;
+                index[key(tx, ty)] = this.sidewalkNodes.length;
+                this.sidewalkNodes.push({ x: tx + 0.5, y: ty + 0.5 });
+                this.sidewalkNeighbors.push([]);
+            }
+        }
+        const dirs = [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+        ];
+        for (let ty = 0; ty < H; ty++) {
+            for (let tx = 0; tx < W; tx++) {
+                const a = index[key(tx, ty)];
+                if (a === undefined)
+                    continue;
+                for (const [dx, dy] of dirs) {
+                    const nx = tx + dx;
+                    const ny = ty + dy;
+                    const b = index[key(nx, ny)];
+                    if (b !== undefined) {
+                        this.sidewalkNeighbors[a].push(b);
+                        continue;
+                    }
+                    if (isRoad(nx, ny)) {
+                        const ox = nx + dx;
+                        const oy = ny + dy;
+                        const c = index[key(ox, oy)];
+                        if (c !== undefined && !this.sidewalkNeighbors[a].includes(c)) {
+                            this.sidewalkNeighbors[a].push(c);
+                        }
+                        // também 2 tiles de asfalto (rua dupla)
+                        if (isRoad(ox, oy)) {
+                            const c2 = index[key(ox + dx, oy + dy)];
+                            if (c2 !== undefined && !this.sidewalkNeighbors[a].includes(c2)) {
+                                this.sidewalkNeighbors[a].push(c2);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    laneAt(x, y) {
+        const tx = Math.floor(x);
+        const ty = Math.floor(y);
+        if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH)
+            return null;
+        const t = this.data.tiles[ty * this.data.tilesW + tx];
+        if (t.kind !== 'road')
+            return null;
+        return t.lane ?? null;
+    }
+    nearestRoadNode(x, y) {
+        return this.nearestInGrid(x, y, this.roadGrid, this.roadNodes);
+    }
+    findRoadPath(fromX, fromY, toX, toY) {
+        return this.bfsRoadPath(fromX, fromY, toX, toY, this.roadOut);
+    }
+    findUndirectedRoadPath(fromX, fromY, toX, toY) {
+        return this.bfsRoadPath(fromX, fromY, toX, toY, this.roadUndirected);
+    }
+    bfsRoadPath(fromX, fromY, toX, toY, adj) {
+        if (this.roadNodes.length === 0)
+            return [];
+        const start = this.nearestRoadNode(fromX, fromY);
+        const goal = this.nearestRoadNode(toX, toY);
+        if (start === goal)
+            return [this.roadNodes[start]];
+        const prev = new Int32Array(this.roadNodes.length).fill(-1);
+        const q = [start];
+        prev[start] = start;
+        let qi = 0;
+        while (qi < q.length) {
+            const cur = q[qi++];
+            if (cur === goal)
+                break;
+            for (const nb of adj[cur]) {
+                if (prev[nb] !== -1)
+                    continue;
+                prev[nb] = cur;
+                q.push(nb);
+            }
+        }
+        if (prev[goal] === -1)
+            return [];
+        const chain = [];
+        let c = goal;
+        while (c !== start) {
+            chain.push(c);
+            c = prev[c];
+        }
+        chain.push(start);
+        chain.reverse();
+        return chain.map((i) => this.roadNodes[i]);
+    }
+    randomRoadNodeIndex(rng = Math.random) {
+        return Math.floor(rng() * this.roadNodes.length);
+    }
+    nearestSidewalkNode(x, y) {
+        return this.nearestInGrid(x, y, this.sidewalkGrid, this.sidewalkNodes);
+    }
+    findSidewalkPath(fromX, fromY, toX, toY) {
+        if (this.sidewalkNodes.length === 0)
+            return [];
+        const start = this.nearestSidewalkNode(fromX, fromY);
+        const goal = this.nearestSidewalkNode(toX, toY);
+        if (start === goal)
+            return [this.sidewalkNodes[start]];
+        const prev = new Int32Array(this.sidewalkNodes.length).fill(-1);
+        const q = [start];
+        prev[start] = start;
+        let qi = 0;
+        while (qi < q.length) {
+            const cur = q[qi++];
+            if (cur === goal)
+                break;
+            for (const nb of this.sidewalkNeighbors[cur]) {
+                if (prev[nb] !== -1)
+                    continue;
+                prev[nb] = cur;
+                q.push(nb);
+            }
+        }
+        if (prev[goal] === -1)
+            return [];
+        const chain = [];
+        let c = goal;
+        while (c !== start) {
+            chain.push(c);
+            c = prev[c];
+        }
+        chain.push(start);
+        chain.reverse();
+        return chain.map((i) => this.sidewalkNodes[i]);
+    }
+    randomSidewalkNodeIndex(rng = Math.random) {
+        if (this.sidewalkNodes.length === 0)
+            return 0;
+        return Math.floor(rng() * this.sidewalkNodes.length);
+    }
+    isCrosswalkAt(x, y) {
+        const tx = Math.floor(x);
+        const ty = Math.floor(y);
+        if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH)
+            return false;
+        const t = this.data.tiles[ty * this.data.tilesW + tx];
+        return t.kind === 'road' && t.key.includes('pelican');
+    }
+    isNearCrosswalk(x, y, radius = 1.4) {
+        const r = Math.ceil(radius);
+        const tx0 = Math.floor(x) - r;
+        const ty0 = Math.floor(y) - r;
+        for (let dy = -r; dy <= r; dy++) {
+            for (let dx = -r; dx <= r; dx++) {
+                if (this.isCrosswalkAt(tx0 + dx, ty0 + dy))
+                    return true;
+            }
+        }
+        return false;
+    }
+    /** Cruzamento principal (via dupla, lane null = pode virar / semáforo). */
+    isIntersectionAt(x, y) {
+        const tx = Math.floor(x);
+        const ty = Math.floor(y);
+        if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH)
+            return false;
+        const t = this.data.tiles[ty * this.data.tilesW + tx];
+        if (t.kind !== 'road' || t.bridge)
+            return false;
+        return t.lane == null;
+    }
+    queryNearby(x, y, radius) {
+        const minX = x - radius;
+        const maxX = x + radius;
+        const minY = y - radius;
+        const maxY = y + radius;
+        const cs = Map.COLLIDER_CELL;
+        const gx0 = Math.max(0, Math.floor(minX / cs));
+        const gy0 = Math.max(0, Math.floor(minY / cs));
+        const gx1 = Math.min(this.colliderGridCols - 1, Math.floor(maxX / cs));
+        const gy1 = Math.min(this.colliderGridRows - 1, Math.floor(maxY / cs));
+        const out = [];
+        const seen = new Set();
+        for (let gy = gy0; gy <= gy1; gy++) {
+            for (let gx = gx0; gx <= gx1; gx++) {
+                const cell = this.colliderGrid[gy * this.colliderGridCols + gx];
+                for (let i = 0; i < cell.length; i++) {
+                    const c = cell[i];
+                    if (seen.has(c))
+                        continue;
+                    if (c.x + c.width < minX || c.x > maxX || c.y + c.height < minY || c.y > maxY)
+                        continue;
+                    seen.add(c);
+                    out.push(c);
+                }
+            }
+        }
+        return out;
+    }
+    get worldW() {
+        return this.data.worldW;
+    }
+    get worldH() {
+        return this.data.worldH;
+    }
+    isInside(x, y, margin = 0) {
+        return x >= margin && x <= this.worldW - margin && y >= margin && y <= this.worldH - margin;
+    }
+    isWaterWorld(x, y) {
+        const tx = Math.floor(x);
+        const ty = Math.floor(y);
+        if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH)
+            return false;
+        return this.data.tiles[ty * this.data.tilesW + tx].kind === 'water';
+    }
+    tileKindAt(x, y) {
+        const tx = Math.floor(x);
+        const ty = Math.floor(y);
+        if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH)
+            return null;
+        return this.data.tiles[ty * this.data.tilesW + tx].kind;
+    }
+    biomeAt(x, y) {
+        const tx = Math.floor(x);
+        const ty = Math.floor(y);
+        if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH)
+            return null;
+        return this.data.tiles[ty * this.data.tilesW + tx].biome;
+    }
+}
+exports.Map = Map;
+Map.COLLIDER_CELL = 8;
+Map.NODE_CELL = 12;

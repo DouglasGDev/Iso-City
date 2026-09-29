@@ -1,0 +1,462 @@
+{
+  "schemaVersion": 1,
+  "pack": "Isometric Vehicles (Kenney Isometric Tiles Vehicles)",
+  "author": "Kenney Vleugels / Kenney",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "scope": "Only the 16 derived PNGs listed here and their retained source PNGs. No license claim is made for the pre-existing vehicle fleet.",
+  "sourceUrl": "https://kenney.nl/assets/isometric-tiles-vehicles",
+  "mirrorUrl": "https://opengameart.org/content/isometric-vehicles-1",
+  "archive": {
+    "name": "kenney_isometric-vehicles.zip",
+    "url": "https://kenney.nl/media/pages/assets/isometric-tiles-vehicles/34c07c3393-1677695121/kenney_isometric-vehicles.zip",
+    "sha256": "b478cf692d936e2cfda2368f8d24505841508907adc343f1068a6b2ea457d3fd"
+  },
+  "originalLicense": {
+    "archiveEntry": "License.txt",
+    "file": "assets/vehicle-source/LICENSE.txt",
+    "sha256": "be6892f8ae1f7cd482d42b0096e3b2999c7f1f0c33396ab55c376235db54a569"
+  },
+  "preparation": {
+    "script": "tools/prepare-vehicles.cjs",
+    "command": "node tools/prepare-vehicles.cjs",
+    "pngjsVersion": "7.0.0",
+    "sampling": "nearest-neighbor",
+    "padding": 2,
+    "alignment": "bottom-center; common canvas and uniform scale per variant; integer pixel rounding",
+    "modifications": "Transparent padding and proportional resizing only. No recoloring, cropping, rotation or mirroring."
+  },
+  "directionValidation": {
+    "gameToNamedSource": {
+      "NE": "NE",
+      "NW": "NW",
+      "SE": "SE",
+      "SW": "SW"
+    },
+    "hatchbackIndices": {
+      "NE": "003",
+      "NW": "001",
+      "SE": "008",
+      "SW": "007"
+    },
+    "method": "Visual comparison of all 16 carBlue5 indices against named taxi and police views: windshield/rear window, hood, wheel baseline and body slope. Selected level isometric diagonals, not cardinal or sloped views."
+  },
+  "derivatives": [
+    {
+      "variant": "taxi",
+      "color": "yellow",
+      "direction": "NE",
+      "assetKey": "Vehicles/veh_taxi_yellow_NE.png",
+      "source": {
+        "archiveEntry": "PNG/Taxi/taxi_NE.png",
+        "file": "assets/vehicle-source/PNG/Taxi/taxi_NE.png",
+        "sha256": "dc4b5b1ef215d030b844d3d5403512e43154fd6f904764288445347c22ea62f1",
+        "width": 32,
+        "height": 25
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_taxi_yellow_NE.png",
+        "sha256": "8df90232e8ccab9b5cedceb6b679e8165b3a4abd3bb893385a0ea06f22db066f",
+        "width": 60,
+        "height": 50
+      },
+      "transform": {
+        "scale": 1.75,
+        "scaledWidth": 56,
+        "scaledHeight": 44,
+        "xOffset": 2,
+        "yOffset": 4
+      }
+    },
+    {
+      "variant": "taxi",
+      "color": "yellow",
+      "direction": "NW",
+      "assetKey": "Vehicles/veh_taxi_yellow_NW.png",
+      "source": {
+        "archiveEntry": "PNG/Taxi/taxi_NW.png",
+        "file": "assets/vehicle-source/PNG/Taxi/taxi_NW.png",
+        "sha256": "60377cfc398a2301c9cdb1fccf6ce783e634075089f47d186892d03f4ae560e6",
+        "width": 32,
+        "height": 25
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_taxi_yellow_NW.png",
+        "sha256": "bc46b84cc7277fe9de196a996c41c34d5808fe2078606af1b8199373232bc911",
+        "width": 60,
+        "height": 50
+      },
+      "transform": {
+        "scale": 1.75,
+        "scaledWidth": 56,
+        "scaledHeight": 44,
+        "xOffset": 2,
+        "yOffset": 4
+      }
+    },
+    {
+      "variant": "taxi",
+      "color": "yellow",
+      "direction": "SE",
+      "assetKey": "Vehicles/veh_taxi_yellow_SE.png",
+      "source": {
+        "archiveEntry": "PNG/Taxi/taxi_SE.png",
+        "file": "assets/vehicle-source/PNG/Taxi/taxi_SE.png",
+        "sha256": "c0e21d51d6cc908ace3a166c95f56cf85ed69243750848dc68e47f279d27840e",
+        "width": 32,
+        "height": 26
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_taxi_yellow_SE.png",
+        "sha256": "2df3874b06c36ccfee3dfe748a10ca1978788e8d01436cbaca0622a3e44d53c8",
+        "width": 60,
+        "height": 50
+      },
+      "transform": {
+        "scale": 1.75,
+        "scaledWidth": 56,
+        "scaledHeight": 46,
+        "xOffset": 2,
+        "yOffset": 2
+      }
+    },
+    {
+      "variant": "taxi",
+      "color": "yellow",
+      "direction": "SW",
+      "assetKey": "Vehicles/veh_taxi_yellow_SW.png",
+      "source": {
+        "archiveEntry": "PNG/Taxi/taxi_SW.png",
+        "file": "assets/vehicle-source/PNG/Taxi/taxi_SW.png",
+        "sha256": "221ba984490965ce8eb80a9061c4acb3b80447533de1ff1abe9a8ca49f56e301",
+        "width": 32,
+        "height": 26
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_taxi_yellow_SW.png",
+        "sha256": "01d74115b62a816a5e8022a03457093a5fb212ff7c5d524338cb2ee23be8801d",
+        "width": 60,
+        "height": 50
+      },
+      "transform": {
+        "scale": 1.75,
+        "scaledWidth": 56,
+        "scaledHeight": 46,
+        "xOffset": 2,
+        "yOffset": 2
+      }
+    },
+    {
+      "variant": "ambulance",
+      "color": "",
+      "direction": "NE",
+      "assetKey": "Vehicles/veh_ambulance_NE.png",
+      "source": {
+        "archiveEntry": "PNG/Ambulance/ambulance_NE.png",
+        "file": "assets/vehicle-source/PNG/Ambulance/ambulance_NE.png",
+        "sha256": "61dc7b65a11f1e406db5c75d1ec87b479e3d8ebab2b1958bdd9bd861e49eb301",
+        "width": 35,
+        "height": 31
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_ambulance_NE.png",
+        "sha256": "6ce11601e4722744a3091efa35de49562cfae265ab5a5847380fa35ee939c587",
+        "width": 64,
+        "height": 66
+      },
+      "transform": {
+        "scale": 1.7142857142857142,
+        "scaledWidth": 60,
+        "scaledHeight": 53,
+        "xOffset": 2,
+        "yOffset": 11
+      }
+    },
+    {
+      "variant": "ambulance",
+      "color": "",
+      "direction": "NW",
+      "assetKey": "Vehicles/veh_ambulance_NW.png",
+      "source": {
+        "archiveEntry": "PNG/Ambulance/ambulance_NW.png",
+        "file": "assets/vehicle-source/PNG/Ambulance/ambulance_NW.png",
+        "sha256": "4e3cfdc3984c11c2892246f8178c966dab01e7fc60edb4d93b6fc378094e92e4",
+        "width": 35,
+        "height": 31
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_ambulance_NW.png",
+        "sha256": "8739dfaef7530cea63465a32476bc6810a096d0f77e31919edfa4b1df10d196b",
+        "width": 64,
+        "height": 66
+      },
+      "transform": {
+        "scale": 1.7142857142857142,
+        "scaledWidth": 60,
+        "scaledHeight": 53,
+        "xOffset": 2,
+        "yOffset": 11
+      }
+    },
+    {
+      "variant": "ambulance",
+      "color": "",
+      "direction": "SE",
+      "assetKey": "Vehicles/veh_ambulance_SE.png",
+      "source": {
+        "archiveEntry": "PNG/Ambulance/ambulance_SE.png",
+        "file": "assets/vehicle-source/PNG/Ambulance/ambulance_SE.png",
+        "sha256": "86f4834e2d7fcf8047bf6c508671a6ca1d08d97260c71c04aa3d20e3c6d3c444",
+        "width": 35,
+        "height": 35
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_ambulance_SE.png",
+        "sha256": "91c1d737b476a95c272c4a4892fa4daff4e3601d4a2e88e316905f2b512724f0",
+        "width": 64,
+        "height": 66
+      },
+      "transform": {
+        "scale": 1.7142857142857142,
+        "scaledWidth": 60,
+        "scaledHeight": 60,
+        "xOffset": 2,
+        "yOffset": 4
+      }
+    },
+    {
+      "variant": "ambulance",
+      "color": "",
+      "direction": "SW",
+      "assetKey": "Vehicles/veh_ambulance_SW.png",
+      "source": {
+        "archiveEntry": "PNG/Ambulance/ambulance_SW.png",
+        "file": "assets/vehicle-source/PNG/Ambulance/ambulance_SW.png",
+        "sha256": "92f5d7bf2d14f6fd80f6715f2cff5ee87a2a7ab51e6a4d803649265441610312",
+        "width": 35,
+        "height": 36
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_ambulance_SW.png",
+        "sha256": "b7e13b65b02ded72b5713312eeb57a6cfff5711569627322332dfc4ef8b8325b",
+        "width": 64,
+        "height": 66
+      },
+      "transform": {
+        "scale": 1.7142857142857142,
+        "scaledWidth": 60,
+        "scaledHeight": 62,
+        "xOffset": 2,
+        "yOffset": 2
+      }
+    },
+    {
+      "variant": "hatchback",
+      "color": "blue",
+      "direction": "NE",
+      "assetKey": "Vehicles/veh_hatchback_blue_NE.png",
+      "source": {
+        "archiveEntry": "PNG/Civilian/Blue/Sedan 4/carBlue5_003.png",
+        "file": "assets/vehicle-source/PNG/Civilian/Blue/Sedan 4/carBlue5_003.png",
+        "sha256": "e6cf50dccfee1f796bd8c641f2d9f668b9dea4eed6291260efa6dd8a3495f85c",
+        "width": 32,
+        "height": 24
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_hatchback_blue_NE.png",
+        "sha256": "fd89626a2fa302f0132415317d60d22771b3dd5cdff351ced5ee4cb8a4ba2408",
+        "width": 56,
+        "height": 48
+      },
+      "transform": {
+        "scale": 1.625,
+        "scaledWidth": 52,
+        "scaledHeight": 39,
+        "xOffset": 2,
+        "yOffset": 7
+      }
+    },
+    {
+      "variant": "hatchback",
+      "color": "blue",
+      "direction": "NW",
+      "assetKey": "Vehicles/veh_hatchback_blue_NW.png",
+      "source": {
+        "archiveEntry": "PNG/Civilian/Blue/Sedan 4/carBlue5_001.png",
+        "file": "assets/vehicle-source/PNG/Civilian/Blue/Sedan 4/carBlue5_001.png",
+        "sha256": "952673c7fe13d258a5ead785c295856d63df5061eed857fb2519115a29206eec",
+        "width": 32,
+        "height": 25
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_hatchback_blue_NW.png",
+        "sha256": "29f7df06a8223a3b9d053d93cababfb800869d9db2f23aa00b62c5f09e7f386d",
+        "width": 56,
+        "height": 48
+      },
+      "transform": {
+        "scale": 1.625,
+        "scaledWidth": 52,
+        "scaledHeight": 41,
+        "xOffset": 2,
+        "yOffset": 5
+      }
+    },
+    {
+      "variant": "hatchback",
+      "color": "blue",
+      "direction": "SE",
+      "assetKey": "Vehicles/veh_hatchback_blue_SE.png",
+      "source": {
+        "archiveEntry": "PNG/Civilian/Blue/Sedan 4/carBlue5_008.png",
+        "file": "assets/vehicle-source/PNG/Civilian/Blue/Sedan 4/carBlue5_008.png",
+        "sha256": "8628a9d1f5a90b7244ef3c13154351b5866a67696eea6d42b843b00cd07cbe12",
+        "width": 32,
+        "height": 26
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_hatchback_blue_SE.png",
+        "sha256": "40e7af6264def7d5467ec62e09ce552a1eeedb94d395a4fa32249c866b2ee583",
+        "width": 56,
+        "height": 48
+      },
+      "transform": {
+        "scale": 1.625,
+        "scaledWidth": 52,
+        "scaledHeight": 42,
+        "xOffset": 2,
+        "yOffset": 4
+      }
+    },
+    {
+      "variant": "hatchback",
+      "color": "blue",
+      "direction": "SW",
+      "assetKey": "Vehicles/veh_hatchback_blue_SW.png",
+      "source": {
+        "archiveEntry": "PNG/Civilian/Blue/Sedan 4/carBlue5_007.png",
+        "file": "assets/vehicle-source/PNG/Civilian/Blue/Sedan 4/carBlue5_007.png",
+        "sha256": "3717c6722fa1ab183b4487b58966aca9360e6f0f7e2f92eb0f0ef0ce043d3e22",
+        "width": 32,
+        "height": 27
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_hatchback_blue_SW.png",
+        "sha256": "ba98ad1f4974285666c04ff856392b19ec1cd758b220d11fd0dc9574695753e0",
+        "width": 56,
+        "height": 48
+      },
+      "transform": {
+        "scale": 1.625,
+        "scaledWidth": 52,
+        "scaledHeight": 44,
+        "xOffset": 2,
+        "yOffset": 2
+      }
+    },
+    {
+      "variant": "police_compact",
+      "color": "",
+      "direction": "NE",
+      "assetKey": "Vehicles/veh_police_compact_NE.png",
+      "source": {
+        "archiveEntry": "PNG/Police/police_NE.png",
+        "file": "assets/vehicle-source/PNG/Police/police_NE.png",
+        "sha256": "b62e75c878070037df4232e2fc2490219683000308897b6f7d8b2c972fcdf791",
+        "width": 32,
+        "height": 26
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_police_compact_NE.png",
+        "sha256": "74d4fc745f65a126d262667d06a1e5d2431f9f9bffdcc2c0bde0e214b7e355c7",
+        "width": 58,
+        "height": 48
+      },
+      "transform": {
+        "scale": 1.6363636363636365,
+        "scaledWidth": 52,
+        "scaledHeight": 43,
+        "xOffset": 3,
+        "yOffset": 3
+      }
+    },
+    {
+      "variant": "police_compact",
+      "color": "",
+      "direction": "NW",
+      "assetKey": "Vehicles/veh_police_compact_NW.png",
+      "source": {
+        "archiveEntry": "PNG/Police/police_NW.png",
+        "file": "assets/vehicle-source/PNG/Police/police_NW.png",
+        "sha256": "75b0e7ab196680b586761841111eafbfda029e1a0c1a450e438fee0ad7253288",
+        "width": 32,
+        "height": 27
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_police_compact_NW.png",
+        "sha256": "05896126c58b4cb1ea2df22acd779fe4f1fd0a7e5cae11978de0b28762e3f5e1",
+        "width": 58,
+        "height": 48
+      },
+      "transform": {
+        "scale": 1.6363636363636365,
+        "scaledWidth": 52,
+        "scaledHeight": 44,
+        "xOffset": 3,
+        "yOffset": 2
+      }
+    },
+    {
+      "variant": "police_compact",
+      "color": "",
+      "direction": "SE",
+      "assetKey": "Vehicles/veh_police_compact_SE.png",
+      "source": {
+        "archiveEntry": "PNG/Police/police_SE.png",
+        "file": "assets/vehicle-source/PNG/Police/police_SE.png",
+        "sha256": "ddd985ef4676db731a85f6a97ec4b20e8cba4a51060f0f017059bc1a34e3cb67",
+        "width": 32,
+        "height": 27
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_police_compact_SE.png",
+        "sha256": "db955371b8b442253ca2fc9e62e393aa954b63f232bc466ac2af6250acb035b1",
+        "width": 58,
+        "height": 48
+      },
+      "transform": {
+        "scale": 1.6363636363636365,
+        "scaledWidth": 52,
+        "scaledHeight": 44,
+        "xOffset": 3,
+        "yOffset": 2
+      }
+    },
+    {
+      "variant": "police_compact",
+      "color": "",
+      "direction": "SW",
+      "assetKey": "Vehicles/veh_police_compact_SW.png",
+      "source": {
+        "archiveEntry": "PNG/Police/police_SW.png",
+        "file": "assets/vehicle-source/PNG/Police/police_SW.png",
+        "sha256": "6d2aa5ca6f293ceaf3886acf6f2d80660a21439a18f732eeb930b9f4d146d106",
+        "width": 33,
+        "height": 27
+      },
+      "output": {
+        "file": "assets/sprites/Vehicles/veh_police_compact_SW.png",
+        "sha256": "123be68a77c1cf7f286c6bdb2b7a5f9478967d027361a43f0eeaef57c6bd9041",
+        "width": 58,
+        "height": 48
+      },
+      "transform": {
+        "scale": 1.6363636363636365,
+        "scaledWidth": 54,
+        "scaledHeight": 44,
+        "xOffset": 2,
+        "yOffset": 2
+      }
+    }
+  ]
+}
