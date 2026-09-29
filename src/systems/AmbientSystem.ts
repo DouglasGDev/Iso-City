@@ -1,0 +1,117 @@
+import type { AmbientKey, WeatherBed } from '../audio/sounds';
+import type { Biome } from '../game/GameConfig';
+
+export interface AmbientContext {
+  outdoors: boolean;
+  biome: Biome;
+  /** DayNightSystem.t, not an hour or wall-clock time. */
+  timeOfDay: number;
+  rain: number;
+  /** Neve não faz barulho de água: o leito pedido é o vento. */
+  snow?: boolean;
+  /** Clima severo toma o mesmo canal do tempo enquanto durar (null = chuva normal). */
+  hazardBed?: WeatherBed | null;
+  hazardVolume?: number;
+}
+export interface AmbientOutput {
+  ambient(key: AmbientKey | null, volume: number): void;
+  weather(volume: number, bed: WeatherBed): void;
+}
+export function selectAmbient(context: AmbientContext): AmbientKey | null {
+  if (!context.outdoors) return null;
+  const t = Number.isFinite(context.timeOfDay) ? ((context.timeOfDay % 1) + 1) % 1 : 0.5;
+  const night = t < 0.245 || t > 0.797;
+  switch (context.biome) {
+    case 'beach': case 'docks': return night ? 'coastNight' : 'coastDay';
+    case 'industrial': return night ? 'industryNight' : 'industryDay';
+    case 'forest': case 'park': return night ? 'forestNight' : 'forestDay';
+    case 'countryside': return night ? 'countryNight' : 'countryDay';
+    case 'pinewood': return night ? 'pinewoodNight' : 'pinewoodDay';
+    case 'savanna': return night ? 'savannaNight' : 'savannaDay';
+    case 'desert': return night ? 'desertNight' : 'desertDay';
+    default: return night ? 'cityNight' : 'cityDay';
+  }
+}
+
+/** Explicit simulation context + injected sound manager. No global GameState, native imports or timers.
+ * At most two ambient voices: fade-out/switch/fade-in regional bed plus independent rain.
+ * SoundManager retains ownership of unlock, mute, focus loss and native resource cleanup.
+ */
+export class AmbientSystem {
+  private current: AmbientKey | null = null;
+  private candidate: AmbientKey | null = null;
+  private stableFor = 0;
+  private volume = 0;
+  private rainVolume = 0;
+  private snow = false;
+  private hazardBed: WeatherBed | null = null;
+  private hazardVolume = 0;
+  private sentKey: AmbientKey | null | undefined;
+  private sentVolume = -1;
+  private sentRain = -1;
+  private sentBed: WeatherBed = 'rain';
+
+  constructor(private readonly output: AmbientOutput) {}
+
+  update(dt: number, context: AmbientContext): void {
+    if (!Number.isFinite(dt) || dt <= 0) return;
+    dt = Math.min(dt, 0.25);
+    this.snow = !!context.snow;
+    this.hazardBed = context.hazardBed ?? null;
+    this.hazardVolume = Number.isFinite(context.hazardVolume)
+      ? Math.max(0, Math.min(1, context.hazardVolume as number))
+      : 0;
+    const next = selectAmbient(context);
+    if (next !== this.candidate) { this.candidate = next; this.stableFor = 0; }
+    else this.stableFor += dt;
+    if (!context.outdoors) {
+      this.current = null;
+      this.volume = this.rainVolume = this.hazardVolume = 0;
+      this.publish();
+      return;
+    }
+    if (!this.current) this.current = next;
+    const switching = next !== this.current && this.stableFor >= 1.2;
+    const wet = Number.isFinite(context.rain) ? Math.max(0, Math.min(1, context.rain)) : 0;
+    const target = switching ? 0 : 0.48 * (1 - wet * 0.35);
+    this.volume += Math.max(-dt * 0.7, Math.min(dt * 0.7, target - this.volume));
+    if (switching && this.volume <= 0.001) { this.current = next; this.volume = 0; }
+    const rainTarget = wet < 0.025 ? 0 : wet * (this.snow ? 0.4 : 0.58);
+    this.rainVolume += Math.max(-dt * 0.4, Math.min(dt * 0.4, rainTarget - this.rainVolume));
+    this.publish();
+  }
+
+  /**
+   * Menu/pause: the simulation is frozen, so no bed may keep running on its own.
+   * Forgets what was published; the next update re-arms the region and rain from scratch.
+   */
+  suspend(): void {
+    this.current = null;
+    this.candidate = null;
+    this.stableFor = 0;
+    this.volume = this.rainVolume = this.hazardVolume = 0;
+    this.hazardBed = null;
+    this.sentKey = undefined;
+    this.sentVolume = -1;
+    this.sentRain = -1;
+    this.publish();
+  }
+
+  private publish(): void {
+    // Quantized requests avoid flooding the async native channel with per-frame volume changes.
+    const volume = Math.round(this.volume * 50) / 50;
+    // Um só leito de tempo por quadro: o perigo severo abafa a chuva, não toca junto dela.
+    const bed: WeatherBed = this.hazardBed ?? (this.snow ? 'wind' : 'rain');
+    const wet = Math.round((this.hazardBed ? this.hazardVolume : this.rainVolume) * 50) / 50;
+    if (this.sentKey !== this.current || this.sentVolume !== volume) {
+      this.output.ambient(this.current, volume);
+      this.sentKey = this.current;
+      this.sentVolume = volume;
+    }
+    if (this.sentRain !== wet || this.sentBed !== bed) {
+      this.output.weather(wet, bed);
+      this.sentRain = wet;
+      this.sentBed = bed;
+    }
+  }
+}

@@ -1,0 +1,104 @@
+# Dependências e saídas de build
+node_modules/
+.expo/
+dist/
+web-build/
+
+# Ferramentas locais: perfil do Chrome, capturas de tela, bundles de conferência
+tools/tmp/
+tools/export-check/
+.qoder/
+*.log
+
+# Áudio: só versiona o que src/audio/sounds.ts carrega. As ~785 amostras brutas de
+# terceiros (300MB, um WAV de 157MB que o GitHub recusaria) continuam no disco para
+# as ferramentas de geração — ao adicionar um som novo, acrescente a linha aqui.
+assets/Audio/**
+!assets/Audio/**/
+!assets/Audio/ambiente/ambient_city_day.mp3
+!assets/Audio/chuva/rain_storm.mp3
+!assets/Audio/fogos-artificio/fireworks_close.mp3
+!assets/Audio/fogos-artificio/fireworks_distant.mp3
+!assets/Audio/generated/ambient_city_night.wav
+!assets/Audio/generated/animal_call.wav
+!assets/Audio/generated/bat_hit.wav
+!assets/Audio/generated/bat_swing.wav
+!assets/Audio/generated/car_horn.wav
+!assets/Audio/generated/coast_day.wav
+!assets/Audio/generated/coast_night.wav
+!assets/Audio/generated/country_day.wav
+!assets/Audio/generated/country_night.wav
+!assets/Audio/generated/death.wav
+!assets/Audio/generated/desert_day.wav
+!assets/Audio/generated/desert_night.wav
+!assets/Audio/generated/engine_loop.wav
+!assets/Audio/generated/explosion.wav
+!assets/Audio/generated/forest_day.wav
+!assets/Audio/generated/forest_night.wav
+!assets/Audio/generated/heli_rotor.wav
+!assets/Audio/generated/industry_day.wav
+!assets/Audio/generated/industry_night.wav
+!assets/Audio/generated/jump.wav
+!assets/Audio/generated/land.wav
+!assets/Audio/generated/micro_shot.wav
+!assets/Audio/generated/pinewood_day.wav
+!assets/Audio/generated/pinewood_night.wav
+!assets/Audio/generated/pistol_shot.wav
+!assets/Audio/generated/punch.wav
+!assets/Audio/generated/revolver_shot.wav
+!assets/Audio/generated/rifle_shot.wav
+!assets/Audio/generated/savanna_day.wav
+!assets/Audio/generated/savanna_night.wav
+!assets/Audio/generated/shotgun_blast.wav
+!assets/Audio/generated/siren_loop.wav
+!assets/Audio/generated/smg_shot.wav
+!assets/Audio/generated/sniper_shot.wav
+!assets/Audio/generated/thunder.wav
+!assets/Audio/generated/tornado_loop.wav
+!assets/Audio/generated/vault.wav
+!assets/Audio/generated/wave_loop.wav
+!assets/Audio/generated/weapon_empty.wav
+!assets/Audio/generated/weapon_reload.wav
+!assets/Audio/generated/weather_alert.wav
+!assets/Audio/generated/wind_loop.wav
+!assets/Audio/impact/footstep_carpet_000.mp3
+!assets/Audio/impact/footstep_carpet_001.mp3
+!assets/Audio/impact/footstep_carpet_002.mp3
+!assets/Audio/impact/footstep_concrete_000.mp3
+!assets/Audio/impact/footstep_concrete_001.mp3
+!assets/Audio/impact/footstep_concrete_002.mp3
+!assets/Audio/impact/footstep_concrete_003.mp3
+!assets/Audio/impact/footstep_concrete_004.mp3
+!assets/Audio/impact/footstep_grass_000.mp3
+!assets/Audio/impact/footstep_grass_001.mp3
+!assets/Audio/impact/footstep_grass_002.mp3
+!assets/Audio/impact/footstep_grass_003.mp3
+!assets/Audio/impact/footstep_grass_004.mp3
+!assets/Audio/impact/footstep_wood_000.mp3
+!assets/Audio/impact/footstep_wood_001.mp3
+!assets/Audio/impact/footstep_wood_002.mp3
+!assets/Audio/impact/impactGlass_light_000.mp3
+!assets/Audio/impact/impactGlass_medium_000.mp3
+!assets/Audio/impact/impactGlass_medium_001.mp3
+!assets/Audio/impact/impactMetal_heavy_000.mp3
+!assets/Audio/impact/impactMetal_medium_000.mp3
+!assets/Audio/impact/impactMetal_medium_001.mp3
+!assets/Audio/impact/impactPlate_medium_000.mp3
+!assets/Audio/impact/impactPunch_medium_000.mp3
+!assets/Audio/impact/impactSoft_medium_000.mp3
+!assets/Audio/jingles/8-Bit jingles/jingles_NES05.mp3
+!assets/Audio/jingles/8-Bit jingles/jingles_NES13.mp3
+!assets/Audio/jingles/Hit jingles/jingles_HIT00.mp3
+!assets/Audio/jingles/Pizzicato jingles/jingles_PIZZI00.mp3
+!assets/Audio/rpg/doorClose_1.mp3
+!assets/Audio/rpg/doorOpen_1.mp3
+!assets/Audio/rpg/handleCoins.mp3
+!assets/Audio/rpg/handleCoins2.mp3
+!assets/Audio/ui/switch1.mp3
+!assets/Audio/ui/switch2.mp3
+!assets/Audio/ui/switch20.mp3
+!assets/Audio/ui/switch3.mp3
+!assets/Audio/ui/switch4.mp3
+!assets/Audio/ui/switch5.mp3
+!assets/Audio/ui/switch6.mp3
+!assets/Audio/ui/switch7.mp3
