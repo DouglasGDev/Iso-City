@@ -99,6 +99,23 @@ officeCrowd.enter(office);
 assert.ok(officeCrowd.list.some((o) => o.role === 'clerk'), 'tem quem atenda a recepção');
 assert.ok(officeCrowd.list.some((o) => o.role === 'worker'), 'tem funcionário circulando');
 
+// Delegacia: o oficial de plantão no balcão, um circulando e o cidadão esperando.
+const precinctDoor = interiors.entrances.find((e) => e.kind === 'precinct');
+assert.ok(precinctDoor, 'a cidade tem delegacia com porta');
+const hallRoom = roomOf(precinctDoor);
+const hallCrowd = new InteriorCrowdSystem();
+assert.ok(hallCrowd.enter(hallRoom), 'a delegacia tem gente de farda');
+assert.equal(hallCrowd.list.filter((o) => o.role === 'officer').length, 2, 'dois oficiais de plantão');
+assert.ok(hallCrowd.list.some((o) => o.role === 'citizen'), 'tem cidadão na sala de espera');
+for (const o of hallCrowd.list) {
+  assert.equal(o.kind, o.role === 'officer' ? 'cop' : 'civ', 'a farda é só de quem trabalha aqui');
+  assert.ok(inside(hallRoom.map, o.x, o.y) && clearAt(hallRoom.map, o.x, o.y), `posto de ${o.role} livre`);
+  assert.ok(Math.hypot(o.x - hallRoom.service.x, o.y - hallRoom.service.y) > 0.7,
+    `${o.role} não pisa o balcão do jogador`);
+}
+assert.equal(new Set(hallCrowd.list.map((o) => `${o.baseX.toFixed(2)},${o.baseY.toFixed(2)}`)).size,
+  hallCrowd.list.length, 'dois papéis da delegacia não dividem o mesmo posto');
+
 // A cadeia tem elenco próprio: nada de morador entre as celas.
 const jailDoor = interiors.jailEntrance;
 const jailRoom = roomOf(jailDoor);

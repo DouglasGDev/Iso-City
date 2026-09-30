@@ -7,6 +7,7 @@ const Vehicle_1 = require("../entities/Vehicle");
 const vehicles_1 = require("../data/vehicles");
 const IsoUtils_1 = require("../world/IsoUtils");
 const SoundManager_1 = require("../audio/SoundManager");
+const TerrainSystem_1 = require("./TerrainSystem");
 const CollisionSystem_1 = require("./CollisionSystem");
 const WeaponSystem_1 = require("./WeaponSystem");
 const CoverSystem_1 = require("./CoverSystem");
@@ -586,9 +587,13 @@ class PoliceSystem {
         if (npc.speed) {
             const steps = Math.max(1, Math.ceil(npc.speed * dt / 0.1));
             for (let i = 0; i < steps; i++) {
+                const prevX = npc.x, prevY = npc.y;
                 const circle = { x: npc.x + dx / d * npc.speed * dt / steps, y: npc.y + dy / d * npc.speed * dt / steps, radius: GameConfig_1.GAME_CONFIG.NPC_RADIUS };
                 ctx.collision.resolveCircle(circle, ctx.map.queryNearby(circle.x, circle.y, 1.5));
                 ctx.collision.resolveCircleVsVehicles(circle, ctx.vehicles);
+                // O talude não deixa o policial cortar pela montanha: ele contorna pela rua,
+                // exatamente como o muro de uma casa já o faz hoje.
+                TerrainSystem_1.terrain.blockWalk(ctx.map, circle, prevX, prevY);
                 if (ctx.map.isInside(circle.x, circle.y, circle.radius) && !ctx.map.isWaterWorld(circle.x, circle.y)) {
                     npc.x = circle.x;
                     npc.y = circle.y;
@@ -727,9 +732,12 @@ class PoliceSystem {
         const steps = Math.max(1, Math.ceil(Math.hypot(vx, vy) * dt / 0.15));
         const radius = Math.min(v.def.footprintW, v.def.footprintH) / 2;
         for (let i = 0; i < steps; i++) {
+            const prevX = v.x, prevY = v.y;
             const circle = { x: v.x + vx * dt / steps, y: v.y + vy * dt / steps, radius };
             ctx.collision.resolveCircle(circle, ctx.map.queryNearby(circle.x, circle.y, 2));
             ctx.collision.resolveCircleVsVehicles(circle, ctx.vehicles, v.id);
+            // A viatura em patrulha respeita o mesmo talude que barra o jogador: morro não é atalho.
+            TerrainSystem_1.terrain.blockDrive(ctx.map, circle, prevX, prevY);
             if (ctx.map.isInside(circle.x, circle.y, radius) && !ctx.map.isWaterWorld(circle.x, circle.y)) {
                 v.x = circle.x;
                 v.y = circle.y;

@@ -458,6 +458,10 @@ class WildlifeSystem {
                 const radius = animal.radius + Math.max(Math.abs(dx), Math.abs(dy)) / 2;
                 if (!isWildlifePathSafe(context.map, x, y, radius))
                     continue;
+                // A curva que segue o talude é a mesma que desvia da cerca: o animal contorna a
+                // montanha em vez de atravessar a parede de terra ou despencar do platô.
+                if (!context.map.canClimb(animal.x, animal.y, animal.x + dx, animal.y + dy))
+                    continue;
                 let blocked = false;
                 for (const { box } of this.vehicleCandidates) {
                     if (overlapsBox(x, y, radius, box)) {

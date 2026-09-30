@@ -6,6 +6,7 @@ import type { Map } from '../world/Map';
 import type { Vehicle } from '../entities/Vehicle';
 import type { TrafficSignalSystem } from './TrafficSignalSystem';
 import { segmentAabb } from './WeaponSystem';
+import { terrain } from './TerrainSystem';
 
 interface CrossingIntent {
   from: { x: number; y: number };
@@ -115,6 +116,9 @@ export class NPCSystem {
         );
         npc.x = circle.x;
         npc.y = circle.y;
+        // O passeio tem relevo: sem este julgamento o pedestre cortaria o morro por
+        // dentro e a montanha deixaria de existir para a multidão.
+        terrain.blockWalk(map, npc, prevX, prevY);
 
         // se a colisão bloqueou quase tudo, pula waypoint / repath
         const moved = Math.hypot(npc.x - prevX, npc.y - prevY);
@@ -263,6 +267,8 @@ export class NPCSystem {
     const speed = GAME_CONFIG.NPC_FLEE_SPEED;
     const vx = (dx / dist) * speed;
     const vy = (dy / dist) * speed;
+    const prevX = npc.x;
+    const prevY = npc.y;
     npc.x += vx * dt;
     npc.y += vy * dt;
 
@@ -277,6 +283,9 @@ export class NPCSystem {
     );
     npc.x = Math.max(GAME_CONFIG.NPC_RADIUS, Math.min(map.worldW - GAME_CONFIG.NPC_RADIUS, circle.x));
     npc.y = Math.max(GAME_CONFIG.NPC_RADIUS, Math.min(map.worldH - GAME_CONFIG.NPC_RADIUS, circle.y));
+    // Fugindo em linha reta o pedestre esbarra no morro: o degrau alto é parede, e ele
+    // contorna tropeçando na própria fuga em vez de atravessar a montanha.
+    terrain.blockWalk(map, npc, prevX, prevY);
     npc.speed = speed;
     npc.anim = 'walk';
     npc.dir = velocityToDir(vx, vy);

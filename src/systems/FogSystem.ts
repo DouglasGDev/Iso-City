@@ -1,4 +1,5 @@
-import type { Biome } from '../game/GameConfig';
+import { GAME_CONFIG, type Biome } from '../game/GameConfig';
+import { worldToScreen } from '../world/IsoUtils';
 import type { WorldAabb } from '../world/Visibility';
 
 export interface FogEnvironment {
@@ -61,7 +62,7 @@ const INITIAL = target({ timeOfDay: 0.5, rain: 0, biome: 'countryside' });
 export const FOG = { ...publish(INITIAL.rgb, INITIAL.clarity), padding: 112 };
 
 export interface FogContext {
-  camera: { x: number; y: number; zoom: number };
+  camera: { x: number; y: number; zoom: number; h: number };
   viewW: number;
   viewH: number;
 }
@@ -95,7 +96,11 @@ export class FogSystem {
 
   view({ camera, viewW, viewH }: FogContext): FogView {
     const radius = fogRadii(viewW, viewH, camera.zoom);
-    return { x: (camera.x - camera.y) * 64, y: (camera.x + camera.y) * 32,
+    // Centro da tela = a projeção DO PONTO ELEVADO que a câmera mira, a mesma fórmula
+    // do transform da câmera. Sem o `h` o descarte de tiles e a neblina ficariam
+    // deslocados para baixo assim que o jogador subisse no morro.
+    const center = worldToScreen(camera.x, camera.y, camera.h);
+    return { x: center.x, y: center.y,
       radiusX: radius.x / camera.zoom, radiusY: radius.y / camera.zoom };
   }
 
@@ -109,7 +114,13 @@ export class FogSystem {
   worldBounds(view: FogView): WorldAabb {
     const x = view.x / 128 + view.y / 64;
     const y = view.y / 64 - view.x / 128;
-    const extent = Math.hypot(view.radiusX / 128, view.radiusY / 64) + FOG.padding / 128 + FOG.padding / 64 + 1;
+    // Um tile elevado é pintado na posição plana de (tx-h, ty-h): para a crista da
+    // montanha entrar no window de bake, a varredura tem que ir `climb` tiles além.
+    // Simétrico de propósito — o AABB continua sendo a janela centrada na vista, e quem
+    // decide o que realmente se desenha é o intersects com a altura de cada tile.
+    const climb = GAME_CONFIG.TERRAIN_MAX_LEVEL * GAME_CONFIG.TERRAIN_LEVEL_TILES;
+    const extent = Math.hypot(view.radiusX / 128, view.radiusY / 64)
+      + FOG.padding / 128 + FOG.padding / 64 + 1 + climb;
     return { minX: x - extent, maxX: x + extent, minY: y - extent, maxY: y + extent };
   }
 }

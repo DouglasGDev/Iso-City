@@ -9,7 +9,7 @@ exports.clampToRoom = clampToRoom;
 exports.indoorZoom = indoorZoom;
 const GameConfig_1 = require("../game/GameConfig");
 function createCamera(x, y) {
-    return { x, y, targetX: x, targetY: y, zoom: GameConfig_1.GAME_CONFIG.ZOOM_DEFAULT };
+    return { x, y, targetX: x, targetY: y, zoom: GameConfig_1.GAME_CONFIG.ZOOM_DEFAULT, h: 0 };
 }
 function cameraFollow(cam, followX, followY, lookX, lookY, dt, mapWorldW, mapWorldH) {
     cam.targetX = followX + lookX * GameConfig_1.GAME_CONFIG.CAMERA_LOOKAHEAD;

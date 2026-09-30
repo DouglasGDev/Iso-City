@@ -8,8 +8,12 @@ import {
 export interface AnimalSpriteProps {
   /** Only immutable identity/species is read from the JS model. Reuse this object after respawn. */
   animal: Pick<Animal, 'id' | 'species'>;
-  /** World tiles, NOT screen pixels. Draw inside the world's existing camera/depth group. */
-  position: SharedValue<AnimalPoint>;
+  /**
+   * World tiles, NOT screen pixels. Draw inside the world's existing camera/depth group.
+   * `h` é a altura do chão em tiles: o laço de simulação a publica junto, porque o
+   * worklet não consegue consultar o mapa.
+   */
+  position: SharedValue<AnimalPoint & { h: number }>;
   /** Publish animalVisualState(animal, game.time) alongside position once per game tick. */
   visual: SharedValue<AnimalVisualState>;
   /** Simulation seconds; pause this clock together with simulation. */
@@ -255,7 +259,7 @@ export function AnimalSprite({ animal, position, visual, clock }: AnimalSpritePr
   const opacity = useDerivedValue(() => pose.value.alpha, [pose]);
   const world = useDerivedValue(() => [
     { translateX: Math.round((position.value.x - position.value.y) * 64) },
-    { translateY: Math.round((position.value.x + position.value.y) * 32) },
+    { translateY: Math.round((position.value.x + position.value.y) * 32 - position.value.h * 64) },
   ], [position]);
   const body = useDerivedValue(() => [
     { translateY: pose.value.offsetY + pose.value.bob },

@@ -126,7 +126,11 @@ function FootActions({ compact }: { compact: boolean }) {
   );
 }
 
-export function ActionButtons() {
+/**
+ * `flying` é o helicóptero do player ao volante: ali o pedal verde vira cabra para cima
+ * e o vermelho vira cabra para baixo. A entrada continua a mesma, só o nome muda.
+ */
+export function ActionButtons({ flying = false }: { flying?: boolean }) {
   const game = getGame();
   const insets = useControlInsets();
   const { width, height } = useWindowDimensions();
@@ -208,18 +212,18 @@ export function ActionButtons() {
         <View style={[styles.pedals, compact && styles.compactPedals]} pointerEvents="none">
           <ActionBtn
             id="brake"
-            icon={<IconBrake />}
+            icon={flying ? <Text style={styles.glyphIcon}>▼</Text> : <IconBrake />}
             accent="rgba(255,90,80,0.98)"
-            label="FREAR"
-            accessibilityLabel="Frear"
+            label={flying ? 'DESCER' : 'FREAR'}
+            accessibilityLabel={flying ? 'Descer o helicóptero' : 'Frear'}
             style={[styles.brake, compact && styles.compactBrake]}
           />
           <ActionBtn
             id="accel"
-            icon={<IconGas />}
+            icon={flying ? <Text style={styles.glyphIcon}>▲</Text> : <IconGas />}
             accent="rgba(70,210,120,0.98)"
-            label="ACELERAR"
-            accessibilityLabel="Acelerar"
+            label={flying ? 'SUBIR' : 'ACELERAR'}
+            accessibilityLabel={flying ? 'Subir o helicóptero' : 'Acelerar'}
             style={[styles.accel, compact && styles.compactAccel]}
           />
         </View>

@@ -15,6 +15,13 @@ export interface InputStateData {
   vehicleBrake: boolean;
   vehicleLeft: boolean;
   vehicleRight: boolean;
+  /**
+   * Cabra do helicóptero. Separado de `vehicleAccel`/`vehicleBrake` porque no teclado as
+   * mesmas teclas já empurram o manche: W voa para cima na tela, Space é que sobe a cota.
+   * No toque e no controle os pedais fazem os dois papéis e espelham aqui.
+   */
+  heliUp: boolean;
+  heliDown: boolean;
   hornQueued: boolean;
   /** Normalized WORLD-space direction, not a target position or movement facing. */
   aimX: number;
@@ -53,6 +60,8 @@ export const inputState: InputStateData = {
   vehicleBrake: false,
   vehicleLeft: false,
   vehicleRight: false,
+  heliUp: false,
+  heliDown: false,
   hornQueued: false,
   aimX: 0,
   aimY: 0,
@@ -90,11 +99,18 @@ export function setVehicleControl(
   else inputState.vehicleRight = pressed;
 }
 
+export function setHeliControl(control: 'up' | 'down', pressed: boolean) {
+  if (control === 'up') inputState.heliUp = pressed;
+  else inputState.heliDown = pressed;
+}
+
 export function resetVehicleArrows() {
   inputState.vehicleAccel = false;
   inputState.vehicleBrake = false;
   inputState.vehicleLeft = false;
   inputState.vehicleRight = false;
+  inputState.heliUp = false;
+  inputState.heliDown = false;
 }
 
 export function setRunHeld(holding: boolean) {
@@ -526,6 +542,10 @@ export class HardwareInput {
     setVehicleControl('brake', down);
     setVehicleControl('left', left && !right);
     setVehicleControl('right', right && !left);
+    // No ar o WASD continua sendo o manche: quem toca o pé de cabra é o Espaço (sobe) e
+    // o Ctrl (desce), teclas que a pé pertencem ao pulo e ao ataque.
+    setHeliControl('up', has('Space'));
+    setHeliControl('down', has('ControlLeft', 'ControlRight'));
     this.attack(!this.driving && (has('ControlLeft', 'ControlRight') || this.mouseHeld));
     if (this.aimHeld) setAimInput(this.mouseAim.x, this.mouseAim.y, this.mouseAim.px, this.mouseAim.py);
     else setAimInput(0, 0);
@@ -586,6 +606,10 @@ export class HardwareInput {
       setRunHeld(buttons[0]);
       setVehicleControl('accel', buttons[7]);
       setVehicleControl('brake', buttons[6]);
+      // Os gatilhos são os pedais do pad: no helicóptero eles içam e baixam a cabra,
+      // igual ao toque — o manche continua sendo o analógico esquerdo.
+      setHeliControl('up', buttons[7]);
+      setHeliControl('down', buttons[6]);
       setVehicleControl('left', ls.x < -PAD_DEADZONE);
       setVehicleControl('right', ls.x > PAD_DEADZONE);
       this.attack(!this.driving && buttons[7]);

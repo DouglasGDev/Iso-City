@@ -1,5 +1,9 @@
 import { Asset } from 'expo-asset';
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+// O barril `expo-av` emite um console.warn de deprecação ainda na importação. No aparelho
+// esse aviso cai no LogBox, que chama NativeLogBox.show() — e é justamente aí que o boot
+// morre ("show is not a function"). Pelos submódulos de áudio o aviso nunca existe.
+import * as Audio from 'expo-av/build/Audio';
+import { InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av/build/Audio.types';
 import {
   AMBIENT,
   LOOPS,

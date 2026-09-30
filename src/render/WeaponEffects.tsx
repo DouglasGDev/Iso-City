@@ -151,11 +151,19 @@ export function MeleeSwing({ state, batImage = null }: {
   );
 }
 
+/** Traço do WeaponSystem mais a altura de chão das pontas, calculada pelo laço de simulação. */
+export type LiftedTracer = WeaponTracer & { h1: number; h2: number };
+
 export interface WeaponVisualState {
-  tracers: WeaponTracer[];
+  /**
+   * `h1`/`h2` são as alturas de chão de cada ponta, em tiles. A bala voa no plano de
+   * quem atirou, então o traçado precisa das duas: sem isso o rastro atravessa a
+   * encosta como se o morro não existisse.
+   */
+  tracers: LiftedTracer[];
   /** `lift` raises the reticle off its ground point; the mouse cursor needs none. */
-  target: { x: number; y: number; lift?: number } | null;
-  muzzle: { x: number; y: number } | null;
+  target: { x: number; y: number; h: number; lift?: number } | null;
+  muzzle: { x: number; y: number; h: number } | null;
 }
 
 export function WeaponEffects({ state }: { state: SharedValue<WeaponVisualState> }) {
@@ -167,20 +175,20 @@ export function WeaponEffects({ state }: { state: SharedValue<WeaponVisualState>
       const offset = Math.min(0.25, 0.3 / Math.max(0.001, Math.hypot(dx, dy)));
       const x = t.x1 + dx * offset;
       const y = t.y1 + dy * offset;
-      path.moveTo((x - y) * 64, (x + y) * 32 - 23);
-      path.lineTo((t.x2 - t.y2) * 64, (t.x2 + t.y2) * 32 - 23);
+      path.moveTo((x - y) * 64, (x + y) * 32 - 23 - t.h1 * 64);
+      path.lineTo((t.x2 - t.y2) * 64, (t.x2 + t.y2) * 32 - 23 - t.h2 * 64);
     }
     return path;
   }, [state]);
   const impacts = useDerivedValue(() => {
     const path = Skia.Path.Make();
     for (const t of state.value.tracers) {
-      if (t.hit) path.addCircle((t.x2 - t.y2) * 64, (t.x2 + t.y2) * 32 - 23, 2 + t.life * 16);
+      if (t.hit) path.addCircle((t.x2 - t.y2) * 64, (t.x2 + t.y2) * 32 - 23 - t.h2 * 64, 2 + t.life * 16);
     }
     const m = state.value.muzzle;
     if (m) {
       const x = (m.x - m.y) * 64;
-      const y = (m.x + m.y) * 32 - 23;
+      const y = (m.x + m.y) * 32 - 23 - m.h * 64;
       path.moveTo(x - 7, y);
       path.lineTo(x - 2, y - 2);
       path.lineTo(x, y - 7);
@@ -204,7 +212,7 @@ export function WeaponEffects({ state }: { state: SharedValue<WeaponVisualState>
   }, []);
   const aimTransform = useDerivedValue(() => {
     const t = state.value.target;
-    return [{ translateX: t ? (t.x - t.y) * 64 : 0 }, { translateY: t ? (t.x + t.y) * 32 - (t.lift ?? 20) : 0 }];
+    return [{ translateX: t ? (t.x - t.y) * 64 : 0 }, { translateY: t ? (t.x + t.y) * 32 - t.h * 64 - (t.lift ?? 20) : 0 }];
   }, [state]);
   const aimOpacity = useDerivedValue(() => state.value.target ? 0.85 : 0, [state]);
   return (

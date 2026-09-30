@@ -5,16 +5,34 @@ export interface IsoPoint {
   y: number;
 }
 
-export function worldToScreen(x: number, y: number): IsoPoint {
-  return { x: (x - y) * 64, y: (x + y) * 32 };
+/**
+ * Pixels de tela que um tile de elevação anda para cima. O losango do tile é
+ * 128x64, então 64px por tile de altura é exatamente o lado vertical de um cubo
+ * isométrico da mesma base: o relevo vira volume no mesmo ritmo da arte, sem
+ * inventar uma terceira projeção. `h` é altura em tiles, nunca em pixels.
+ */
+export const ELEVATION_PX = 64;
+
+/**
+ * Projeção iso 2:1 do jogo. `h` desloca só o eixo Y de tela: o X continua
+ * (x - y), ou seja, elevar o chão não gira nem inclina a câmera. É assim que o
+ * relevo entra sem tirar do jogo a identidade isométrica.
+ */
+export function worldToScreen(x: number, y: number, h = 0): IsoPoint {
+  return { x: (x - y) * 64, y: (x + y) * 32 - h * ELEVATION_PX };
 }
 
 export function screenToWorld(sx: number, sy: number): IsoPoint {
   return { x: sx / 128 + sy / 64, y: sy / 64 - sx / 128 };
 }
 
-export function depthOf(x: number, y: number): number {
-  return x + y;
+/**
+ * Chave do pintor isométrico: quem está mais para baixo na tela desenha por último.
+ * Com relevo, a âncora de um tile elevado sobe `2h` na mesma contagem, então o
+ * morro da frente empurra o jogador de trás para o fundo exatamente como faz na tela.
+ */
+export function depthOf(x: number, y: number, h = 0): number {
+  return x + y - 2 * h;
 }
 
 export interface ScreenDirVec {

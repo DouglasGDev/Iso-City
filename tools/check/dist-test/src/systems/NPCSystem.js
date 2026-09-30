@@ -4,6 +4,7 @@ exports.NPCSystem = exports.pedestrianCrossingIntent = void 0;
 const GameConfig_1 = require("../game/GameConfig");
 const IsoUtils_1 = require("../world/IsoUtils");
 const WeaponSystem_1 = require("./WeaponSystem");
+const TerrainSystem_1 = require("./TerrainSystem");
 // Weak keys preserve array indices and disappear when the population is replaced.
 const crossings = new WeakMap();
 const pedestrianCrossingIntent = (npc) => crossings.get(npc);
@@ -98,6 +99,9 @@ class NPCSystem {
                 this.collision.resolveCircleVsVehicles(circle, nearbyVehicles(vehicles, npc.x, npc.y, 7.5), null, 0.35);
                 npc.x = circle.x;
                 npc.y = circle.y;
+                // O passeio tem relevo: sem este julgamento o pedestre cortaria o morro por
+                // dentro e a montanha deixaria de existir para a multidão.
+                TerrainSystem_1.terrain.blockWalk(map, npc, prevX, prevY);
                 // se a colisão bloqueou quase tudo, pula waypoint / repath
                 const moved = Math.hypot(npc.x - prevX, npc.y - prevY);
                 if (moved < GameConfig_1.GAME_CONFIG.NPC_WALK_SPEED * dt * 0.15) {
@@ -244,6 +248,8 @@ class NPCSystem {
         const speed = GameConfig_1.GAME_CONFIG.NPC_FLEE_SPEED;
         const vx = (dx / dist) * speed;
         const vy = (dy / dist) * speed;
+        const prevX = npc.x;
+        const prevY = npc.y;
         npc.x += vx * dt;
         npc.y += vy * dt;
         const nearby = map.queryNearby(npc.x, npc.y, 1.5);
@@ -252,6 +258,9 @@ class NPCSystem {
         this.collision.resolveCircleVsVehicles(circle, nearbyVehicles(vehicles, npc.x, npc.y, 7.5), null, 0.35);
         npc.x = Math.max(GameConfig_1.GAME_CONFIG.NPC_RADIUS, Math.min(map.worldW - GameConfig_1.GAME_CONFIG.NPC_RADIUS, circle.x));
         npc.y = Math.max(GameConfig_1.GAME_CONFIG.NPC_RADIUS, Math.min(map.worldH - GameConfig_1.GAME_CONFIG.NPC_RADIUS, circle.y));
+        // Fugindo em linha reta o pedestre esbarra no morro: o degrau alto é parede, e ele
+        // contorna tropeçando na própria fuga em vez de atravessar a montanha.
+        TerrainSystem_1.terrain.blockWalk(map, npc, prevX, prevY);
         npc.speed = speed;
         npc.anim = 'walk';
         npc.dir = (0, IsoUtils_1.velocityToDir)(vx, vy);

@@ -58,6 +58,7 @@ function near(actual, expected, eps = 1e-8) { assert.ok(Math.abs(actual - expect
 function map(colliders = [], buildings = [], props = []) {
   const W = 80;
   return new WorldMap({ tilesW: W, tilesH: W, worldW: W, worldH: W,
+    heights: new Float32Array(W * W),
     tiles: Array.from({ length: W * W }, (_, i) => {
       const y = Math.floor(i / W);
       return y === 30 || y === 31 ? { kind: 'road', key: '', lane: y === 30 ? 'NW' : 'SE', biome: 'residential' }

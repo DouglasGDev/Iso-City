@@ -30,8 +30,22 @@ export const GAME_CONFIG = {
   VEHICLE_TURN_MIN_SPEED: 0.18,
   HELI_MAX_SPEED: 4.6,
   HELI_ACCEL: 5.2,
-  /** Altura de cruzeiro do helicóptero pilotável (elevação de ~38px por unidade na render). */
-  HELI_CRUISE_ALTITUDE: 3.0,
+  /**
+   * Altura de levitação (tiles acima do CHÃO DEBAIXO do nariz). Empurrou o manche com o
+   * aparelho no solo, ele sobe até aqui e segura — o bastante para passar sobre carros e
+   * cercas, pouco demais para cruzar o talude de uma montanha.
+   */
+  HELI_CRUISE_ALTITUDE: 2.2,
+  /** Os comandos SUBIR/DESCER movem a COTA absoluta do aparelho, não a altura do solo. */
+  HELI_CLIMB_RATE: 2.6,
+  HELI_SINK_RATE: 2.2,
+  /**
+   * Teto do voo em tiles acima do nível 0 do mundo. O relevo sobe até
+   * TERRAIN_MAX_LEVEL * TERRAIN_LEVEL_TILES = 4; restam 4 de ar acima da crista mais alta.
+   */
+  HELI_CEILING_ELEVATION: 8,
+  /** Folga do casco: só passa sobre o ressalto à frente quem está claramente acima dele. */
+  HELI_WALL_TOLERANCE: 0.1,
   VEHICLE_REVERSE_RATIO: 0.42,
   VEHICLE_REVERSE_ACCEL: 4.2,
   VEHICLE_STOP_EPS: 0.05,
@@ -51,14 +65,21 @@ export const GAME_CONFIG = {
 
   TRAFFIC_MAX: 56,
   TRAFFIC_SPAWN_CHANCE: 0.94,
-  TRAFFIC_DRIVER_CHANCE: 0.35,
 
   WANTED_MAX: 5,
   WANTED_STEAL: 1,
   WANTED_HIT_PED: 1,
   WANTED_DECAY_S: 14,
   CRASH_DAMAGE_SPEED: 1.85,
+  /** Abaixo dessa velocidade o carro só encosta; acima ele atropela. */
   HIT_PED_SPEED: 1.45,
+  /** Atropelamento: base + velocidade. Um pedestre de 45 hp não levanta de um carro em curso. */
+  RUNOVER_DAMAGE: 18,
+  RUNOVER_DAMAGE_PER_SPEED: 16,
+  /** O jogador apanha menos que um pedestre: quem para no meio da rua tem tempo de sair. */
+  RUNOVER_PLAYER_RATIO: 0.5,
+  /** Tiles que o corpo voa para fora da pista. Menos que isso a vítima continua sob as rodas. */
+  RUNOVER_THROW: 0.9,
 
   /** ---- Stamina (corrida) ---- */
   STAMINA_RUN_DRAIN: 0.17,
@@ -96,6 +117,8 @@ export const GAME_CONFIG = {
   JAIL_PER_STAR_S: 6,
   /** Arrombar a própria cela; o painel dos presos cobra uma estrela a menos. */
   WANTED_JAILBREAK: 3,
+  /** Fiança no balcão da delegacia: preço por estrela ainda no seu registro. */
+  BAIL_PER_STAR: 60,
   /** Visão do guarda da cadeia: alcance e meio-ângulo do cone, em radianos. */
   GUARD_SIGHT_RANGE: 5.2,
   GUARD_FOV_HALF: 0.95,
@@ -107,9 +130,10 @@ export const GAME_CONFIG = {
   JAIL_BREAK_PENALTY_S: 12,
 
   /** ---- Apoio aéreo policial (aparece com 4 estrelas ou mais) ---- */
-  /** Cada unidade de altura vira ~38px de elevação na tela: 3,2 ≈ 122px, acima dos prédios e
-   *  ainda dentro do quadro em celular deitado (a HUD superior ocupa ~50px). */
-  POLICE_HELI_ALTITUDE: 3.2,
+  /** Folga sobre o chão DEBAIXO da aeronave, em tiles. Cada tile vira ELEVATION_PX (64px) de
+   *  elevação na tela: 2 ≈ 128px, acima dos prédios e ainda dentro do quadro em celular
+   *  deitado (a metade da tela é ~195px e a barra superior da HUD come ~50px). */
+  POLICE_HELI_ALTITUDE: 2,
   POLICE_HELI_SPOT_RANGE: 11,
 
   /** ---- Visão dos inimigos (todos usam o mesmo VisionSystem) ----
@@ -188,10 +212,28 @@ export const GAME_CONFIG = {
   TSUNAMI_REACH_TILES: 12,
   TSUNAMI_SPEED: 5.5,
   TSUNAMI_FORCE: 5.2,
+  /** Vida por segundo dentro da água da onda: quem entra na corrente se afoga. */
+  TSUNAMI_PLAYER_DMG_S: 36,
   /** Largura do trecho de costa que a onda varre. */
   TSUNAMI_SPAN_TILES: 26,
   /** Só faz tsunami perto do mar: longe da costa o aviso não mostraria nada. */
   TSUNAMI_NEAR_TILES: 16,
+
+  /** ---- Relevo (2.5D: altura do chão, nunca uma terceira dimensão de câmera) ---- */
+  /** Um nível do campo de altura vale 1/4 de tile de elevação, ou 16px de tela. */
+  TERRAIN_LEVEL_TILES: 0.25,
+  /** Teto da montanha: 16 níveis = 4 tiles de paredes empilhadas, o máximo que se pinta. */
+  TERRAIN_MAX_LEVEL: 16,
+  /** A pé se sobe um degrau inteiro sem saltar; o meio impede a parede invisível de 1,25. */
+  TERRAIN_STEP_UP_FOOT: 1,
+  /** Roda só encara rampa: o gerador suaviza a malha viária exatamente a este teto. */
+  TERRAIN_STEP_UP_VEHICLE: 1,
+  /** Abaixo disto o cavalo do terraço é face pintada; acima, é pedra de montanha. */
+  TERRAIN_CLIFF_LEVELS: 4,
+  /** Queda livre: até aqui se despenca andando, mais que isso é parede que se contorna. */
+  TERRAIN_MAX_DROP: 3,
+  /** Quanto a subida come de velocidade por nível à frente, e o quanto a descida devolve. */
+  TERRAIN_SLOPE_SLOW: 0.3,
 
   /** ---- Destruição de veículos ---- */
   VEHICLE_EXPLOSION_RADIUS: 2.6,

@@ -179,6 +179,7 @@ test('real map collider grid blocks a shot crossing spatial cells', () => {
   const { weapons: w, ctx } = setup();
   ctx.map = new WorldMap({
     worldW: 32, worldH: 32, tilesW: 32, tilesH: 32,
+    heights: new Float32Array(32 * 32),
     tiles: Array.from({ length: 32 * 32 }, () => ({ kind: 'grass', key: '' })),
     buildings: [{ key: 'test_wall', x: 10, y: 2, footprintW: 2, footprintH: 4 }],
     props: [], vehicles: [], npcSpawns: [], playerSpawn: { x: 1, y: 1 },
@@ -1140,6 +1141,7 @@ async function checkMeleeRender() {
   }
   function mount() {
     game = { player: createPlayer(0, 0), npcs: [], vehicles: [], time: 0,
+      map: { heightAt: () => 0 },
       weapons: { equipped: 'unarmed', aimAngle: 0, fireFlash: 0 } };
     const owner = { cursor: 0, slots: [], effects: [], cleanups: [] };
     const render = () => {

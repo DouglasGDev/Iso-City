@@ -21,6 +21,7 @@ import {
   resetActionInput,
   resetJoystickInput,
   setAttackHeld,
+  setHeliControl,
   setJoystickInput,
   setRunHeld,
   setVehicleControl,
@@ -40,6 +41,8 @@ function resetControls() {
   setVehicleControl('right', false);
   setVehicleControl('accel', false);
   setVehicleControl('brake', false);
+  setHeliControl('up', false);
+  setHeliControl('down', false);
 }
 
 export const JOY_SIZE = 168;
@@ -237,8 +240,8 @@ export function ControlTouch({
       else if (id === 'reload') queueReload();
       else if (id === 'left') setVehicleControl('left', true);
       else if (id === 'right') setVehicleControl('right', true);
-      else if (id === 'accel') setVehicleControl('accel', true);
-      else if (id === 'brake') setVehicleControl('brake', true);
+      else if (id === 'accel') { setVehicleControl('accel', true); setHeliControl('up', true); }
+      else if (id === 'brake') { setVehicleControl('brake', true); setHeliControl('down', true); }
       else if (id === 'horn') queueHorn();
       else if (id === 'enter' || id === 'exit') {
         inputState.enterQueued = true;
@@ -258,8 +261,8 @@ export function ControlTouch({
     else if (id === 'attack') setAttackHeld(false);
     else if (id === 'left') setVehicleControl('left', false);
     else if (id === 'right') setVehicleControl('right', false);
-    else if (id === 'accel') setVehicleControl('accel', false);
-    else if (id === 'brake') setVehicleControl('brake', false);
+    else if (id === 'accel') { setVehicleControl('accel', false); setHeliControl('up', false); }
+    else if (id === 'brake') { setVehicleControl('brake', false); setHeliControl('down', false); }
   }, []);
 
   const onDown = useCallback(

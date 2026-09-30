@@ -54,7 +54,10 @@ function fixture() {
   vm.runInNewContext(code, {
     exports,
     require(name) {
-      if (name === 'expo-av') return { Audio, InterruptionModeIOS: {}, InterruptionModeAndroid: {} };
+      // O app importa os submódulos de áudio, nunca o barril 'expo-av': o barril avisa que
+      // está deprecado na importação e esse aviso derruba o LogBox no aparelho.
+      if (name === 'expo-av/build/Audio') return Audio;
+      if (name === 'expo-av/build/Audio.types') return { InterruptionModeIOS: {}, InterruptionModeAndroid: {} };
       if (name === 'expo-asset') return { Asset: { fromModule: (uri) => ({ uri }) } };
       if (name === './sounds') return { SFX: sources, LOOPS: sources, AMBIENT: sources };
       throw new Error(name);

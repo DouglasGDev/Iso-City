@@ -106,6 +106,8 @@ export class AirSupportSystem {
     if (!node) return false;
     const vehicle = createVehicle(ctx.allocVehicleId(), VEHICLE_DEFS.helicopter, 'white', node.x, node.y, 'SE');
     vehicle.altitude = HOVER_ALTITUDE * 0.7;
+    // O par do aparelho é a cota: sobrevoar um morro já erguido não o enterra no talude.
+    vehicle.elevation = ctx.map.heightAt(node.x, node.y) + vehicle.altitude;
     vehicle.occupied = true;
     vehicle.state = 'driving';
     ctx.vehicles.push(vehicle);
@@ -121,7 +123,10 @@ export class AirSupportSystem {
     if (!vehicle || vehicle.state === 'destroyed' || vehicle.health <= 0) {
       heli.retired = true;
       // O wreck precisa encostar no chão: a DestructionSystem cuida da explosão a partir dali.
-      if (vehicle) vehicle.altitude = Math.max(0, vehicle.altitude - dt * 4);
+      if (vehicle) {
+        vehicle.altitude = Math.max(0, vehicle.altitude - dt * 4);
+        vehicle.elevation = ctx.map.heightAt(vehicle.x, vehicle.y) + vehicle.altitude;
+      }
       return;
     }
     const target = ctx.target ?? { x: heli.x, y: heli.y };
@@ -143,6 +148,8 @@ export class AirSupportSystem {
     vehicle.x = heli.x;
     vehicle.y = heli.y;
     vehicle.altitude = heli.altitude;
+    // A ronda mantém a FOLGA sobre o terreno: a cota é o chão de agora mais o par.
+    vehicle.elevation = ctx.map.heightAt(heli.x, heli.y) + heli.altitude;
     vehicle.occupied = true;
     vehicle.state = 'driving';
     vehicle.speed = distance > 0.01 ? HELI_SPEED : 0;

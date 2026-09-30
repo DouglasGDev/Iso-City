@@ -10,7 +10,7 @@ import { GroundLayer } from './GroundLayer';
 import { SortedWorldLayer, type OcclusionFocus } from './SortedWorldLayer';
 import { effectiveAim, inputState } from '../game/InputState';
 import { GAME_CONFIG } from '../game/GameConfig';
-import { screenToWorld } from '../world/IsoUtils';
+import { depthOf, screenToWorld, worldToScreen } from '../world/IsoUtils';
 import { MarkerLayer } from './MarkerLayer';
 import { WeaponEffects, type WeaponVisualState } from './WeaponEffects';
 import { useGameStore } from '../stores/useGameStore';
@@ -62,7 +62,10 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
   const canvasRef = useCanvasRef();
   const [size, setSize] = useState({ width: 1, height: 1 });
 
-  const camera = useSharedValue({ x: game.camera.x, y: game.camera.y, zoom: game.camera.zoom });
+  const camera = useSharedValue({
+    x: game.camera.x, y: game.camera.y, zoom: game.camera.zoom,
+    h: game.activeMap.heightAt(game.camera.x, game.camera.y),
+  });
   const shake = useSharedValue({ x: 0, y: 0 });
   const env = useSharedValue({ night: 0, warm: 0, rain: 0, snow: 0, bolt: 0 });
   const fog = useSharedValue(game.fog.snapshot);
@@ -93,14 +96,16 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
   const cameraTransform = useDerivedValue(() => {
     const c = camera.value;
     const sh = shake.value;
-    const sx = (c.x - c.y) * 64;
-    const sy = (c.x + c.y) * 32;
+    // Mesmo worldToScreen das camadas: retirar a tela da câmera com o termo de altura
+    // é o que mantém o jogador centrado no morro sem mover o X — a câmera continua
+    // isométrica 2:1, só anda para cima junto com o chão.
+    const p = worldToScreen(c.x, c.y, c.h);
     return [
       { translateX: size.width / 2 + sh.x },
       { translateY: size.height / 2 + sh.y },
       { scale: c.zoom },
-      { translateX: -sx },
-      { translateY: -sy },
+      { translateX: -p.x },
+      { translateY: -p.y },
     ];
   }, [size, camera, shake]);
 
@@ -142,6 +147,9 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
         x: game.camera.x,
         y: game.camera.y,
         zoom: game.camera.zoom,
+        // Dentro de uma sala o mapa ativo é o da casa, e o chão dele é plano: é por
+        // isso que a câmera nunca dá um pulo ao entrar na porta.
+        h: game.activeMap.heightAt(game.camera.x, game.camera.y),
       };
       shake.value = { x: game.shakeX, y: game.shakeY };
       env.value = {
@@ -167,8 +175,12 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
       rainY.value = (game.time * fall) % rainTileH;
       const weapon = game.weapons;
       const player = game.player;
-      focus.value = { x: (player.x - player.y) * 64, y: (player.x + player.y) * 32,
-        depth: player.x + player.y, active: !game.interiors.active };
+      // O foco da oclusão é o mesmo ponto que o sprite pinta: sem o termo de altura o
+      // jogador em cima do morro não "empurra" o prédio que o cobre.
+      const ground = game.map.heightAt(player.x, player.y);
+      const focusPoint = worldToScreen(player.x, player.y, ground);
+      focus.value = { x: focusPoint.x, y: focusPoint.y,
+        depth: depthOf(player.x, player.y, ground), active: !game.interiors.active };
       const onFoot = player.health > 0 && player.currentVehicleId === null && !player.swimming;
       const moving = inputState.magnitude > GAME_CONFIG.JOYSTICK_DEADZONE;
       const aiming = effectiveAim(player.facingAngle);
@@ -177,44 +189,52 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
       const aimLength = Math.hypot(direction.x, direction.y) || 1;
       // On mouse the reticle is the cursor's world point; sticks and touch keep the fixed ray.
       const atCursor = aiming.active && Number.isFinite(aiming.pointX) && Number.isFinite(aiming.pointY);
+      // O cursor e o raio vivem no plano de altura da câmera (é nele que a mira inverte a
+      // tela). Usar o terreno do ponto faria o retículo saltar do mouse numa encosta.
       const manualTarget = !onFoot ? null
-        : atCursor ? { x: aiming.pointX, y: aiming.pointY, lift: 0 }
+        : atCursor ? { x: aiming.pointX, y: aiming.pointY, lift: 0, h: game.camera.h }
           : aiming.active || moving
-            ? { x: player.x + direction.x / aimLength * 2, y: player.y + direction.y / aimLength * 2 }
+            ? { x: player.x + direction.x / aimLength * 2, y: player.y + direction.y / aimLength * 2, h: ground }
             : null;
       weapons.value = {
-        tracers: [...weapon.tracers, ...game.police.tracers].map((t) => ({ ...t })),
-        target: manualTarget ?? (onFoot && weapon.aimTarget ? { ...weapon.aimTarget } : null),
+        tracers: [...weapon.tracers, ...game.police.tracers].map((t) => ({
+          ...t, h1: game.map.heightAt(t.x1, t.y1), h2: game.map.heightAt(t.x2, t.y2),
+        })),
+        target: manualTarget ?? (onFoot && weapon.aimTarget
+          ? { ...weapon.aimTarget, h: game.map.heightAt(weapon.aimTarget.x, weapon.aimTarget.y) } : null),
         muzzle: weapon.fireFlash > 0 ? {
           x: game.player.x + Math.cos(weapon.aimAngle) * 0.3,
           y: game.player.y + Math.sin(weapon.aimAngle) * 0.3,
+          h: ground,
         } : null,
       };
       for (const [id, sv] of animalSVs) {
         const animal = game.wildlife.animals[id];
         if (!animal) continue;
-        sv.position.value = { x: animal.x, y: animal.y };
+        sv.position.value = { x: animal.x, y: animal.y, h: game.map.heightAt(animal.x, animal.y) };
         sv.visual.value = animalVisualState(animal, game.time);
       }
       for (const [id, sv] of entitySVs) {
         if (id === 'player') {
-          sv.value = { x: game.player.x, y: game.player.y };
+          sv.value = { x: game.player.x, y: game.player.y, h: game.map.heightAt(game.player.x, game.player.y) };
           continue;
         }
         const [kind, idxStr] = id.split(':');
         const idx = Number(idxStr);
         if (kind === 'npc') {
           const npc = game.npcs[idx];
-          if (npc) sv.value = { x: npc.x, y: npc.y };
+          if (npc) sv.value = { x: npc.x, y: npc.y, h: game.map.heightAt(npc.x, npc.y) };
         } else if (kind === 'inmate') {
           const inmate = game.jail.byId(idx);
-          if (inmate) sv.value = { x: inmate.x, y: inmate.y };
+          if (inmate) sv.value = { x: inmate.x, y: inmate.y, h: 0 };
         } else if (kind === 'people') {
           const occupant = game.crowd.byId(idx);
-          if (occupant) sv.value = { x: occupant.x, y: occupant.y };
+          if (occupant) sv.value = { x: occupant.x, y: occupant.y, h: 0 };
         } else if (kind === 'veh') {
           const v = game.vehicles[idx];
-          if (v) sv.value = { x: v.x, y: v.y };
+          // A âncora do sprite é sempre o chão: a folga do helicóptero entra como lift
+          // (`altitude * ELEVATION_PX`) em cima desta altura, nunca no lugar dela.
+          if (v) sv.value = { x: v.x, y: v.y, h: game.map.heightAt(v.x, v.y) };
         }
       }
     });

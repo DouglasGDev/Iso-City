@@ -138,10 +138,13 @@ function selectedTiles(ctx, width, height) {
 }
 function image(width, height) { return { width: () => width, height: () => height }; }
 function tileGame(ctx, width = C.MAP_TILES_W, height = C.MAP_TILES_H) {
+  const heights = new Float32Array(width * height);
   return { ...ctx, camera: { ...ctx.camera }, fog,
-    map: { data: { tilesW: width, tilesH: height, buildings: [], props: [],
+    // Chão plano de propósito: este oracle mede culling, não relevo (check-terrain cuida do relevo).
+    map: { data: { tilesW: width, tilesH: height, buildings: [], props: [], heights,
       tiles: Array.from({ length: width * height }, (_, i) => ({ kind: i % 5 ? 'grass' : 'road',
-        key: i % 7 ? 'tile_ground_grass' : 'missing-tile' })) } } };
+        key: i % 7 ? 'tile_ground_grass' : 'missing-tile' })) }, heightAt: () => 0 },
+  };
 }
 function drawnTiles(record) {
   return record.draws.map((draw) => {

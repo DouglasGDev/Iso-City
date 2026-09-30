@@ -11,7 +11,7 @@ import type { Dir4 } from '../game/GameConfig';
 import { MeleeSwing, type MeleeVisualState } from './WeaponEffects';
 import { BLOOD_POOL_STAINS, deathPose, type BloodStain } from '../entities/NPC';
 import { crouchPose } from '../entities/Player';
-import { dirToWorldVec } from '../world/IsoUtils';
+import { dirToWorldVec, ELEVATION_PX } from '../world/IsoUtils';
 
 interface Props {
   id: string;
@@ -69,7 +69,10 @@ export function EntitySprite({ id }: Props) {
   const game = getGame();
   const index = Number(id.split(':')[1]);
   const entity = entityForSprite(id, index);
-  const sv = useSharedValue({ x: entity?.x ?? 0, y: entity?.y ?? 0 });
+  const sv = useSharedValue({
+    x: entity?.x ?? 0, y: entity?.y ?? 0,
+    h: entity ? game.map.heightAt(entity.x, entity.y) : 0,
+  });
   const swimSV = useSharedValue(0);
   const swimAngleSV = useSharedValue(0);
   const [sprite, setSprite] = useState(() => readSpriteFrame(id));
@@ -188,7 +191,10 @@ export function EntitySprite({ id }: Props) {
       }
       if (id.startsWith('veh:')) {
         const v = getGame().vehicles[Number(id.split(':')[1])];
-        setLift(v && v.def.type === 'helicopter' ? v.altitude * 38 : 0);
+        // A folga vira elevação na mesma escala do relevo: um tile de ar é um tile de
+        // chão. Com outro fator, o helicóptero ficava enterrado na face da montanha
+        // exatamente quando a cota dele era a cota do platô.
+        setLift(v && v.def.type === 'helicopter' ? v.altitude * ELEVATION_PX : 0);
       }
     }, ms);
     return () => clearInterval(iv);
@@ -225,7 +231,9 @@ export function EntitySprite({ id }: Props) {
 
   const screen = useDerivedValue(() => {
     const p = sv.value;
-    return { x: (p.x - p.y) * 64, y: (p.x + p.y) * 32 };
+    // O `h` vem do laço de simulação: no UI thread não há Map para consultar, e a
+    // sombra precisa ficar no chão do terraço junto com o corpo.
+    return { x: (p.x - p.y) * 64, y: (p.x + p.y) * 32 - p.h * 64 };
   }, [sv]);
 
   const splashX = useDerivedValue(() => screen.value.x, [screen]);

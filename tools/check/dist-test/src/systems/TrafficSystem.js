@@ -5,6 +5,7 @@ const GameConfig_1 = require("../game/GameConfig");
 const Vehicle_1 = require("../entities/Vehicle");
 const vehicles_1 = require("../data/vehicles");
 const IsoUtils_1 = require("../world/IsoUtils");
+const TerrainSystem_1 = require("./TerrainSystem");
 const SoundManager_1 = require("../audio/SoundManager");
 const TrafficSignalSystem_1 = require("./TrafficSignalSystem");
 const NPCSystem_1 = require("./NPCSystem");
@@ -95,15 +96,15 @@ class TrafficSystem {
         const route = this.generateRoute(map, v.x, v.y);
         if (route.length < 2)
             return false;
-        let driver = null;
-        if (this.rng() < GameConfig_1.GAME_CONFIG.TRAFFIC_DRIVER_CHANCE) {
-            driver = npcs.find((n) => n.kind === 'civ' && !n.dead && !n.inVehicle && n.state !== 'knocked') ?? null;
-            if (driver) {
-                driver.inVehicle = true;
-                driver.vehicleId = v.id;
-                v.occupied = true;
-            }
-        }
+        // Carro de trânsito é carro dirigido: sem pedestre no banco não há trânsito, e roubar
+        // um veículo vazio não expulsa ninguém. Sem NPC livre na cidade o lote fica estacionado.
+        const driver = npcs.find((n) => n.kind === 'civ' && !n.dead && !n.inVehicle && n.state !== 'knocked') ?? null;
+        if (!driver)
+            return false;
+        driver.inVehicle = true;
+        driver.vehicleId = v.id;
+        driver.state = 'idle';
+        v.occupied = true;
         v.state = 'driving';
         this.traffic.push({ vehicle: v, driver, route, routeIndex: 0, state: 'driving',
             targetSpeed: ROAD_SPEED * (0.85 + this.rng() * 0.35), stuckTimer: 0, hornCooldown: 0,
@@ -524,8 +525,12 @@ class TrafficSystem {
         for (const [dx, dy] of [[stepX, 0], [0, stepY]]) {
             if (!dx && !dy)
                 continue;
+            const prevX = v.x, prevY = v.y;
             const circle = { x: v.x + dx, y: v.y + dy, radius };
             this.collision.resolveCircle(circle, map.queryNearby(circle.x, circle.y, radius + 2));
+            // O trânsito também enxerga o relevo: um talude no meio da pista barra o carro em
+            // vez de atravessar a montanha como se o chão fosse plano.
+            TerrainSystem_1.terrain.blockDrive(map, circle, prevX, prevY);
             v.x = circle.x;
             v.y = circle.y;
         }

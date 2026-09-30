@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Map = void 0;
+const GameConfig_1 = require("../game/GameConfig");
 const IsoUtils_1 = require("./IsoUtils");
 /**
  * O sprite ancora na ponta SUL (bottom-center).
@@ -44,6 +45,10 @@ class Map {
         this.roadGrid = [];
         this.nodeGridCols = 0;
         this.nodeGridRows = 0;
+        // O relevo é dado do mapa, não suposição: um chão sem malha de altura é plano, e é
+        // assim que interior antigo e fixture de teste continuam lendo altura sem crash.
+        if (!data.heights)
+            data.heights = new Float32Array(data.tilesW * data.tilesH);
         this.data = data;
         const colliders = [...extraColliders];
         const buildingColliders = [];
@@ -498,6 +503,45 @@ class Map {
         if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH)
             return null;
         return this.data.tiles[ty * this.data.tilesW + tx].biome;
+    }
+    /**
+     * Altura do chão em tiles, losango a losango e sem interpolar: o relevo é feito de
+     * terraços, e um valor suave entre dois degraus faria o sprite deslizar pela face
+     * da montanha em vez de parar nela.
+     */
+    heightAt(x, y) {
+        return this.heightAtTile(Math.floor(x), Math.floor(y));
+    }
+    /** Mesma leitura por índice de tile, para o render varrer a malha sem Math.floor. */
+    heightAtTile(tx, ty) {
+        if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH)
+            return 0;
+        return this.data.heights[ty * this.data.tilesW + tx];
+    }
+    /** Altura em degraus (1 = 1/4 de tile). É a unidade das regras de climb. */
+    levelAt(x, y) {
+        return Math.round(this.heightAt(x, y) / GameConfig_1.GAME_CONFIG.TERRAIN_LEVEL_TILES);
+    }
+    /**
+     * A única "colisão" do relevo: comparar dois níveis. Um tile mais alto que o atual
+     * a mais de um degrau é parede, e uma queda funda demais é borda — é assim que a
+     * montanha barra o NPC sem nenhuma geometria nova nem câmera em 3D.
+     */
+    canClimb(fromX, fromY, toX, toY) {
+        const up = this.levelAt(toX, toY) - this.levelAt(fromX, fromY);
+        return up <= GameConfig_1.GAME_CONFIG.TERRAIN_STEP_UP_FOOT && -up <= GameConfig_1.GAME_CONFIG.TERRAIN_MAX_DROP;
+    }
+    /**
+     * Roda não faz trilha: o gerador suaviza o asfalto inteiro, então um carro que
+     * encare um degrau está cortando campo, não subindo rua.
+     */
+    canDriveOver(fromX, fromY, toX, toY) {
+        const up = this.levelAt(toX, toY) - this.levelAt(fromX, fromY);
+        return up <= GameConfig_1.GAME_CONFIG.TERRAIN_STEP_UP_VEHICLE && -up <= GameConfig_1.GAME_CONFIG.TERRAIN_STEP_UP_VEHICLE;
+    }
+    /** Inclinação no ponto, em níveis por tile: positiva subindo na direção dada. */
+    slopeAlong(x, y, dx, dy) {
+        return this.levelAt(x + dx, y + dy) - this.levelAt(x, y);
     }
 }
 exports.Map = Map;

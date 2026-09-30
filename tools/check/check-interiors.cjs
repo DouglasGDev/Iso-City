@@ -27,6 +27,7 @@ const interiors = new InteriorSystem(world);
 const p = createPlayer(0, 0);
 let transitions = 0;
 let used = 0;
+let records = 0;
 let shopsOpened = 0;
 const owned = new Set(['unarmed', 'bat']);
 const ctx = {
@@ -35,6 +36,7 @@ const ctx = {
   grantGun: (id) => (owned.has(id) ? false : (owned.add(id), true)),
   refillOwned: () => [...owned].some((id) => id !== 'unarmed' && id !== 'bat'),
   feed: (health, stamina) => { p.health = Math.min(100, p.health + health); p.stamina = Math.min(1, p.stamina + stamina); },
+  clearRecord: () => { p.wantedLevel = 0; records++; },
   onTransition: () => transitions++,
   onUse: () => used++,
   onOpenShop: () => shopsOpened++,
@@ -63,7 +65,10 @@ const entranceDensity = interiors.entrances.length / (world.worldW * world.world
 assert.ok(entranceDensity > 10 / (160 * 160) && entranceDensity < 100 / (160 * 160), `entrance density: ${entranceDensity}`);
 assert.equal(new Set(interiors.entrances.map((e) => `${e.x},${e.y}`)).size, interiors.entrances.length);
 // A porta da cadeia é a calçada da esquadra, não a fachada de uma loja: ver check-jail.
-for (const e of interiors.entrances.filter((e) => e.kind !== 'jail')) {
+// A delegacia também é calçada (ver o bloco próprio mais abaixo), então as duas
+// escapam da regra da fachada — e do espaçamento de 8 tiles, que é uma regra de comércio.
+const storefront = (e) => e.kind !== 'jail' && e.kind !== 'precinct';
+for (const e of interiors.entrances.filter(storefront)) {
   assert.ok(clearAt(world, e.x, e.y), `blocked entrance ${e.id}`);
   const b = world.data.buildings[e.id];
   assert.ok(b, `entrada ${e.id} sem prédio`);
@@ -72,7 +77,7 @@ for (const e of interiors.entrances.filter((e) => e.kind !== 'jail')) {
   assert.ok(Math.hypot(e.x - b.x, e.y - b.y) < b.footprintW + 0.3);
   assert.ok(!/warehouse|fruitstand|autoshop/.test(b.key), 'unsupported establishment has a generic interior');
   assert.equal(e.service === 'ammo', b.key.includes('gunshop'));
-  for (const other of interiors.entrances) if (other !== e) assert.ok(Math.hypot(e.x - other.x, e.y - other.y) >= 8);
+  for (const other of interiors.entrances.filter(storefront)) if (other !== e) assert.ok(Math.hypot(e.x - other.x, e.y - other.y) >= 8);
   p.x = e.x - Math.cos(e.facing) * 0.6; p.y = e.y - Math.sin(e.facing) * 0.6;
   assert.equal(interiors.nearest(p), null, 'cannot enter through the back of the facade');
 }
@@ -116,6 +121,69 @@ for (const kind of ['home', 'shop', 'office']) {
   interiors.update(0.6);
 }
 assert.equal(transitions, 6);
+// --------------------------------------------------- delegacia aberta a qualquer hora
+// O pedido foi este: a porta da esquadra não pode aparecer só quando o jogador é preso.
+// Toda esquadra tem a sua, na calçada, e o balcão cobra fiança pelas estrelas do registro.
+const stations = world.landmarksOf('police');
+assert.ok(stations.length >= 2, 'a cidade tem mais de uma esquadra');
+const precincts = interiors.entrances.filter((e) => e.kind === 'precinct');
+assert.equal(precincts.length, stations.length - 1, 'cada esquadra tem porta, menos a que é presídio');
+for (const e of precincts) {
+  assert.equal(e.label, 'Delegacia');
+  assert.equal(e.service, 'bail');
+  assert.equal(e.counter, null, 'a delegacia não vende nada');
+  assert.ok(clearAt(world, e.x, e.y), 'porta da delegacia bloqueada');
+  assert.ok(stations.some((s) => Math.hypot(s.front.x - e.x, s.front.y - e.y) < 3), 'porta longe da esquadra');
+  for (const other of interiors.entrances) if (other !== e) {
+    assert.ok(Math.hypot(e.x - other.x, e.y - other.y) >= 2.5, 'duas portas no mesmo endereço');
+  }
+  p.x = e.x - Math.cos(e.facing) * 0.6; p.y = e.y - Math.sin(e.facing) * 0.6;
+  assert.equal(interiors.nearest(p), null, 'não se entra pelas costas da porta da delegacia');
+  p.x = e.x; p.y = e.y;
+  assert.equal(interiors.nearest(p), e, 'a calçada da esquadra abre a delegacia');
+}
+{
+  const door = precincts[0];
+  Object.assign(p, { currentVehicleId: null, swimming: false, health: 100, money: 500, wantedLevel: 0 });
+  p.x = door.x; p.y = door.y;
+  assert.ok(interiors.interact(ctx), 'a delegacia abre sem estar preso');
+  const hall = interiors.active;
+  assert.equal(hall.kind, 'precinct');
+  assert.equal(hall.shop, null);
+  assert.ok(hall.furniture.length >= 5, 'a delegacia é mobiliada');
+  assert.ok(hall.furniture.some((f) => f.kind === 'counter'), 'tem balcão de atendimento');
+  assert.ok(clearAt(hall.map, p.x, p.y), 'você não nasce dentro de um móvel da delegacia');
+  assert.ok(reachable(hall.map, p, hall.service), 'balcão da delegacia inacessível');
+  assert.ok(reachable(hall.map, p, hall.exit), 'saída da delegacia inacessível');
+  interiors.update(0.6);
+  p.x = hall.service.x; p.y = hall.service.y;
+  assert.ok(interiors.interact(ctx));
+  assert.equal(p.money, 500, 'sem registro o balcão não cobra');
+  assert.equal(interiors.message, 'Você não está procurado');
+  p.wantedLevel = 2;
+  interiors.update(2.5);
+  assert.ok(interiors.interact(ctx));
+  assert.equal(records, 1, 'a fiança limpa o registro no WantedSystem');
+  assert.equal(p.wantedLevel, 0);
+  assert.equal(p.money, 500 - 2 * hall.service.cost, 'a fiança cobra por estrela');
+  assert.equal(interiors.message, 'Fiança paga');
+  p.wantedLevel = 3; p.money = 100;
+  interiors.update(2.5);
+  assert.ok(interiors.interact(ctx));
+  assert.equal(p.wantedLevel, 3, 'sem dinheiro o balcão não solta ninguém');
+  assert.equal(p.money, 100);
+  assert.equal(interiors.message, 'Dinheiro insuficiente');
+  // O recado mostra o preço das estrelas que o jogador tem agora, não um valor fixo.
+  p.wantedLevel = 4; p.money = 500;
+  interiors.update(2.5);
+  assert.equal(interiors.prompt(p), `Pagar fiança · $${4 * hall.service.cost}`);
+  interiors.update(2.5);
+  p.x = hall.exit.x; p.y = hall.exit.y;
+  assert.ok(interiors.interact(ctx));
+  assert.equal(interiors.active, null);
+  assert.equal(p.x, door.x); assert.equal(p.y, door.y);
+  interiors.update(0.6);
+}
 // Armaria: comprar arma, não comprar de novo, e munição só para quem já tem fogo.
 owned.clear(); owned.add('unarmed'); owned.add('bat');
 const armaria = interiors.entrances.find((e) => e.counter === 'armaria');

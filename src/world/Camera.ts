@@ -6,10 +6,12 @@ export interface CameraState {
   targetX: number;
   targetY: number;
   zoom: number;
+  /** Altura do chão sob a câmera, em tiles. Transla a tela para cima; nunca gira nada. */
+  h: number;
 }
 
 export function createCamera(x: number, y: number): CameraState {
-  return { x, y, targetX: x, targetY: y, zoom: GAME_CONFIG.ZOOM_DEFAULT };
+  return { x, y, targetX: x, targetY: y, zoom: GAME_CONFIG.ZOOM_DEFAULT, h: 0 };
 }
 
 export function cameraFollow(
