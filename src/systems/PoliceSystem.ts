@@ -6,6 +6,7 @@ import { createVehicle, type Vehicle } from '../entities/Vehicle';
 import { VEHICLE_DEFS } from '../data/vehicles';
 import { dirToAngle, rotateAngleToward, velocityToDir } from '../world/IsoUtils';
 import { sound } from '../audio/SoundManager';
+import { terrain } from './TerrainSystem';
 import { vehicleGroundCollider, type CollisionSystem } from './CollisionSystem';
 import type { HealthSystem } from './HealthSystem';
 import type { WantedSystem } from './WantedSystem';
@@ -542,9 +543,13 @@ export class PoliceSystem {
     if (npc.speed) {
       const steps = Math.max(1, Math.ceil(npc.speed * dt / 0.1));
       for (let i = 0; i < steps; i++) {
+        const prevX = npc.x, prevY = npc.y;
         const circle = { x: npc.x + dx / d * npc.speed * dt / steps, y: npc.y + dy / d * npc.speed * dt / steps, radius: GAME_CONFIG.NPC_RADIUS };
         ctx.collision.resolveCircle(circle, ctx.map.queryNearby(circle.x, circle.y, 1.5));
         ctx.collision.resolveCircleVsVehicles(circle, ctx.vehicles);
+        // O talude não deixa o policial cortar pela montanha: ele contorna pela rua,
+        // exatamente como o muro de uma casa já o faz hoje.
+        terrain.blockWalk(ctx.map, circle, prevX, prevY);
         if (ctx.map.isInside(circle.x, circle.y, circle.radius) && !ctx.map.isWaterWorld(circle.x, circle.y)) { npc.x = circle.x; npc.y = circle.y; }
       }
       npc.dir = velocityToDir(dx, dy);
@@ -656,9 +661,12 @@ export class PoliceSystem {
     const steps = Math.max(1, Math.ceil(Math.hypot(vx, vy) * dt / 0.15));
     const radius = Math.min(v.def.footprintW, v.def.footprintH) / 2;
     for (let i = 0; i < steps; i++) {
+      const prevX = v.x, prevY = v.y;
       const circle = { x: v.x + vx * dt / steps, y: v.y + vy * dt / steps, radius };
       ctx.collision.resolveCircle(circle, ctx.map.queryNearby(circle.x, circle.y, 2));
       ctx.collision.resolveCircleVsVehicles(circle, ctx.vehicles, v.id);
+      // A viatura em patrulha respeita o mesmo talude que barra o jogador: morro não é atalho.
+      terrain.blockDrive(ctx.map, circle, prevX, prevY);
       if (ctx.map.isInside(circle.x, circle.y, radius) && !ctx.map.isWaterWorld(circle.x, circle.y)) { v.x = circle.x; v.y = circle.y; }
     }
   }

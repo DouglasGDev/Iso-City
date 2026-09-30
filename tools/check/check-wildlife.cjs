@@ -68,6 +68,9 @@ const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 function fixture(size = 160, kind = 'grass', biome = 'forest') {
   const boxes = [];
   let queries = 0;
+  // Relevo plano por padrão; level() levanta um talude para as cercas de montanha.
+  const levels = new Int16Array(size * size);
+  const levelAt = (x, y) => ((y < 0 || y >= size || x < 0 || x >= size) ? 0 : levels[y * size + x]);
   const map = {
     data: { tilesW: size, tilesH: size, tiles: Array.from({ length: size * size }, () => ({ kind, biome })) },
     worldW: size, worldH: size,
@@ -76,8 +79,13 @@ function fixture(size = 160, kind = 'grass', biome = 'forest') {
       return boxes.filter((box) => box.x <= x + radius && box.x + box.width >= x - radius
         && box.y <= y + radius && box.y + box.height >= y - radius);
     },
+    canClimb(fromX, fromY, toX, toY) {
+      const up = levelAt(Math.floor(toX), Math.floor(toY)) - levelAt(Math.floor(fromX), Math.floor(fromY));
+      return up <= 1 && -up <= 3;
+    },
   };
   return { map, boxes, tile(x, y, patch) { Object.assign(map.data.tiles[y * size + x], patch); },
+    level(x, y, value) { levels[y * size + x] = value; },
     queries: () => queries, resetQueries() { queries = 0; } };
 }
 function single(species = 'rabbit') {
@@ -294,6 +302,22 @@ test('fences and water stop a swept body; roads and city ground are corridors it
       } else assertPathable(map, animal);
     }
     if (!wall) assert.ok(animal.x - animal.radius > 61, `${barrier} não foi atravessada`);
+  }
+});
+
+test('relevo íngreme é parede: a fauna contorna o talude em vez de escalar ou despencar', () => {
+  for (const [name, wall] of [['subida', [0, 6]], ['descida', [6, 0]]]) {
+    const { system, animal, context, map, level } = single('deer');
+    animal.x = 59.5;
+    for (let y = 0; y < map.worldH; y++) {
+      for (let x = 0; x < map.worldW; x++) level(x, y, x < 61 ? wall[0] : wall[1]);
+    }
+    for (let i = 0; i < 160; i++) {
+      context.player = { x: animal.x - 2, y: animal.y };
+      system.update(i % 5 === 0 ? 10 : 0.1, context);
+      assert.ok(animal.x < 61, `${name}: o animal escalou ou despencou do talude`);
+      assertHabitat(map, animal);
+    }
   }
 });
 
@@ -561,14 +585,18 @@ test('Skia sprite: 9 cached paths, integer original art, different views/gaits a
   const value = (v) => v && 'value' in v ? v.value : v;
   for (const species of ['rabbit', 'deer', 'fox', 'boar']) {
     const animal = createAnimal(0, species, 3, 5);
-    const visual = { value: animalVisualState(animal, 0) }, position = { value: { x: 3, y: 5 } }, clock = { value: 0 };
+    const visual = { value: animalVisualState(animal, 0) }, position = { value: { x: 3, y: 5, h: 0 } }, clock = { value: 0 };
     const tree = expand(AnimalSprite({ animal, visual, position, clock }));
     const paths = tree.filter((element) => element.type === 'Path');
     assert.equal(paths.length, 9);
     assert.equal(tree[0].props.antiAlias, false);
     assert.deepEqual(value(tree[0].props.transform), [{ translateX: -128 }, { translateY: 256 }]);
-    position.value = { x: 4, y: 5 };
+    position.value = { x: 4, y: 5, h: 0 };
     assert.deepEqual(value(tree[0].props.transform), [{ translateX: -64 }, { translateY: 288 }]);
+    // O chão elevado só mexe o Y da tela: um tile e meio acima é 96 px para cima, X intacto.
+    position.value = { x: 4, y: 5, h: 1.5 };
+    assert.deepEqual(value(tree[0].props.transform), [{ translateX: -64 }, { translateY: 192 }]);
+    position.value = { x: 4, y: 5, h: 0 };
     const posePaths = (dir, state, animTime) => {
       visual.value = { ...visual.value, dir, state, animTime, speed: 1 };
       return paths.slice(1).map((p) => value(p.props.path));

@@ -34,19 +34,21 @@ function CharredHull({ cx, cy, angle }: { cx: number; cy: number; angle: number 
   );
 }
 
-export function WreckSprite({ wreck, clock, smoking }: {
+export function WreckSprite({ wreck, clock, smoking, h }: {
   wreck: Wreck;
   clock: SharedValue<number>;
   smoking: boolean;
+  /** Cota do chão onde a carcaça esfriou: o resto do mundo já é desenhado nela. */
+  h: number;
 }) {
-  const s = worldToScreen(wreck.x, wreck.y);
+  const s = worldToScreen(wreck.x, wreck.y, h);
   const image = wreck.key ? spriteStore[wreck.key] ?? null : null;
   const w = image ? image.width() : 0;
-  const h = image ? image.height() : 0;
+  const hh = image ? image.height() : 0;
   const shards = useMemo(() => {
     const path = Skia.Path.Make();
     for (const shard of wreck.shards) {
-      const p = worldToScreen(wreck.x + shard.dx, wreck.y + shard.dy);
+      const p = worldToScreen(wreck.x + shard.dx, wreck.y + shard.dy, h);
       const cx = p.x - s.x, cy = p.y - s.y;
       const cos = Math.cos(shard.rot) * shard.size, sin = Math.sin(shard.rot) * shard.size;
       path.moveTo(cx - cos + sin, cy - sin - cos);
@@ -80,8 +82,8 @@ export function WreckSprite({ wreck, clock, smoking }: {
       </Group>
       {image ? (
         <Group transform={[{ translateX: s.x }, { translateY: s.y }, { rotate: wreck.tilt },
-          { translateX: -w / 2 }, { translateY: -h }]}>
-          <Image image={image} x={0} y={0} width={w} height={h} fit="fill" />
+          { translateX: -w / 2 }, { translateY: -hh }]}>
+          <Image image={image} x={0} y={0} width={w} height={hh} fit="fill" />
         </Group>
       ) : (
         <CharredHull cx={s.x} cy={s.y - 9} angle={HULL_ANGLE[wreck.dir] + wreck.tilt} />

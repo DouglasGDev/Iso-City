@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DIR_VECTORS = void 0;
+exports.DIR_VECTORS = exports.ELEVATION_PX = void 0;
 exports.worldToScreen = worldToScreen;
 exports.screenToWorld = screenToWorld;
 exports.depthOf = depthOf;
@@ -15,14 +15,31 @@ exports.angleToWorldDirStable = angleToWorldDirStable;
 exports.rotateAngleToward = rotateAngleToward;
 exports.dirToWorldVec = dirToWorldVec;
 exports.deltaToDir = deltaToDir;
-function worldToScreen(x, y) {
-    return { x: (x - y) * 64, y: (x + y) * 32 };
+/**
+ * Pixels de tela que um tile de elevação anda para cima. O losango do tile é
+ * 128x64, então 64px por tile de altura é exatamente o lado vertical de um cubo
+ * isométrico da mesma base: o relevo vira volume no mesmo ritmo da arte, sem
+ * inventar uma terceira projeção. `h` é altura em tiles, nunca em pixels.
+ */
+exports.ELEVATION_PX = 64;
+/**
+ * Projeção iso 2:1 do jogo. `h` desloca só o eixo Y de tela: o X continua
+ * (x - y), ou seja, elevar o chão não gira nem inclina a câmera. É assim que o
+ * relevo entra sem tirar do jogo a identidade isométrica.
+ */
+function worldToScreen(x, y, h = 0) {
+    return { x: (x - y) * 64, y: (x + y) * 32 - h * exports.ELEVATION_PX };
 }
 function screenToWorld(sx, sy) {
     return { x: sx / 128 + sy / 64, y: sy / 64 - sx / 128 };
 }
-function depthOf(x, y) {
-    return x + y;
+/**
+ * Chave do pintor isométrico: quem está mais para baixo na tela desenha por último.
+ * Com relevo, a âncora de um tile elevado sobe `2h` na mesma contagem, então o
+ * morro da frente empurra o jogador de trás para o fundo exatamente como faz na tela.
+ */
+function depthOf(x, y, h = 0) {
+    return x + y - 2 * h;
 }
 exports.DIR_VECTORS = {
     SE: { wx: 1, wy: 0 },

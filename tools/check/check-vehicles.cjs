@@ -14,12 +14,24 @@ require.extensions['.ts'] = (module, file) => module._compile(ts.transpileModule
   fileName: file,
 }).outputText, file);
 const load = (file) => require(path.join(root, 'src', file + '.ts'));
+// O atropelamento faz barulho: só o áudio nativo é stub, o resto do sistema roda real.
+const audio = [];
+const soundFile = path.join(root, 'src', 'audio/SoundManager.ts');
+require.cache[soundFile] = {
+  id: soundFile, filename: soundFile, loaded: true,
+  exports: { sound: { play: (...args) => audio.push(args), setLoop: (...args) => audio.push(args) } },
+};
 const { VEHICLE_DEFS, CIVILIAN_VEHICLES, VEHICLE_ORDER } = load('data/vehicles');
 const { spriteKeyForVehicle, vehicleKey, isKnownAsset, ASSETS_TO_LOAD, damagedVehicleKey } = load('assets/AssetRegistry');
 const { createVehicle, vehicleSpriteKey } = load('entities/Vehicle');
 const { createPlayer } = load('entities/Player');
 const { CollisionSystem, vehicleGroundCollider, collideCircleAabb } = load('systems/CollisionSystem');
 const { VehicleSystem } = load('systems/VehicleSystem');
+const { VehicleImpactSystem } = load('systems/VehicleImpactSystem');
+const { HealthSystem } = load('systems/HealthSystem');
+const { WantedSystem } = load('systems/WantedSystem');
+const { createNPC } = load('entities/NPC');
+const { createAnimal } = load('entities/Animal');
 const { InteractionSystem } = load('systems/InteractionSystem');
 const { MovementSystem } = load('systems/MovementSystem');
 const { Map: WorldMap } = load('world/Map');
@@ -242,17 +254,118 @@ for (const id of variants) {
     });
   }
 
-  test(`${id}: occupied/destroyed vehicles reject entry`, () => {
+  test(`${id}: NPC ao volante nao tranca a porta; destruido e no ar tranca`, () => {
     const car = createVehicle(20, def, color, 12, 12, 'SE');
     const player = createPlayer(12, 12);
+    // Assalto: quem está no banco é expulso pelo proprio sistema da viatura/transito, nao por
+    // uma porta trancada. Se a porta fechasse, carro de policia seria mobiliario urbano.
     car.occupied = true;
     vehicleSystem.enterVehicle(player, car);
-    assert.equal(player.currentVehicleId, null);
+    assert.equal(player.currentVehicleId, car.id);
+    assert.equal(player.state, 'driving');
+    player.currentVehicleId = null;
     car.occupied = false;
     car.state = 'destroyed';
     vehicleSystem.enterVehicle(player, car);
     assert.equal(player.currentVehicleId, null);
     assert.equal(interaction.nearestVehicle(player, [car]), null);
+    car.state = 'driving';
+    car.altitude = 2;
+    vehicleSystem.enterVehicle(player, car);
+    assert.equal(player.currentVehicleId, null, 'aeronave pairando nao se aborda');
   });
 }
+// ------------------------------------------------------------------ atropelamento
+
+function rolling(id, x, y, speed, dir = 'SE') {
+  const v = createVehicle(id, VEHICLE_DEFS.sedan, 'blue', x, y, dir);
+  v.state = 'driving';
+  v.speed = speed;
+  return v;
+}
+
+function impactScene(overrides) {
+  const drops = [];
+  const shakes = [];
+  return {
+    impact: new VehicleImpactSystem(), drops, shakes,
+    ctx: Object.assign({
+      map: world(), collision, health: new HealthSystem(), wanted: new WantedSystem(),
+      player: createPlayer(24, 24), vehicles: [], npcs: [], animals: [],
+      pickups: { spawnDrop: (x, y, amount) => drops.push({ x, y, amount }) },
+      time: 5, indoors: false, rng: () => 0.5,
+      shake: (amount) => shakes.push(amount), onStructChange: () => {},
+    }, overrides),
+  };
+}
+
+test('atropelamento: o carro do jogador a 2,6 mata o pedestre, deixa dinheiro e sobe o procurado', () => {
+  const car = rolling(1, 12, 12, 2.6);
+  const npc = createNPC(7, 'a', 12.2, 12);
+  const scene = impactScene({ vehicles: [car], npcs: [npc] });
+  scene.ctx.player.currentVehicleId = car.id;
+  scene.impact.update(0.05, scene.ctx);
+  assert.equal(npc.dead, true);
+  assert.equal(npc.state, 'dead');
+  assert.equal(scene.drops.length, 1);
+  assert.ok(audio.some((entry) => entry[0] === 'bodyHit'), 'o baque do corpo tem que ser ouvido');
+  assert.ok(scene.ctx.player.wantedLevel >= GAME_CONFIG.WANTED_KILL);
+  // Arremesso para fora da pista: sem isso o corpo ficaria sob as rodas apanhando todo frame.
+  assert.ok(Math.abs(npc.y - car.y) > 0.6, 'pedestre continua embaixo do carro');
+});
+
+test('atropelamento: abaixo de HIT_PED_SPEED o carro apenas encosta', () => {
+  const car = rolling(2, 12, 12, GAME_CONFIG.HIT_PED_SPEED - 0.4);
+  const npc = createNPC(8, 'a', 12.2, 12);
+  const scene = impactScene({ vehicles: [car], npcs: [npc] });
+  scene.impact.update(0.05, scene.ctx);
+  assert.equal(npc.health, 45);
+  assert.equal(npc.x, 12.2);
+  assert.equal(scene.drops.length, 0);
+});
+
+test('atropelamento: carro dirigido por NPC machuca, mas a culpa não é de quem anda a pé', () => {
+  const car = rolling(3, 12, 12, 2.2);
+  const npc = createNPC(9, 'a', 12.2, 12);
+  const scene = impactScene({ vehicles: [car], npcs: [npc] });
+  scene.impact.update(0.05, scene.ctx);
+  assert.equal(npc.dead, true);
+  assert.equal(scene.ctx.player.wantedLevel, 0);
+  assert.equal(scene.drops.length, 0);
+});
+
+test('atropelamento: o veículo em curso machuca o jogador a pé e o joga para fora da rua', () => {
+  const car = rolling(4, 12, 12, 2.6);
+  const player = createPlayer(12.2, 12);
+  const scene = impactScene({ vehicles: [car], player });
+  scene.impact.update(0.05, scene.ctx);
+  assert.ok(player.health < 100);
+  assert.ok(Math.abs(player.y - 12) > 0.6);
+  assert.ok(scene.shakes.length >= 1);
+});
+
+test('atropelamento: dentro de uma sala nenhum carro da rua alcança o jogador', () => {
+  const car = rolling(5, 12, 12, 2.6);
+  const player = createPlayer(12.2, 12);
+  const scene = impactScene({ vehicles: [car], player, indoors: true });
+  scene.impact.update(0.05, scene.ctx);
+  assert.equal(player.health, 100);
+});
+
+test('atropelamento: quem fica preso embaixo da roda apanha aos poucos, não de novo por impacto', () => {
+  const car = rolling(6, 12, 12, 2.6);
+  const boar = createAnimal(1, 'boar', 12.2, 12);
+  const burst = (GAME_CONFIG.RUNOVER_DAMAGE + 2.6 * GAME_CONFIG.RUNOVER_DAMAGE_PER_SPEED) * 1.4;
+  const scene = impactScene({ vehicles: [car], animals: [boar] });
+  scene.impact.update(0.05, scene.ctx);
+  assert.equal(boar.dead, false, 'o javali aguenta o impacto inicial');
+  const after = boar.health;
+  assert.ok(Math.abs(after - (95 - burst)) < 1e-6, 'dano do impacto fora do previsto');
+  boar.x = 12.2; boar.y = 12; // empurrado contra uma parede, ele continua sob o carro
+  scene.impact.update(0.05, scene.ctx);
+  assert.ok(boar.health < after, 'esmagamento não machucou');
+  assert.ok(boar.health > after - burst, 'esmagamento aplicou um impacto inteiro de novo');
+  assert.equal(boar.dead, false);
+});
+
 console.log(`${passed} vehicle checks passed`);

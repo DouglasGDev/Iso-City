@@ -1,15 +1,21 @@
 // Browser check: entering a room frames it correctly on a phone and a desktop.
 // Nothing here trusts the Node camera maths: every assertion reads the live
 // GameState after the game has actually eased the camera into place.
+// Run: node tools/check/check-interiors-browser.cjs
+// Precisa do Expo web em :8082 e de um Chrome com --remote-debugging-port (QA_CDP_PORT, padrão 9223).
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 
+const PORT = Number(process.env.QA_CDP_PORT || 9223);
 let socket, serial = 0;
 const pending = new Map(), errors = [];
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const send = (method, params = {}) => new Promise((resolve, reject) => {
-  const id = ++serial; pending.set(id, { resolve, reject });
+// Uma volta no CDP que nunca responde prende o script inteiro: toda chamada tem prazo.
+const send = (method, params = {}, timeout = 30000) => new Promise((resolve, reject) => {
+  const id = ++serial;
+  const timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP ${method} timeout`)); }, timeout);
+  pending.set(id, { resolve: (r) => { clearTimeout(timer); resolve(r); }, reject: (e) => { clearTimeout(timer); reject(e); } });
   socket.send(JSON.stringify({ id, method, params }));
 });
 async function evaluate(expression) {
@@ -19,7 +25,11 @@ async function evaluate(expression) {
 }
 async function until(expression, label, timeout = 20000) {
   const end = Date.now() + timeout;
-  while (Date.now() < end) { if (await evaluate(expression)) return; await delay(60); }
+  while (Date.now() < end) {
+    // Durante uma navegação o contexto morre no meio da checagem: conta como ainda não pronto.
+    try { const v = await evaluate(expression); if (v) return v; } catch { /* página trocando */ }
+    await delay(60);
+  }
   throw new Error('Timed out: ' + label);
 }
 async function screenshot(name) {
@@ -42,10 +52,23 @@ async function boot(width, height, mobile) {
   await send('Emulation.setDeviceMetricsOverride', { width, height, screenWidth: width, screenHeight: height, deviceScaleFactor: 1, mobile });
   await send('Emulation.setTouchEmulationEnabled', { enabled: mobile, maxTouchPoints: 5 });
   await send('Page.navigate', { url: 'http://localhost:8082/' });
-  await until('!!document.body?.innerText.match(/JOGAR|NOVO JOGO/)', 'menu', 90000);
-  await tapPoint(await evaluate(`(()=>{const e=[...document.querySelectorAll('div')].find(e=>e.childElementCount===0&&(e.textContent==='JOGAR'||e.textContent==='NOVO JOGO'));
-    const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`), mobile);
-  await until('document.body.innerText.includes("HP 100")', 'HUD');
+  // Bundle web frio leva mais de um minuto no Metro: sem margem aqui a checagem reclama do menu.
+  await until(`!!document.querySelector('[data-testid="menu-new"],[data-testid="menu-play"]')
+    ||!!document.body?.innerText.match(/JOGAR|NOVO JOGO/)`, 'menu', 180000);
+  // O menu abre sem saber se existe save ("JOGAR") e troca para "CONTINUAR / NOVO JOGO" quando o
+  // readSummary responde. Um toque no meio dessa troca cai no CONTINUAR — que está no mesmo pixel
+  // — e o segundo boot herdaria o save do primeiro: a pistola já comprada, a loja sem preço.
+  await delay(600);
+  const menu = await evaluate(`(()=>{const b=document.querySelector('[data-testid="menu-new"]')
+    ||document.querySelector('[data-testid="menu-play"]')
+    ||[...document.querySelectorAll('div')].find((e)=>e.childElementCount===0&&e.textContent==='NOVO JOGO')
+    ||[...document.querySelectorAll('div')].find((e)=>e.childElementCount===0&&e.textContent==='JOGAR');
+    if(!b)return null;const r=b.getBoundingClientRect();
+    return{cx:r.x+r.width/2,cy:r.y+r.height/2,t:b.getAttribute('data-testid')||b.textContent}})()`);
+  assert.ok(menu, 'nenhum botão de jogar no menu');
+  await tapPoint({ x: menu.cx, y: menu.cy }, mobile);
+  console.log(`OK menu aberto por ${menu.t}`);
+  await until('document.body.innerText.includes("HP 100")', 'HUD', 60000);
   await evaluate(`(()=>{const m=[...__r.getModules().values()].filter(m=>m.isInitialized).map(m=>m.publicModule.exports);
     globalThis.qa={g:m.find(m=>m?.getGame).getGame(),input:m.find(m=>m?.inputState).inputState};const g=qa.g;
     g.player.invulnUntil=Infinity;g.weather.intensity=0;g.dayNight.t=.5;})()`);
@@ -152,6 +175,76 @@ async function counterPass(counter, tag, mobile) {
   console.log(`OK ${counter} counter bought on ${tag} (menu, price and delivery)`);
 }
 
+/**
+ * Delegacia aberta a qualquer hora: a porta está na calçada da esquadra, o plantão é de
+ * farda e o balcão cobra a fiança pelas estrelas do registro. Nada aqui chama o sistema
+ * por trás — é o mesmo interact que o botão da tela enfileira.
+ */
+async function bailPass(tag) {
+  const door = await evaluate(`(()=>{const g=qa.g,e=g.interiors.entrances.find(e=>e.kind==='precinct');
+    if(!e)return null;const p=g.player;p.x=e.x;p.y=e.y;p.vx=p.vy=0;p.money=5000;p.wantedLevel=0;
+    g.camera.x=e.x;g.camera.y=e.y;g.notifyEntityChange();return{label:e.label,x:e.x,y:e.y}})()`);
+  assert.ok(door, 'a cidade tem delegacia com porta na calçada');
+  assert.equal(door.label, 'Delegacia');
+  // Na calçada, de frente para a porta, o recado tem de ser o nome da esquadra.
+  await delay(400);
+  assert.equal(await evaluate('qa.g.interiors.prompt(qa.g.player)'), 'Delegacia', 'a porta não anuncia a delegacia');
+  await evaluate('qa.g.wanted.raise(qa.g.player,3)');
+  await delay(300);
+  assert.equal(await evaluate('qa.g.player.wantedLevel'), 3, 'o registro abriu antes de entrar');
+  await evaluate('qa.input.interactQueued=true');
+  await until(`(()=>qa.g.interiors.active&&qa.g.interiors.active.kind==='precinct')()`, 'a porta da delegacia abre', 6000);
+  const cast = await evaluate(`(()=>{const c=qa.g.crowd;return{dentro:c.inside,
+    farda:c.list.filter((o)=>o.kind==='cop').length,civis:c.list.filter((o)=>o.kind==='civ').length}})()`);
+  assert.ok(cast.dentro && cast.farda >= 2, `a delegacia tem oficiais de plantão (${JSON.stringify(cast)})`);
+  assert.ok(cast.civis >= 1, 'tem cidadão na sala de espera');
+  await evaluate(`(()=>{const g=qa.g,s=g.interiors.active.service;g.player.x=s.x;g.player.y=s.y;g.notifyEntityChange();})()`);
+  await delay(400);
+  assert.equal(await evaluate('qa.g.interiors.prompt(qa.g.player)'), 'Pagar fiança · $180',
+    'o balcão tem de mostrar o preço das estrelas que o jogador tem');
+  await screenshot(`interiors-${tag}-delegacia`);
+  await evaluate('qa.input.interactQueued=true');
+  await until('qa.g.player.wantedLevel===0', 'a fiança limpou o registro', 6000);
+  const paid = await evaluate(`(()=>{const g=qa.g;return{money:g.player.money,msg:g.interiors.message,
+    dentro:g.interiors.active.kind}})()`);
+  assert.equal(paid.money, 5000 - 180, `a fiança cobra por estrela (${paid.money})`);
+  assert.equal(paid.msg, 'Fiança paga');
+  assert.equal(paid.dentro, 'precinct', 'pagar não põe o jogador na rua');
+  await until('qa.g.police.searchArea===null', 'a caçada acaba com o registro limpo', 6000);
+  // O recado do balcão demora 2,4 s de jogo a sumir: é ele, não o relógio do node.
+  await until('qa.g.interiors.message===""', 'o recado do balcão apagou', 8000);
+  assert.equal(await evaluate('qa.g.interiors.prompt(qa.g.player)'), 'Balcão de atendimento',
+    'sem registro o balcão só atende');
+  await evaluate(`(()=>{const g=qa.g;g.player.x=g.interiors.active.exit.x;g.player.y=g.interiors.active.exit.y;g.notifyEntityChange();})()`);
+  await delay(600);
+  await evaluate('qa.input.interactQueued=true');
+  await until('!qa.g.interiors.active', 'a delegacia devolve a rua', 6000);
+  const back = await evaluate(`Math.hypot(qa.g.player.x-${door.x},qa.g.player.y-${door.y}).toFixed(2)`);
+  assert.ok(Number(back) < 0.2, `a porta devolve o jogador na calçada da esquadra (${back})`);
+  assert.equal(await evaluate('qa.g.activeMap===qa.g.map'), true);
+  console.log(`OK delegacia aberta em ${tag}: porta na calçada, ${cast.farda} oficiais, fiança de $180 paga e registro limpo`);
+}
+
+/**
+ * Uma exceção repetida a cada frame gera megabytes de stack idêntica e não diz nada.
+ * Guardamos uma assinatura (mensagem + arquivo do topo) e contamos as repetições, para
+ * o checkpoint dizer o QUE quebrou e em QUAL etapa, não quantas vezes o mesmo frame girou.
+ */
+const seen = new Map();
+let reported = 0;
+function noteError(text) {
+  const lines = String(text).split('\n').map((l) => l.trim()).filter(Boolean);
+  const where = (lines[1] || '').replace(/^at\s+/, '').split('/').pop().split('?')[0];
+  const sig = where ? `${lines[0]}  (${where})` : lines[0];
+  const hit = seen.get(sig);
+  if (hit) hit.count++;
+  else { seen.set(sig, { count: 1 }); errors.push(sig); }
+}
+function checkpointErrors(label) {
+  for (const sig of errors.slice(reported)) console.log(`  ! ${label}: ${seen.get(sig).count}x ${sig}`);
+  reported = errors.length;
+}
+
 /** Taps the innermost element whose whole text equals `text`, the way a finger would. */
 async function tapText(text, mobile) {
   const search = `(()=>{const list=[...document.querySelectorAll('div,span')].filter((e)=>
@@ -170,30 +263,44 @@ async function tapText(text, mobile) {
 }
 
 (async () => {
-  const pages = await (await fetch('http://127.0.0.1:9223/json/list')).json();
-  socket = new WebSocket(pages.find((p) => p.type === 'page').webSocketDebuggerUrl);
+  const pages = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
+  const page = pages.find((p) => p.type === 'page');
+  assert.ok(page, `nenhum alvo CDP na porta ${PORT}`);
+  socket = new WebSocket(page.webSocketDebuggerUrl);
   socket.onmessage = ({ data }) => {
     const m = JSON.parse(data);
     if (m.id) {
       const p = pending.get(m.id); if (!p) return; pending.delete(m.id);
       m.error ? p.reject(new Error(m.error.message)) : p.resolve(m.result);
     } else if (m.method === 'Runtime.exceptionThrown') {
-      errors.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
+      noteError(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
     }
   };
-  await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
+  // Um alvo velho travado no renderer nunca abre o socket: sem prazo aqui o script congela.
+  await Promise.race([
+    new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; }),
+    delay(20000).then(() => { throw new Error(`sem alvo CDP na porta ${PORT}`); }),
+  ]);
   await send('Page.enable');
   await send('Runtime.enable');
 
   await boot(844, 390, true);
-  for (const kind of ['home', 'shop', 'office']) await roomPass(kind, 'phone');
+  checkpointErrors('abertura no celular');
+  for (const kind of ['home', 'shop', 'office', 'precinct']) await roomPass(kind, 'phone');
+  checkpointErrors('salas do celular');
+  await bailPass('phone');
+  checkpointErrors('delegacia no celular');
   await counterPass('armaria', 'phone', true);
   await counterPass('pizza', 'phone', true);
+  checkpointErrors('balcões do celular');
   await boot(1440, 900, false);
+  checkpointErrors('abertura no desktop');
   for (const kind of ['home', 'shop']) await roomPass(kind, 'desktop');
+  checkpointErrors('salas do desktop');
   await counterPass('armaria', 'desktop', false);
+  checkpointErrors('balcão do desktop');
 
   assert.deepEqual(errors, [], `page errors: ${errors.join('\n')}`);
-  console.log('OK interiors framed and escapable on phone and desktop, counters sell, no page errors');
+  console.log('OK interiors framed and escapable on phone and desktop, delegacia aberta com fiança, counters sell, no page errors');
   process.exit(0);
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });

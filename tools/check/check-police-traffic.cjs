@@ -874,17 +874,23 @@ test('NPCSystem never advances cop knockdown/pursuit or vehicle-driven civilians
 test('traffic excludes officers and police vehicles from civilian activation', () => {
   const map = crossMap(), t = new TrafficSystem(new CollisionSystem());
   t.rng = () => 0; // Deterministic acceptance, not a replacement for route/movement logic.
-  const n = createNPC(1, 'a', 20, 29, 'cop');
+  const cop = createNPC(1, 'a', 20, 29, 'cop');
   const patrol = createVehicle(1, VEHICLE_DEFS.police, '', 20.5, 31.5, 'SE');
-  assert.equal(t.tryActivateVehicle(map, patrol, [n]), false);
+  assert.equal(t.tryActivateVehicle(map, patrol, [cop]), false);
   const v = car(2, 20.5);
-  // Exercise real activation and graph routing; only the random stream is seeded.
+  // Todo carro de trânsito sai com um pedestre ao volante: sem civil livre na cidade o lote
+  // fica estacionado, e o guarda jamais vira motorista de sedan.
   t.rng = rng(91);
+  assert.equal(t.tryActivateVehicle(map, v, [cop]), false, 'oficial não dirige carro de linha');
+  assert.equal(cop.inVehicle, false);
+  const civ = createNPC(3, 'b', 20, 29);
   let activated = false;
-  for (let i = 0; i < 40 && !activated; i++) activated = t.tryActivateVehicle(map, v, [n]);
+  for (let i = 0; i < 40 && !activated; i++) activated = t.tryActivateVehicle(map, v, [civ]);
   assert.equal(activated, true);
-  assert.equal(n.inVehicle, false);
-  assert.equal(t.traffic[0].driver, null);
+  assert.equal(civ.inVehicle, true);
+  assert.equal(v.occupied, true);
+  assert.equal(t.traffic[0].driver, civ);
+  assert.equal(t.traffic.length, 1);
 });
 
 test('traffic driver follows car, theft releases driver and controller never overwrites player', () => {

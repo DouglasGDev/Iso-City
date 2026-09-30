@@ -5,10 +5,15 @@ import type { CollisionSystem } from './CollisionSystem';
 import type { Map } from '../world/Map';
 
 export class VehicleSystem {
+  /**
+   * `occupied` é NPC ao volante, não porta trancada: assaltar um carro é justamente tirar
+   * quem dirige (TrafficSystem devolve o motorista à calçada e PoliceSystem despeja a guarnição).
+   * A única coisa que não se assalta é o que está voando — o heli de apoio varre o céu sozinho.
+   */
   enterVehicle(player: Player, vehicle: Vehicle) {
     if (!vehicle.def.driveable) return;
-    if (vehicle.occupied) return;
     if (vehicle.state === 'destroyed') return;
+    if (vehicle.altitude > AIRBORNE_ALTITUDE) return;
     vehicle.occupied = true;
     vehicle.state = 'driving';
     player.currentVehicleId = vehicle.id;
@@ -29,7 +34,8 @@ export class VehicleSystem {
     vehicle.occupied = false;
     vehicle.state = 'parked';
     vehicle.speed = 0;
-    vehicle.altitude = 0;
+    // A aeronave sem piloto desce sozinha até o chão que está embaixo dela (settleAirborne).
+    // Zerar a altura aqui seria teletransportar o casco do alto do platô para o nível da rua.
   }
 
   private findExitSpot(
@@ -64,6 +70,7 @@ export class VehicleSystem {
 
   isNear(player: Player, vehicle: Vehicle): boolean {
     if (!vehicle.def.driveable) return false;
+    if (vehicle.altitude > AIRBORNE_ALTITUDE) return false;
     const dx = player.x - vehicle.x;
     const dy = player.y - vehicle.y;
     const range =
@@ -71,6 +78,9 @@ export class VehicleSystem {
     return dx * dx + dy * dy < range * range;
   }
 }
+
+/** Acima disso a aeronave está pairando: não há porta para abrir nem motorista para expulsar. */
+const AIRBORNE_ALTITUDE = 0.5;
 
 const BACK_DIR: Record<string, 'NE' | 'NW' | 'SE' | 'SW'> = {
   SE: 'NW',

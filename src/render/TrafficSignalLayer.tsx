@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react';
 import { Circle, Group, Line, Oval, RadialGradient, Rect, RoundedRect } from '@shopify/react-native-skia';
 import type { GameState } from '../game/GameState';
+import type { Map } from '../world/Map';
 import { worldToScreen } from '../world/IsoUtils';
 import type { JunctionAxis, TrafficLight, TrafficSignal } from '../systems/TrafficSignalSystem';
 import { GAME_CONFIG } from '../game/GameConfig';
@@ -70,7 +71,12 @@ const SignalHead = memo(function SignalHead({ x, y, light, walk, glow }: {
  * mas não tem luz nenhuma: sem a faixa pintada, o motorista que para do nada parece um
  * bug para quem olha de fora.
  */
-const YieldBar = memo(function YieldBar({ box, axis }: { box: TrafficSignal; axis: JunctionAxis }) {
+const YieldBar = memo(function YieldBar({ box, axis, map }: {
+  box: TrafficSignal;
+  axis: JunctionAxis;
+  /** A barra é tinta do pavimento: num cruzamento inclinado ela sobe com o asfalto. */
+  map: Map;
+}) {
   // Quem vem pelo eixo que cede a vez para na borda da caixa, de frente para o cruzamento.
   const edges = axis === 'y'
     ? [[box.minX, box.minY, box.maxX, box.minY], [box.minX, box.maxY, box.maxX, box.maxY]]
@@ -78,8 +84,8 @@ const YieldBar = memo(function YieldBar({ box, axis }: { box: TrafficSignal; axi
   return (
     <Group>
       {edges.map(([x1, y1, x2, y2], i) => {
-        const a = worldToScreen(x1, y1);
-        const b = worldToScreen(x2, y2);
+        const a = worldToScreen(x1, y1, map.heightAt(x1, y1));
+        const b = worldToScreen(x2, y2, map.heightAt(x2, y2));
         return <Line key={`bar${box.id}-${i}`} p1={a} p2={b} color={STOP_BAR} strokeWidth={2.6} />;
       })}
     </Group>
@@ -110,15 +116,18 @@ export function TrafficSignalLayer({ game }: { game: GameState }) {
       {signals.map((s: TrafficSignal) => {
         if (!s.controlled) {
           if (!s.yields) return null;
-          const corner = worldToScreen(s.minX, s.minY);
-          const other = worldToScreen(s.maxX, s.maxY);
+          const corner = worldToScreen(s.minX, s.minY, game.map.heightAt(s.minX, s.minY));
+          const other = worldToScreen(s.maxX, s.maxY, game.map.heightAt(s.maxX, s.maxY));
           const left = Math.min(corner.x, other.x) - 6, top = Math.min(corner.y, other.y) - 6;
           if (!game.fog.intersects(view, left, top, Math.abs(other.x - corner.x) + 12, Math.abs(other.y - corner.y) + 12)) return null;
-          return <YieldBar key={`way${s.id}`} box={s} axis={s.yields} />;
+          return <YieldBar key={`way${s.id}`} box={s} axis={s.yields} map={game.map} />;
         }
-        // Cada eixo enxerga o próprio sinal do canto oposto do meio-fio.
-        const xBase = worldToScreen(s.minX - 0.18, s.maxY + 0.18);
-        const yBase = worldToScreen(s.maxX + 0.18, s.minY - 0.18);
+        // Cada eixo enxerga o próprio sinal do canto oposto do meio-fio. O poste nasce do
+        // chão dele: numa esquina em rampa, um dos dois fica mais alto que o outro.
+        const xBase = worldToScreen(s.minX - 0.18, s.maxY + 0.18,
+          game.map.heightAt(s.minX - 0.18, s.maxY + 0.18));
+        const yBase = worldToScreen(s.maxX + 0.18, s.minY - 0.18,
+          game.map.heightAt(s.maxX + 0.18, s.minY - 0.18));
         const left = Math.min(xBase.x, yBase.x) - 18;
         const right = Math.max(xBase.x, yBase.x) + 18;
         const top = Math.min(xBase.y, yBase.y) - 62;

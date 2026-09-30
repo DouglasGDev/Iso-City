@@ -3,11 +3,12 @@ import type { Player } from '../entities/Player';
 import type { Collider } from '../entities/types';
 import type { CityMapData } from '../data/maps/city';
 import { GUN_STORE_STOCK, FOOD_MENUS, type MenuId, type ShopItem } from '../data/shop';
+import { GAME_CONFIG } from '../game/GameConfig';
 import { JAIL_EXIT, JAIL_H, JAIL_PANEL, JAIL_PIECES, JAIL_SPAWN, JAIL_W } from '../data/jail';
 import type { GunId } from '../data/weapons';
 import { angleToWorldDir } from '../world/IsoUtils';
 
-export type InteriorKind = 'home' | 'shop' | 'office' | 'jail';
+export type InteriorKind = 'home' | 'shop' | 'office' | 'jail' | 'precinct';
 /** O que há atrás do balcão: nada (serviço instantâneo) ou um cardápio completo. */
 export type ShopCounter = 'armaria' | MenuId;
 export interface Entrance {
@@ -16,7 +17,7 @@ export interface Entrance {
   y: number;
   label: string;
   kind: InteriorKind;
-  service: 'rest' | 'food' | 'ammo' | 'firstAid' | 'cells';
+  service: 'rest' | 'food' | 'ammo' | 'firstAid' | 'cells' | 'bail';
   counter: ShopCounter | null;
   facing: number;
 }
@@ -39,7 +40,8 @@ export interface InteriorRoom {
   map: Map;
   furniture: Furniture[];
   exit: { x: number; y: number };
-  service: { x: number; y: number; label: string; cost: number };
+  /** `bail` cobra por estrela do registro do jogador; `heal` devolve vida a preço fixo. */
+  service: { x: number; y: number; label: string; cost: number; action: 'heal' | 'bail' | 'none' };
   shop: { title: string; items: ShopItem[] } | null;
 }
 export interface InteriorContext {
@@ -50,6 +52,8 @@ export interface InteriorContext {
   /** False quando o jogador não tem nenhuma arma de fogo para abastecer. */
   refillOwned: () => boolean;
   feed: (health: number, stamina: number) => void;
+  /** Paga a fiança: quem manda no registro é o WantedSystem, não esta sala. */
+  clearRecord: () => void;
   onTransition: () => void;
   onUse: () => void;
   onOpenShop: () => void;
@@ -70,6 +74,17 @@ function makeRoom(entrance: Entrance): InteriorRoom {
     for (const piece of JAIL_PIECES) {
       add(piece.id, piece.kind, piece.x, piece.y, piece.w, piece.d, piece.height, piece.color);
     }
+  } else if (entrance.kind === 'precinct') {
+    // Delegacia aberta: balcão de atendimento no fundo, duas escrivanias de escrivão,
+    // arquivo de provas na parede e um banco para quem espera na sala.
+    add('counter', 'counter', 3.6, 0.45, 2.4, 0.65, 20, '#4f5d6a');
+    add('desk-a', 'desk', 0.6, 0.45, 1.3, 0.65, 15, '#7c8894');
+    add('desk-b', 'desk', 2.05, 0.45, 1.3, 0.65, 15, '#7c8894');
+    add('evidence', 'shelf', 0.35, 1.65, 0.45, 1.7, 34, '#6d7681');
+    add('crate', 'crate', 6.15, 0.4, 0.7, 0.7, 17, '#6f7d4f');
+    add('bench', 'sofa', 0.95, 3.5, 1.7, 0.7, 16, '#3f5566');
+    add('table', 'table', 3.1, 2.5, 0.85, 0.85, 14, '#8a7250');
+    add('plant', 'plant', 6.3, 4.05, 0.5, 0.5, 26, '#408752');
   } else if (entrance.kind === 'home') {
     add('shelf', 'shelf', 0.5, 0.4, 1.5, 0.4, 34, '#926440');
     add('desk', 'desk', 3.2, 0.45, 1.3, 0.6, 15, '#ae8354');
@@ -137,6 +152,9 @@ function makeRoom(entrance: Entrance): InteriorRoom {
     tilesW: W, tilesH: H, worldW: W, worldH: H,
     tiles: Array.from({ length: W * H }, () => ({ kind: 'concrete', key: 'tile_ground_concrete',
       biome: jail ? 'downtown' as const : 'residential' as const })),
+    // Sala é uma casa de boneca: o chão interno é próprio e plano, a altura da rua
+    // fica do lado de fora. O `h` do interior nunca entra na projeção da cidade.
+    heights: new Float32Array(W * H),
     buildings: [], props: [], vehicles: [], npcSpawns: [],
     playerSpawn: jail ? { x: JAIL_SPAWN.x, y: JAIL_SPAWN.y } : { x: 3.5, y: 3.9 },
   };
@@ -144,12 +162,15 @@ function makeRoom(entrance: Entrance): InteriorRoom {
     ? { title: 'Armaria', items: GUN_STORE_STOCK }
     : entrance.counter ? { title: COUNTER_TITLE[entrance.counter], items: FOOD_MENUS[entrance.counter] } : null;
   const service = jail
-    ? { x: JAIL_PANEL.x, y: JAIL_PANEL.y, label: 'Painel de celas', cost: 0 }
+    ? { x: JAIL_PANEL.x, y: JAIL_PANEL.y, label: 'Painel de celas', cost: 0, action: 'none' as const }
     : shop
-    ? { x: 4.6, y: 1.5, label: `Balcão · ${shop.title}`, cost: 0 }
-    : entrance.service === 'rest'
-      ? { x: 5.6, y: 2.7, label: 'Descansar · $25', cost: 25 }
-      : { x: 2, y: 3.3, label: 'Primeiros socorros · $40', cost: 40 };
+    ? { x: 4.6, y: 1.5, label: `Balcão · ${shop.title}`, cost: 0, action: 'none' as const }
+    : entrance.service === 'bail'
+      ? { x: 4.6, y: 1.5, label: `Fiança · $${GAME_CONFIG.BAIL_PER_STAR} por estrela`, cost: GAME_CONFIG.BAIL_PER_STAR,
+        action: 'bail' as const }
+      : entrance.service === 'rest'
+        ? { x: 5.6, y: 2.7, label: 'Descansar · $25', cost: 25, action: 'heal' as const }
+        : { x: 2, y: 3.3, label: 'Primeiros socorros · $40', cost: 40, action: 'heal' as const };
   return { id: entrance.id, label: entrance.label, kind: entrance.kind, entrance, map: new Map(data, colliders), furniture,
     exit: jail ? { x: JAIL_EXIT.x, y: JAIL_EXIT.y } : { x: 3.5, y: 4.3 }, service, shop };
 }
@@ -226,6 +247,24 @@ export class InteriorSystem {
         : key.includes('gunshop') ? 'Armaria' : key.includes('cafe') ? 'Café' : key.includes('pizza') ? 'Pizzaria' : 'Sorveteria';
       this.entrances.push({ id, x, y, kind, label, service, counter, facing: faceB ? 0 : Math.PI / 2 });
     }
+    // Toda esquadra tem porta de delegacia, aberta a qualquer hora e sem depender de ser
+    // preso para descobrir que ela existia: quem quer se entregar ou pagar fiança entra pela
+    // calçada. A esquadra presídio fica de fora — ali o passeio já é a porta da cadeia.
+    for (const station of stations) {
+      if (station === prison) continue;
+      const id = map.data.buildings.findIndex((b) => b.key.startsWith('bld_policestation')
+        && Math.abs(b.x - b.footprintW / 2 - station.x) < 1e-6 && Math.abs(b.y - b.footprintW / 2 - station.y) < 1e-6);
+      if (id < 0) continue;
+      const spot = map.sidewalkNodes
+        .filter((node) => Math.hypot(node.x - station.front.x, node.y - station.front.y) < 3)
+        .sort((a, b) => Math.hypot(a.x - station.front.x, a.y - station.front.y)
+          - Math.hypot(b.x - station.front.x, b.y - station.front.y))
+        .find((node) => clear(node.x, node.y)
+          && this.entrances.every((e) => Math.hypot(e.x - node.x, e.y - node.y) >= 2.5));
+      if (!spot) continue;
+      this.entrances.push({ id, x: spot.x, y: spot.y, kind: 'precinct', label: 'Delegacia',
+        service: 'bail', counter: null, facing: Math.atan2(spot.y - station.y, spot.x - station.x) });
+    }
   }
 
   update(dt: number) {
@@ -262,8 +301,17 @@ export class InteriorSystem {
       if (jail) return jail;
     }
     if (Math.hypot(player.x - this.active.exit.x, player.y - this.active.exit.y) < 1.2) return 'Sair para a rua';
-    if (Math.hypot(player.x - this.active.service.x, player.y - this.active.service.y) < 1.25) return this.active.service.label;
+    if (Math.hypot(player.x - this.active.service.x, player.y - this.active.service.y) < 1.25) {
+      return this.serviceLabel(this.active, player);
+    }
     return null;
+  }
+
+  /** O balcão da delegacia cobra por estrela ainda no registro, então o preço é do momento. */
+  private serviceLabel(room: InteriorRoom, player: Player): string {
+    if (room.service.action !== 'bail') return room.service.label;
+    const stars = Math.ceil(player.wantedLevel);
+    return stars > 0 ? `Pagar fiança · $${room.service.cost * stars}` : 'Balcão de atendimento';
   }
 
   interact(ctx: InteriorContext): boolean {
@@ -293,6 +341,23 @@ export class InteriorSystem {
       this.transitionLock = 0.4;
       return true;
     }
+    if (room.service.action === 'bail') {
+      // Fiança: o registro é do WantedSystem, a sala só cobra e chama o balcão.
+      const stars = Math.ceil(player.wantedLevel);
+      const cost = room.service.cost * stars;
+      if (stars <= 0) this.message = 'Você não está procurado';
+      else if (player.money < cost) this.message = 'Dinheiro insuficiente';
+      else {
+        player.money -= cost;
+        ctx.clearRecord();
+        this.message = 'Fiança paga';
+        ctx.onUse();
+      }
+      this.messageLeft = 2.4;
+      this.transitionLock = 0.4;
+      return true;
+    }
+    if (room.service.action !== 'heal') return false;
     if (player.money < room.service.cost) this.message = 'Dinheiro insuficiente';
     else if (player.health >= 100) this.message = 'Vida completa';
     else {

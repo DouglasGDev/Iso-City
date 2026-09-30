@@ -1,8 +1,45 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sound = void 0;
 const expo_asset_1 = require("expo-asset");
-const expo_av_1 = require("expo-av");
+// O barril `expo-av` emite um console.warn de deprecação ainda na importação. No aparelho
+// esse aviso cai no LogBox, que chama NativeLogBox.show() — e é justamente aí que o boot
+// morre ("show is not a function"). Pelos submódulos de áudio o aviso nunca existe.
+const Audio = __importStar(require("expo-av/build/Audio"));
+const Audio_types_1 = require("expo-av/build/Audio.types");
 const sounds_1 = require("./sounds");
 // Cache assets, never native Sound players: unloaded Android players cannot be reused.
 const MAX_LIVE_SFX = 5;
@@ -47,13 +84,13 @@ function sourceFor(src) {
 async function ensureSession() {
     if (!sessionReady) {
         sessionReady = (async () => {
-            await expo_av_1.Audio.setIsEnabledAsync(true);
-            await expo_av_1.Audio.setAudioModeAsync({
+            await Audio.setIsEnabledAsync(true);
+            await Audio.setAudioModeAsync({
                 allowsRecordingIOS: false,
                 playsInSilentModeIOS: true,
                 staysActiveInBackground: false,
-                interruptionModeIOS: expo_av_1.InterruptionModeIOS.MixWithOthers,
-                interruptionModeAndroid: expo_av_1.InterruptionModeAndroid.DuckOthers,
+                interruptionModeIOS: Audio_types_1.InterruptionModeIOS.MixWithOthers,
+                interruptionModeAndroid: Audio_types_1.InterruptionModeAndroid.DuckOthers,
                 shouldDuckAndroid: true,
                 playThroughEarpieceAndroid: false,
             });
@@ -100,7 +137,7 @@ async function syncLoop(st) {
         return;
     if (!st.sound) {
         const volume = st.volume;
-        const { sound: s } = await expo_av_1.Audio.Sound.createAsync(sourceFor(st.sources[key]), {
+        const { sound: s } = await Audio.Sound.createAsync(sourceFor(st.sources[key]), {
             shouldPlay: false,
             isLooping: true,
             volume,
@@ -204,7 +241,7 @@ function playOneShot(src, volume, throttleKey, minGapMs = 0) {
             await ensureSession();
             if (playback.finished)
                 return;
-            const { sound: s } = await expo_av_1.Audio.Sound.createAsync(sourceFor(src), {
+            const { sound: s } = await Audio.Sound.createAsync(sourceFor(src), {
                 shouldPlay: false,
                 volume: clampVolume(volume),
                 isLooping: false,

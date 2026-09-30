@@ -47,6 +47,8 @@ function fixture(colliders = [], x = 9.7, y = 10) {
     isWaterWorld: (x, y) => water.has(`${Math.floor(x)},${Math.floor(y)}`),
     queryNearby: (x, y, r) => colliders.filter((c) => c.x + c.width >= x - r && c.x <= x + r &&
       c.y + c.height >= y - r && c.y <= y + r),
+    // O stub cobre o contrato de relevo que o movimento lê: aqui o chão é plano.
+    canClimb: () => true, canDriveOver: () => true, slopeAlong: () => 0,
   };
   const player = createPlayer(x, y);
   const collision = new CollisionSystem();

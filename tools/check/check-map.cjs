@@ -173,6 +173,9 @@ function validate(city, seed, generationMs) {
           if (paint.color === '#ecebe5') stripes.push([x1, y1, x2, y2]);
         } }, city, x, y);
         check(stripes.length === 5, `faixa sem cinco barras (${x},${y})`);
+        // O painter eleva o tile inteiro em h * 64 px; o inverso tem que devolver essa
+        // elevação antes de recalcular o tile, senão a barra "invade" o vizinho de mentirinha.
+        const lift = (city.heights[y * city.tilesW + x] ?? 0) * 64;
         for (const [sx, sy, ex, ey] of stripes) {
           const dx = (ex - sx) / 128 + (ey - sy) / 64;
           const dy = (ey - sy) / 64 - (ex - sx) / 128;
@@ -180,7 +183,7 @@ function validate(city, seed, generationMs) {
           check(Math.abs(alongX ? dy : dx) < 1e-9 && Math.abs(Math.abs(alongX ? dx : dy) - 0.8) < 1e-9,
             `barras invertidas no sentido ${t.lane} (${x},${y})`);
           for (const [px, py] of [[sx, sy], [ex, ey]]) {
-            const wx = px / 128 + py / 64, wy = py / 64 - px / 128;
+            const wx = px / 128 + (py + lift) / 64, wy = (py + lift) / 64 - px / 128;
             check(wx > x && wx < x + 1 && wy > y && wy < y + 1, 'barra invade tile vizinho');
           }
         }
@@ -614,8 +617,10 @@ function validate(city, seed, generationMs) {
   for (const p of city.npcSpawns) safeSpawn(p, 'npc spawn');
   check(GAME_CONFIG.NPC_COUNT === 400 && city.npcSpawns.length === 700, 'esperados 400 NPCs e 700 pontos de spawn');
   check(GAME_CONFIG.NPC_SIM_NEAR === 22 && GAME_CONFIG.NPC_SIM_FAR === 40, 'raios de simulacao NPC devem permanecer limitados');
-  check(GAME_CONFIG.TRAFFIC_MAX === 56 && GAME_CONFIG.TRAFFIC_SPAWN_CHANCE === 0.94
-    && GAME_CONFIG.TRAFFIC_DRIVER_CHANCE === 0.35, 'orcamento/probabilidades de trafego devem permanecer iguais');
+  // Trânsito tem teto de orçamento porque cada carro de rua agora tem um pedestre ao volante;
+  // como o motorista sai da simulação a pé, o custo total da cidade permanece o mesmo.
+  check(GAME_CONFIG.TRAFFIC_MAX === 56 && GAME_CONFIG.TRAFFIC_SPAWN_CHANCE === 0.94,
+    'orcamento/probabilidades de trafego devem permanecer iguais');
   check(new Set(city.npcSpawns.map((p) => `${p.x},${p.y}`)).size === city.npcSpawns.length, 'spawns NPC duplicados');
   check(city.npcSpawns.some((p) => p.y < waterTop) && city.npcSpawns.some((p) => p.y > waterBottom), 'NPCs faltando em uma margem');
   // Runtime collider checks cover every sidewalk, not only selected spawn points.

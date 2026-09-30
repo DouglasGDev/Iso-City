@@ -343,6 +343,50 @@ test('o tsunami sobe da costa, para no limite e volta para o mar', () => {
   assert.equal(h.phase, 'calm');
 });
 
+test('a água do tsunami é o corredor inteiro: atrás da crista se nada e se afoga', () => {
+  const h = new HazardSystem();
+  const context = ctx({});
+  prime(h, context);
+  h.force('tsunami', 20);
+  const middle = (h.wave.u0 + h.wave.u1) / 2;
+  // `d` são tiles contados do mar para dentro da terra, no sentido em que a onda corre.
+  const at = (d, u = middle) => (h.wave.axis === 'y'
+    ? { x: u, y: h.wave.from + h.wave.dir * d }
+    : { x: h.wave.from + h.wave.dir * d, y: u });
+  assert.equal(h.floodedAt(at(8).x, at(8).y), false, 'a onda nem subiu e a praia já está alagada');
+  run(h, 2, fixed(0.5), context);
+  assert.ok(h.wave.reach > 3, `a onda só andou ${h.wave.reach} tiles`);
+  assert.equal(h.floodedAt(at(0).x, at(0).y), true, 'a beira alagada não contou como água');
+  const deep = at(h.wave.reach / 2);
+  assert.equal(h.floodedAt(deep.x, deep.y), true, 'o meio do corredor ficou de fora da água');
+  const lip = at(h.wave.reach + 0.5);
+  assert.equal(h.floodedAt(lip.x, lip.y), true, 'o lábio de espuma da frente não molha ninguém');
+  const dry = at(h.wave.reach + 6);
+  assert.equal(h.floodedAt(dry.x, dry.y), false, 'a terra seca à frente da crista alagou');
+  const aside = at(h.wave.reach / 2, h.wave.u0 - 4);
+  assert.equal(h.floodedAt(aside.x, aside.y), false, 'a onda alagou fora do trecho sorteado');
+
+  const out = { fx: 0, fy: 0, core: false, near: false };
+  h.forceAt(deep.x, deep.y, out);
+  assert.equal(out.core, true, 'no fundo do corredor dá para ficar em pé seco');
+  assert.ok((h.wave.axis === 'y' ? out.fy : out.fx) * h.wave.dir > 0, 'a corrente não empurra para dentro');
+
+  // O jogador no meio da água: a cada tique a corrente o arrasta e a onda o afoga.
+  let hurt = 0;
+  const player = { x: deep.x, y: deep.y, radius: C.PLAYER_RADIUS, currentVehicleId: null };
+  const start = h.wave.axis === 'y' ? player.y : player.x;
+  for (let i = 0; i < 10; i++) {
+    h.update(DT, fixed(0.5), context);
+    h.sweep(DT, swept({ player, health: { damage: (p, amount) => { hurt += amount; return true; } } }));
+  }
+  assert.ok(hurt >= C.TSUNAMI_PLAYER_DMG_S * 0.9, `um segundo na onda custou só ${hurt} de vida`);
+  assert.ok(((h.wave.axis === 'y' ? player.y : player.x) - start) * h.wave.dir > 0,
+    'a corrente não levou o jogador');
+
+  run(h, C.TSUNAMI_LIFE_S[1] + C.HAZARD_FADE_S + 4, fixed(0.9), context);
+  assert.equal(h.floodedAt(deep.x, deep.y), false, 'a água voltou para o mar e ficou alagada');
+});
+
 test('tsunami só entra no sorteio com a câmera na beira do mar', () => {
   // O mar do mapa sintético são as linhas 0..13: a câmera padrão está a 47 tiles dele.
   const far = new HazardSystem();

@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.GameState = void 0;
 exports.getGame = getGame;
+exports.peekGame = peekGame;
 exports.resetGame = resetGame;
 const GameConfig_1 = require("./GameConfig");
 const InputState_1 = require("./InputState");
@@ -22,6 +23,7 @@ const MovementSystem_1 = require("../systems/MovementSystem");
 const JumpSystem_1 = require("../systems/JumpSystem");
 const CrouchSystem_1 = require("../systems/CrouchSystem");
 const VehicleSystem_1 = require("../systems/VehicleSystem");
+const VehicleImpactSystem_1 = require("../systems/VehicleImpactSystem");
 const NPCSystem_1 = require("../systems/NPCSystem");
 const InteractionSystem_1 = require("../systems/InteractionSystem");
 const TrafficSystem_1 = require("../systems/TrafficSystem");
@@ -61,6 +63,10 @@ const SHOT_SFX = {
 function getGame() {
     if (!_game)
         _game = new GameState();
+    return _game;
+}
+/** O jogo já foi criado? Serve para o menu e o boot nunca gerarem a cidade de raspão. */
+function peekGame() {
     return _game;
 }
 function resetGame() {
@@ -106,6 +112,7 @@ class GameState {
         this.shakeY = 0;
         this.collision = new CollisionSystem_1.CollisionSystem();
         this.vehicleSystem = new VehicleSystem_1.VehicleSystem();
+        this.impact = new VehicleImpactSystem_1.VehicleImpactSystem();
         this.wanted = new WantedSystem_1.WantedSystem();
         this.stamina = new StaminaSystem_1.StaminaSystem();
         this.health = new HealthSystem_1.HealthSystem();
@@ -125,7 +132,6 @@ class GameState {
         this.jump = new JumpSystem_1.JumpSystem(() => this.interiors.active ? [] : this.vehicles);
         this.crouch = new CrouchSystem_1.CrouchSystem();
         this.hitCooldown = 0;
-        this.pedHitCooldown = 0;
         this.exitLock = 0;
         this.hornCooldown = 0;
         this.hornNoise = 0;
@@ -213,6 +219,9 @@ class GameState {
             (0, Camera_1.clampToRoom)(this.camera, room.map.worldW, room.map.worldH, this.viewW, this.viewH);
         else
             (0, Camera_1.clampToMap)(this.camera, this.map.worldW, this.map.worldH, this.viewW, this.viewH);
+        // A câmera sobe junto com o chão que ela mira. É uma translação da tela no mesmo
+        // eixo Y da projeção: o losango continua 2:1 e a câmera continua isométrica.
+        this.camera.h = (room?.map ?? this.map).heightAt(this.camera.x, this.camera.y);
     }
     /**
      * Instantâneo do save. Só estado persistente faz sentido: jogador, arsenal, relógio e o
@@ -401,6 +410,8 @@ class GameState {
             shake: (a) => this.shake(a),
             onStructChange: () => this.notifyEntityChange(),
         });
+        // Depois de tudo ter se movido: é assim que a roda pega o corpo onde ele realmente está.
+        this.impact.update(dt, this.impactContext(!!room));
         const view = this.fog.view(this);
         const noises = [];
         if (!room) {
@@ -421,13 +432,19 @@ class GameState {
                 if (!room)
                     SoundManager_1.sound.play('animalCall', Math.max(0.08, 0.4 - Math.hypot(animal.x - this.player.x, animal.y - this.player.y) * 0.02));
             },
-            isVisible: (x, y) => this.fog.intersects(view, (x - y) * 64 - 45, (x + y) * 32 - 65, 90, 90),
+            isVisible: (x, y) => {
+                const p = (0, IsoUtils_1.worldToScreen)(x, y, this.map.heightAt(x, y));
+                return this.fog.intersects(view, p.x - 45, p.y - 65, 90, 90);
+            },
             onStructChange: () => this.notifyEntityChange(),
         });
         this.life.update(dt, {
             player: outdoorPlayer, npcs: this.npcs, map: this.map, vehicles: this.vehicles,
             collision: this.collision, rng: this.rnd,
-            isPointVisible: (x, y) => this.fog.intersects(view, (x - y) * 64 - 40, (x + y) * 32 - 40, 80, 80),
+            isPointVisible: (x, y) => {
+                const p = (0, IsoUtils_1.worldToScreen)(x, y, this.map.heightAt(x, y));
+                return this.fog.intersects(view, p.x - 40, p.y - 40, 80, 80);
+            },
             onStructChange: () => this.notifyEntityChange(),
         });
         this.health.update(dt, this.player, this.time);
@@ -490,7 +507,15 @@ class GameState {
                 this.health.heal(this.player, health);
                 this.player.stamina = Math.min(1, this.player.stamina + stamina);
             },
-            onUse: () => SoundManager_1.sound.play(this.interiors.active?.shop ? 'coin' : 'healthPickup', 0.45),
+            // O balcão cobrou: o registro é limpo pelo WantedSystem e a rua volta a ficar calma.
+            clearRecord: () => {
+                this.wanted.clear(this.player);
+                this.police.reset();
+            },
+            onUse: () => {
+                const room = this.interiors.active;
+                SoundManager_1.sound.play(room?.shop || room?.service.action === 'bail' ? 'coin' : 'healthPickup', 0.45);
+            },
             onOpenShop: () => useGameStore_1.useGameStore.openShop(),
             onTransition: () => this.afterInteriorTransition(),
         };
@@ -578,18 +603,22 @@ class GameState {
                 this.exitLock = GameConfig_1.GAME_CONFIG.VEHICLE_EXIT_COOLDOWN;
             }
             else if (this.exitLock <= 0) {
+                const target = this.interaction.nearestVehicle(player, this.vehicles);
                 const stolen = this.trafficSystem.tryStealCar(player, this.vehicles, this.npcs);
                 if (stolen) {
                     SoundManager_1.sound.play('glassBreak', 0.65);
                     this.wanted.raise(player, GameConfig_1.GAME_CONFIG.WANTED_STEAL);
                     this.pickups.spawnDrop(player.x, player.y, 40 + Math.floor(this.rnd() * 80));
                 }
-                else if (this.interaction.tryEnter(player, this.vehicles) && player.currentVehicleId !== null) {
-                    const v = this.vehicles.find((x) => x.id === player.currentVehicleId);
-                    if (v && v.def.type === 'police') {
+                else if (target && this.interaction.tryEnter(player, this.vehicles) && player.currentVehicleId === target.id) {
+                    // `occupied` é NPC no banco: assaltar é tirar quem dirige. O TrafficSystem devolve o
+                    // motorista do trânsito à calçada e o PoliceSystem despeja a guarnição da viatura.
+                    const police = target.def.type === 'police' || target.def.type === 'swat';
+                    if (target.occupied || police)
+                        SoundManager_1.sound.play('glassBreak', 0.65);
+                    if (police)
                         this.wanted.raise(player, GameConfig_1.GAME_CONFIG.WANTED_STEAL + 1);
-                    }
-                    this.trafficSystem.takeOver(player.currentVehicleId);
+                    this.trafficSystem.takeOver(target.id);
                 }
             }
         }
@@ -635,7 +664,6 @@ class GameState {
                     this.hitCooldown = 0.35;
                 }
                 this.hitCooldown -= dt;
-                this.hitPedsWithVehicle(vehicle, dt);
             }
             player.x = vehicle.x;
             player.y = vehicle.y;
@@ -648,7 +676,9 @@ class GameState {
         else {
             const wantsRun = InputState_1.inputState.runHeld && !player.crouching;
             const moving = InputState_1.inputState.magnitude > GameConfig_1.GAME_CONFIG.JOYSTICK_DEADZONE;
-            this.movement.updatePlayer(player, this.activeMap, dt, wantsRun && this.stamina.canSprint(player));
+            // Dentro de casa a rua não alcança ninguém: as coordenadas da sala não são do mundo.
+            const wading = this.interiors.active ? false : this.hazard.floodedAt(player.x, player.y);
+            this.movement.updatePlayer(player, this.activeMap, dt, wantsRun && this.stamina.canSprint(player), wading);
             this.stamina.update(player, dt, wantsRun, moving);
         }
     }
@@ -889,30 +919,15 @@ class GameState {
         this.health.damage(this.player, dmg, this.time);
         vehicle.health = Math.max(0, vehicle.health - dmg * 1.15);
     }
-    hitPedsWithVehicle(vehicle, dt) {
-        this.pedHitCooldown -= dt;
-        if (Math.abs(vehicle.speed) < GameConfig_1.GAME_CONFIG.HIT_PED_SPEED)
-            return;
-        for (const npc of this.npcs) {
-            if (npc.dead || npc.inVehicle)
-                continue;
-            const d = Math.hypot(vehicle.x - npc.x, vehicle.y - npc.y);
-            if (d > 0.62)
-                continue;
-            const knock = 0.55;
-            const nx = npc.x - vehicle.x;
-            const ny = npc.y - vehicle.y;
-            const len = Math.hypot(nx, ny) || 1;
-            npc.x += (nx / len) * knock;
-            npc.y += (ny / len) * knock;
-            npc.state = 'fleeing';
-            npc.fleeTimer = 3.2;
-            if (this.pedHitCooldown <= 0) {
-                this.wanted.raise(this.player, GameConfig_1.GAME_CONFIG.WANTED_HIT_PED);
-                this.pedHitCooldown = 0.7;
-                SoundManager_1.sound.play('metalHit', 0.35);
-            }
-        }
+    /** Atropelamento: o carro do jogador e o de qualquer NPC em curso, inclusive a polícia. */
+    impactContext(indoors) {
+        return {
+            map: this.map, collision: this.collision, player: this.player,
+            vehicles: this.vehicles, npcs: this.npcs, animals: this.wildlife.animals,
+            health: this.health, wanted: this.wanted, pickups: this.pickups, time: this.time,
+            indoors, rng: this.rnd, shake: (amount) => this.shake(amount),
+            onStructChange: () => this.notifyEntityChange(),
+        };
     }
     ejectFromVehicle() {
         const player = this.player;
@@ -1125,7 +1140,7 @@ class GameState {
                 v.animFrame = v.animFrame === 1 ? 2 : 1;
             }
             if (!v.occupied && v.altitude > 0) {
-                v.altitude = Math.max(0, v.altitude - dt * 2.4);
+                this.movement.settleAirborne(v, this.map, dt);
             }
         }
     }

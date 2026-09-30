@@ -1,43 +1,62 @@
-import { Skia, PaintStyle, type SkCanvas } from '@shopify/react-native-skia';
+import { Skia, PaintStyle, type SkCanvas, type SkPaint } from '@shopify/react-native-skia';
 import type { CityMapData } from '../data/maps/city';
 import { worldToScreen } from '../world/IsoUtils';
 
-const asphalt = Skia.Paint();
-asphalt.setColor(Skia.Color('#34383e'));
-// Estrada de terra das reservas: o mesmo traçado, só que sem asfalto nem tinta.
-const earth = Skia.Paint();
-earth.setColor(Skia.Color('#96805c'));
-const earthEdge = Skia.Paint();
-earthEdge.setColor(Skia.Color('#7a6746'));
-earthEdge.setStyle(PaintStyle.Stroke);
-earthEdge.setStrokeWidth(2);
-earthEdge.setAntiAlias(true);
-const deck = Skia.Paint();
-deck.setColor(Skia.Color('#454b52'));
-const curb = Skia.Paint();
-curb.setColor(Skia.Color('#b6bac0'));
-curb.setStyle(PaintStyle.Stroke);
-curb.setStrokeWidth(2);
-curb.setAntiAlias(true);
-const marking = Skia.Paint();
-marking.setColor(Skia.Color('#e9ddb0'));
-marking.setStyle(PaintStyle.Stroke);
-marking.setStrokeWidth(1.5);
-marking.setAntiAlias(true);
-const crossing = Skia.Paint();
-crossing.setColor(Skia.Color('#ecebe5'));
-crossing.setStyle(PaintStyle.Stroke);
-crossing.setStrokeWidth(4);
-crossing.setAntiAlias(true);
+// Tintas criadas no primeiro traçado, não na importação do módulo: no aparelho o
+// bundle inteiro é avaliado antes de qualquer tela, e um `Skia.Paint()` no topo faz
+// uma Skia desatualizada derrubar o boot antes de vermos o erro.
+interface RoadPaints {
+  asphalt: SkPaint;
+  earth: SkPaint;
+  earthEdge: SkPaint;
+  deck: SkPaint;
+  curb: SkPaint;
+  marking: SkPaint;
+  crossing: SkPaint;
+}
+
+let paints: RoadPaints | null = null;
+function roadPaints(): RoadPaints {
+  if (paints) return paints;
+  const stroke = (color: string, width: number) => {
+    const p = Skia.Paint();
+    p.setColor(Skia.Color(color));
+    p.setStyle(PaintStyle.Stroke);
+    p.setStrokeWidth(width);
+    p.setAntiAlias(true);
+    return p;
+  };
+  const fill = (color: string) => {
+    const p = Skia.Paint();
+    p.setColor(Skia.Color(color));
+    return p;
+  };
+  paints = {
+    asphalt: fill('#34383e'),
+    // Estrada de terra das reservas: o mesmo traçado, só que sem asfalto nem tinta.
+    earth: fill('#96805c'),
+    earthEdge: stroke('#7a6746', 2),
+    deck: fill('#454b52'),
+    curb: stroke('#b6bac0', 2),
+    marking: stroke('#e9ddb0', 1.5),
+    crossing: stroke('#ecebe5', 4),
+  };
+  return paints;
+}
 
 export function drawRoad(canvas: SkCanvas, data: CityMapData, tx: number, ty: number) {
-  const tile = data.tiles[ty * data.tilesW + tx];
+  const { asphalt, earth, earthEdge, deck, curb, marking, crossing } = roadPaints();
+  const tileIndex = ty * data.tilesW + tx;
+  const tile = data.tiles[tileIndex];
+  // A rua inclinada é a rua do relevo: o pavimento inteiro do tile sobe no mesmo
+  // `h` do chão, senão o asfalto ficaria plano atravessando o morro como um papel.
+  const h = data.heights[tileIndex] ?? 0;
   const road = (x: number, y: number) => x >= 0 && y >= 0 && x < data.tilesW && y < data.tilesH
     && data.tiles[y * data.tilesW + x].kind === 'road';
   const path = Skia.Path.Make();
   const corners = [[tx, ty], [tx + 1, ty], [tx + 1, ty + 1], [tx, ty + 1]];
   corners.forEach(([x, y], i) => {
-    const p = worldToScreen(x, y);
+    const p = worldToScreen(x, y, h);
     if (i === 0) path.moveTo(p.x, p.y);
     else path.lineTo(p.x, p.y);
   });
@@ -46,8 +65,8 @@ export function drawRoad(canvas: SkCanvas, data: CityMapData, tx: number, ty: nu
   canvas.drawPath(path, tile.bridge ? deck : dirt ? earth : asphalt);
 
   const line = (x1: number, y1: number, x2: number, y2: number, paint = dirt ? earthEdge : curb) => {
-    const a = worldToScreen(x1, y1);
-    const b = worldToScreen(x2, y2);
+    const a = worldToScreen(x1, y1, h);
+    const b = worldToScreen(x2, y2, h);
     canvas.drawLine(a.x, a.y, b.x, b.y, paint);
   };
   if (!road(tx, ty - 1)) line(tx, ty, tx + 1, ty);

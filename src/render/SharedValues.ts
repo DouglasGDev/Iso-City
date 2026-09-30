@@ -5,11 +5,19 @@ export interface CameraSV {
   x: number;
   y: number;
   zoom: number;
+  /** Altura do chão sob a câmera: ela acompanha o morro, senão o jogador cola no topo da tela. */
+  h: number;
 }
 
 export interface EntitySV {
   x: number;
   y: number;
+  /**
+   * Altura do chão sob a entidade, em tiles. O laço de simulação é o único que conhece
+   * o mapa, então é ele quem entrega o `h` pronto para a worklet — no UI thread não há
+   * Map para consultar.
+   */
+  h: number;
 }
 
 let cameraSV: SharedValue<CameraSV> | null = null;

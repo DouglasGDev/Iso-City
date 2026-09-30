@@ -31,9 +31,9 @@ const BODY_CLEAR = 0.17;
 const PUSH_RADIUS = 0.34;
 /**
  * A gente que mora, atende e compra dentro das salas. A cadeia tem elenco próprio
- * (`JailSystem`); aqui são a casa, o comércio e o escritório. Cada papel estaciona em
- * frente de um móvel da planta e vaga em torno dele, do mesmo jeito iso que o resto do
- * mundo anda — um eixo por vez, porque o sprite só tem quatro direções.
+ * (`JailSystem`); aqui são a casa, o comércio, o escritório e a delegacia. Cada papel
+ * estaciona em frente de um móvel da planta e vaga em torno dele, do mesmo jeito iso que
+ * o resto do mundo anda — um eixo por vez, porque o sprite só tem quatro direções.
  */
 class InteriorCrowdSystem {
     constructor() {
@@ -84,7 +84,7 @@ class InteriorCrowdSystem {
                 continue;
             taken.add(anchor);
             const o = {
-                ...(0, NPC_1.createNPC)(this.nextId++, spec.char, spot.x, spot.y, 'civ'),
+                ...(0, NPC_1.createNPC)(this.nextId++, spec.char, spot.x, spot.y, spec.kind),
                 role: spec.role,
                 baseX: spot.x,
                 baseY: spot.y,

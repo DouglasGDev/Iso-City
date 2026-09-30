@@ -62,6 +62,7 @@ async function test(name, fn) {
     const pick=(t)=>modules().find(t);
     globalThis.qa={g:pick(x=>x?.getGame).getGame(),input:pick(x=>x?.inputState),pick};
     qa.cfg=()=>pick(x=>x?.GAME_CONFIG).GAME_CONFIG;
+    qa.elevPx=()=>pick(x=>x?.ELEVATION_PX&&x?.worldToScreen).ELEVATION_PX;
     qa.defs=()=>pick(x=>x?.VEHICLE_DEFS).VEHICLE_DEFS;
     qa.newVehicle=()=>pick(x=>x?.createVehicle&&x?.vehicleSpriteKey);
     qa.heliImage=(v)=>{if(!v)return null;const s=pick(x=>x?.resolveEntityImage);return s?!!s.resolveEntityImage('veh:'+qa.g.vehicles.indexOf(v)):false};
@@ -97,18 +98,19 @@ async function test(name, fn) {
   await test('o aparelho aparece na tela lá de cima', async () => {
     // Congela a ronda no teto: sem isso a amostra pode cair no meio de um rapel.
     await evaluate(`(()=>{const h=qa.g.police.air.helis[0];h.deployTimer=9999;if(h.phase!=='outbound')h.phase='orbit';})()`);
-    await until('qa.g.police.air.helis[0].altitude>2.9', 'helicóptero no teto de ronda', 20000);
+    await until('qa.g.police.air.helis[0].altitude>1.8', 'helicóptero no teto de ronda', 20000);
     await evaluate(`(()=>{const h=qa.g.police.air.helis[0],p=qa.g.player;
       p.x=h.x;p.y=h.y;p.vx=p.vy=0;p.health=100;qa.g.camera.x=h.x;qa.g.camera.y=h.y;})()`);
     await delay(250);
     await screenshot('qa-air-heli');
     const shot = await evaluate(`(()=>{const h=qa.g.police.air.helis[0],v=qa.g.vehicles.find(v=>v.id===h.vehicleId);
       const c=[...document.querySelectorAll('canvas')].sort((a,b)=>b.width*b.height-a.width*a.height)[0];
-      // Elevação de render: altitude * 38px. Acima disso o aparelho some atrás da barra da HUD.
-      return{w:c&&c.width,h:c&&c.height,lift:v?v.altitude*38:0,alt:v&&v.altitude};})()`);
+      // A folga do voo é desenhada na mesma escala do relevo (ELEVATION_PX px por tile).
+      return{w:c&&c.width,h:c&&c.height,px:qa.elevPx(),lift:v?v.altitude*qa.elevPx():0,alt:v&&v.altitude};})()`);
     assert.ok(shot.w > 400 && shot.h > 300, 'canvas de render presente');
-    assert.ok(shot.alt > 2.5, `pairando acima dos prédios (${shot.alt})`);
-    assert.ok(shot.lift >= 90 && shot.lift <= 130, `elevação ${shot.lift}px legível numa tela de ${shot.h}px`);
+    assert.ok(shot.alt > 1.7, `pairando acima dos prédios (${shot.alt})`);
+    assert.equal(Math.round(shot.px), 64, 'um tile de ar tem que valer um tile de chão');
+    assert.ok(shot.lift >= 100 && shot.lift <= 145, `elevação ${shot.lift}px legível numa tela de ${shot.h}px`);
     assert.ok(shot.h / 2 - shot.lift > 60, `o sprite fica a ${Math.round(shot.h / 2 - shot.lift)}px do topo, fora da HUD`);
   });
 
@@ -137,8 +139,13 @@ async function test(name, fn) {
     await tap('KeyE', 69);
     await until('qa.g.player.currentVehicleId===qa.heliId', 'entrou no helicóptero');
     await hold('KeyW', 87, 2600);
-    const air = await evaluate(`(()=>{const v=qa.g.vehicles.find(v=>v.id===qa.heliId);return{alt:v.altitude,speed:v.speed,cruise:qa.cfg().HELI_CRUISE_ALTITUDE};})()`);
-    assert.ok(Math.abs(air.alt - air.cruise) < 0.05, `altitude ${air.alt} vs cruzeiro ${air.cruise}`);
+    const air = await evaluate(`(()=>{const g=qa.g,v=g.vehicles.find(v=>v.id===qa.heliId);
+      return{alt:v.altitude,elev:v.elevation,chao:g.map.heightAt(v.x,v.y),speed:v.speed,
+        cruise:qa.cfg().HELI_CRUISE_ALTITUDE};})()`);
+    assert.ok(Math.abs(air.alt - air.cruise) < 0.05, `folga ${air.alt} vs cruzeiro ${air.cruise}`);
+    // A cota é o estado mandão; a folga é ela menos o chão de agora.
+    assert.ok(Math.abs(air.elev - (air.chao + air.alt)) < 1e-6,
+      `cota ${air.elev} não bate com o chão ${air.chao} + folga ${air.alt}`);
     assert.ok(air.speed > 0.5, 'o aparelho anda quando se acelera');
     assert.equal(air.cruise > 1.25, true, 'tem que subir mais do que antes');
   });
@@ -158,16 +165,17 @@ async function test(name, fn) {
       const inside=(b)=>v.x>b.x-b.footprintW&&v.x<b.x&&v.y>b.y-b.footprintW&&v.y<b.y;
       return{inside:g.map.data.buildings.some(inside),alt:v.altitude,hp:v.health};})()`);
     assert.equal(settled.inside, true, 'nenhum sistema empurra o aparelho para fora do prédio');
-    assert.ok(settled.alt > 2.5, `pairando sobre o telhado (${settled.alt})`);
+    assert.ok(settled.alt > 1.7, `pairando sobre o telhado (${settled.alt})`);
     await hold('KeyW', 87, 1200);
     const after = await evaluate(`(()=>{const g=qa.g,v=g.vehicles.find(v=>v.id===qa.heliId);
       return{x:v.x,y:v.y,state:v.state,hp:v.health,playerHp:g.player.health,alt:v.altitude};})()`);
     assert.equal(after.state, 'driving'); assert.equal(after.hp, 100); assert.equal(after.playerHp, 100);
-    assert.ok(after.alt > 2.5, `continua voando (${after.alt})`);
+    assert.ok(after.alt > 1.7, `continua voando (${after.alt})`);
     assert.ok(Math.hypot(after.x - plan.x, after.y - plan.y) > 1, 'o voo continua andando sobre o telhado');
     await screenshot('qa-air-over-roof');
     await evaluate(`(()=>{const g=qa.g;g.player.currentVehicleId=null;const v=g.vehicles.find(v=>v.id===qa.heliId);
-      v.occupied=false;v.state='parked';v.altitude=0;g.wanted.clear(g.player);g.police.reset();})()`);
+      v.occupied=false;v.state='parked';v.elevation=g.map.heightAt(v.x,v.y);v.altitude=0;
+      g.wanted.clear(g.player);g.police.reset();})()`);
   });
 
   assert.deepEqual(errors, [], 'exceções de runtime: ' + errors.join(' | '));

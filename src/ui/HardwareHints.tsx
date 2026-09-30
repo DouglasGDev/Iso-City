@@ -3,7 +3,11 @@ import { StyleSheet, Text, View } from 'react-native';
 import { getGame } from '../game/GameState';
 import type { HardwareMode } from '../game/InputState';
 
-export function HardwareHints({ mode, driving }: { mode: Exclude<HardwareMode, 'touch'>; driving: boolean }) {
+export function HardwareHints({ mode, driving, flying = false }: {
+  mode: Exclude<HardwareMode, 'touch'>;
+  driving: boolean;
+  flying?: boolean;
+}) {
   const [prompt, setPrompt] = useState<string | null>(null);
   useEffect(() => {
     const timer = setInterval(() => setPrompt(getGame().interiors.prompt(getGame().player)), 200);
@@ -11,10 +15,12 @@ export function HardwareHints({ mode, driving }: { mode: Exclude<HardwareMode, '
   }, []);
   const pad = mode === 'gamepad';
   const text = pad
-    ? driving ? 'RT acelerar · LT frear · LS virar · B buzina · Y sair · Back mapa · Start pausa'
-      : 'LS andar · Clique LS agachar · A correr · B pular · LT+RS mirar · RT atacar · X recarregar · LB anterior · RB próxima · Y interagir'
-    : driving ? 'W acelerar · S frear/ré · A/D virar · H buzina · E sair · M mapa · Esc pausa'
-      : 'WASD andar · C agachar · Shift correr · Space pular · Ctrl/clique esq. atirar · clique dir. mira · R recarga · Q anterior · Z próxima · E veículo · F interior';
+    ? flying ? 'LS voar · RT subir · LT descer · Y sair · Back mapa · Start pausa'
+      : driving ? 'RT acelerar · LT frear · LS virar · B buzina · Y sair · Back mapa · Start pausa'
+        : 'LS andar · Clique LS agachar · A correr · B pular · LT+RS mirar · RT atacar · X recarregar · LB anterior · RB próxima · Y interagir'
+    : flying ? 'WASD voar · Espaço subir · Ctrl descer · E sair · M mapa · Esc pausa'
+      : driving ? 'W acelerar · S frear/ré · A/D virar · H buzina · E sair · M mapa · Esc pausa'
+        : 'WASD andar · C agachar · Shift correr · Space pular · Ctrl/clique esq. atirar · clique dir. mira · R recarga · Q anterior · Z próxima · E veículo · F interior';
   return <View style={styles.wrap} pointerEvents="none" testID="hardware-hints">
     {prompt && <Text style={styles.prompt}>{pad ? 'Y' : 'F'} · {prompt}</Text>}
     <Text style={styles.text}>{text}</Text>

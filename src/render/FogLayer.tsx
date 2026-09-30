@@ -1,11 +1,12 @@
 import { RadialGradient, Rect } from '@shopify/react-native-skia';
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
 import { FOG, fogRadii, type FogSnapshot } from '../systems/FogSystem';
+import type { CameraSV } from './SharedValues';
 
 export function FogLayer({ width, height, camera, snapshot }: {
   width: number;
   height: number;
-  camera: SharedValue<{ x: number; y: number; zoom: number }>;
+  camera: SharedValue<CameraSV>;
   /** Publish game.fog.snapshot with the camera; no mutable system captured by a worklet. */
   snapshot?: SharedValue<FogSnapshot>;
 }) {

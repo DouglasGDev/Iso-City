@@ -22,7 +22,14 @@ export interface Vehicle {
   /** Frame do rotor (1|2) para helicóptero; 0 = sprite base */
   animFrame: 0 | 1 | 2;
   animTimer: number;
+  /** Altura ACIMA DO CHÃO debaixo do nariz. Toda a cidade lê isto como "está no ar". */
   altitude: number;
+  /**
+   * Cota absoluta em tiles acima do nível 0 do mundo — é isto que o piloto comanda.
+   * `altitude` sai dela subtraindo o chão local: sobrevoar um morro encurta a folga
+   * sem que a máquina tenha descido um palmo.
+   */
+  elevation: number;
 }
 
 export function createVehicle(
@@ -51,6 +58,7 @@ export function createVehicle(
     animFrame: isHeli ? 1 : 0,
     animTimer: 0,
     altitude: 0,
+    elevation: 0,
   };
 }
 

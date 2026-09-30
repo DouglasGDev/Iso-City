@@ -1,6 +1,6 @@
 import type { Collider } from '../entities/types';
 import type { CityMapData, PlacedBuilding, PlacedProp } from '../data/maps/city';
-import type { Biome, Dir4 } from '../game/GameConfig';
+import { GAME_CONFIG, type Biome, type Dir4 } from '../game/GameConfig';
 import { deltaToDir } from './IsoUtils';
 
 /**
@@ -72,6 +72,9 @@ export class Map {
   private nodeGridRows = 0;
 
   constructor(data: CityMapData, extraColliders: Collider[] = []) {
+    // O relevo é dado do mapa, não suposição: um chão sem malha de altura é plano, e é
+    // assim que interior antigo e fixture de teste continuam lendo altura sem crash.
+    if (!data.heights) data.heights = new Float32Array(data.tilesW * data.tilesH);
     this.data = data;
     const colliders: Collider[] = [...extraColliders];
     const buildingColliders: Collider[] = [];
@@ -538,6 +541,50 @@ export class Map {
     const ty = Math.floor(y);
     if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH) return null;
     return this.data.tiles[ty * this.data.tilesW + tx].biome;
+  }
+
+  /**
+   * Altura do chão em tiles, losango a losango e sem interpolar: o relevo é feito de
+   * terraços, e um valor suave entre dois degraus faria o sprite deslizar pela face
+   * da montanha em vez de parar nela.
+   */
+  heightAt(x: number, y: number): number {
+    return this.heightAtTile(Math.floor(x), Math.floor(y));
+  }
+
+  /** Mesma leitura por índice de tile, para o render varrer a malha sem Math.floor. */
+  heightAtTile(tx: number, ty: number): number {
+    if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH) return 0;
+    return this.data.heights[ty * this.data.tilesW + tx];
+  }
+
+  /** Altura em degraus (1 = 1/4 de tile). É a unidade das regras de climb. */
+  levelAt(x: number, y: number): number {
+    return Math.round(this.heightAt(x, y) / GAME_CONFIG.TERRAIN_LEVEL_TILES);
+  }
+
+  /**
+   * A única "colisão" do relevo: comparar dois níveis. Um tile mais alto que o atual
+   * a mais de um degrau é parede, e uma queda funda demais é borda — é assim que a
+   * montanha barra o NPC sem nenhuma geometria nova nem câmera em 3D.
+   */
+  canClimb(fromX: number, fromY: number, toX: number, toY: number): boolean {
+    const up = this.levelAt(toX, toY) - this.levelAt(fromX, fromY);
+    return up <= GAME_CONFIG.TERRAIN_STEP_UP_FOOT && -up <= GAME_CONFIG.TERRAIN_MAX_DROP;
+  }
+
+  /**
+   * Roda não faz trilha: o gerador suaviza o asfalto inteiro, então um carro que
+   * encare um degrau está cortando campo, não subindo rua.
+   */
+  canDriveOver(fromX: number, fromY: number, toX: number, toY: number): boolean {
+    const up = this.levelAt(toX, toY) - this.levelAt(fromX, fromY);
+    return up <= GAME_CONFIG.TERRAIN_STEP_UP_VEHICLE && -up <= GAME_CONFIG.TERRAIN_STEP_UP_VEHICLE;
+  }
+
+  /** Inclinação no ponto, em níveis por tile: positiva subindo na direção dada. */
+  slopeAlong(x: number, y: number, dx: number, dy: number): number {
+    return this.levelAt(x + dx, y + dy) - this.levelAt(x, y);
   }
 }
 

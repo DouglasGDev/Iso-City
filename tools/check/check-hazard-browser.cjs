@@ -3,11 +3,15 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const PORT = Number(process.env.QA_CDP_PORT || 9223);
 let socket, serial = 0;
 const pending = new Map(), errors = [];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const send = (method, params = {}) => new Promise((resolve, reject) => {
-  const id = ++serial; pending.set(id, { resolve, reject });
+// Toda volta ao CDP tem prazo: uma chamada presa no renderer congela a checagem inteira.
+const send = (method, params = {}, timeout = 30000) => new Promise((resolve, reject) => {
+  const id = ++serial;
+  const timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP ${method} timeout`)); }, timeout);
+  pending.set(id, { resolve: (r) => { clearTimeout(timer); resolve(r); }, reject: (e) => { clearTimeout(timer); reject(e); } });
   socket.send(JSON.stringify({ id, method, params }));
 });
 async function evaluate(expression) {
@@ -17,7 +21,11 @@ async function evaluate(expression) {
 }
 async function until(expression, label, timeout = 20000) {
   const end = Date.now() + timeout;
-  while (Date.now() < end) { if (await evaluate(expression)) return; await delay(60); }
+  while (Date.now() < end) {
+    // Durante a navegação o contexto morre no meio da checagem: conta como ainda não pronto.
+    try { const v = await evaluate(expression); if (v) return v; } catch { /* página trocando */ }
+    await delay(60);
+  }
   throw new Error('Timed out: ' + label);
 }
 async function screenshot(name) {
@@ -29,11 +37,18 @@ async function launch() {
   await send('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 1, mobile: true });
   await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   await send('Page.navigate', { url: 'http://localhost:8082/?hazard-qa=1' });
-  await until('!!document.body?.innerText.match(/JOGAR|NOVO JOGO/)', 'menu', 90000);
-  const p = await evaluate(`(()=>{const e=[...document.querySelectorAll('div')].find(e=>e.childElementCount===0&&(e.textContent==='JOGAR'||e.textContent==='NOVO JOGO'));const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+  await until(`!!document.querySelector('[data-testid="menu-new"],[data-testid="menu-play"]')
+    ||!!document.body?.innerText.match(/JOGAR|NOVO JOGO/)`, 'menu', 180000);
+  // O menu troca "JOGAR" por "CONTINUAR / NOVO JOGO" quando o save é lido: no mesmo pixel, um
+  // toque apressado continua o jogo salvo em vez de abrir um mundo novo.
+  await delay(600);
+  const p = await evaluate(`(()=>{const b=document.querySelector('[data-testid="menu-new"]')
+    ||document.querySelector('[data-testid="menu-play"]');
+    if(!b)return null;const r=b.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+  assert.ok(p, 'nenhum botão de jogar no menu');
   await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...p, id: 1 }] });
   await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  await until('document.body.innerText.includes("HP 100")', 'HUD');
+  await until('document.body.innerText.includes("HP 100")', 'HUD', 60000);
   await evaluate(`(()=>{const m=[...__r.getModules().values()].filter(m=>m.isInitialized).map(m=>m.publicModule.exports);
     globalThis.qa={g:m.find(m=>m?.getGame).getGame()};
     qa.g.player.invulnUntil=Infinity;
@@ -89,8 +104,10 @@ async function test(name, fn) {
   catch (error) { failed++; console.error('FAIL ' + name + '\n' + error.stack); }
 }
 (async () => {
-  const pages = await (await fetch('http://127.0.0.1:9223/json/list')).json();
-  socket = new WebSocket(pages.find(p => p.type === 'page').webSocketDebuggerUrl);
+  const pages = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
+  const page = pages.find(p => p.type === 'page');
+  assert.ok(page, `nenhum alvo CDP na porta ${PORT}`);
+  socket = new WebSocket(page.webSocketDebuggerUrl);
   socket.onmessage = ({ data }) => {
     const m = JSON.parse(data);
     if (m.id) { const p = pending.get(m.id); if (!p) return; pending.delete(m.id); m.error ? p.reject(new Error(m.error.message)) : p.resolve(m.result); }
@@ -221,6 +238,33 @@ async function test(name, fn) {
     assert.equal(back.bed, null);
     assert.equal(back.wet, 0);
     assert.ok(!back.hud.includes('PERIGO'), 'sobrou faixa de perigo na HUD');
+  });
+
+  await test('a água da onda é o corredor inteiro: embaixo dela se nada e se afoga', async () => {
+    // Onda de 120 s: a página pode ficar muitos segundos presa no bundle, e uma onda curta
+    // acabaria no meio de uma leitura. A vida em 1000 é só para a medição não matar o player
+    // antes da próxima volta ao CDP.
+    await evaluate('qa.g.hazard.cooldown=1e9;qa.g.hazard.force("tsunami",120)');
+    // A onda sobe um tique por vez: sem esperar, a leitura cai no instante em que reach é 0.
+    await until('qa.g.hazard.wave.reach>6', 'a onda subir a praia', 30000);
+    const molhado = await evaluate(`(()=>{const g=qa.g,w=g.hazard.wave,mid=(w.u0+w.u1)/2,
+      along=w.from+w.dir*(w.reach/2);
+      const x=w.axis==='y'?mid:along,y=w.axis==='y'?along:mid;
+      g.player.x=x;g.player.y=y;g.camera.x=x;g.camera.y=y;g.player.health=1000;
+      g.notifyEntityChange();return {alagado:g.hazard.floodedAt(x,y),passo:w.reach}})()`);
+    assert.ok(molhado.passo > 3, `a onda mal saiu do mar (${molhado.passo})`);
+    assert.equal(molhado.alagado, true, 'no meio do corredor alagado o chão ainda é seco');
+    await until('qa.g.player.swimming===true&&qa.g.player.anim==="swim"',
+      'o player ser posto a nadar pela onda', 20000);
+    await screenshot('qa-hazard-tsunami-nadando');
+    await evaluate('qa.g.player.invulnUntil=0');
+    await until('qa.g.player.health<960', 'a onda afogar o player', 20000);
+    const ferido = await evaluate('({hp:qa.g.player.health,alagado:qa.g.hazard.floodedAt(qa.g.player.x,qa.g.player.y)})');
+    assert.ok(ferido.alagado, 'o player atravessou a onda a pé e saiu seco do outro lado');
+    await evaluate('qa.g.player.invulnUntil=Infinity;qa.g.player.health=100;qa.g.hazard.left=0.4');
+    await until('qa.g.hazard.phase==="calm"', 'a onda voltar para o mar', 40000);
+    assert.equal(await evaluate('qa.g.hazard.floodedAt(qa.g.player.x,qa.g.player.y)'), false,
+      'a água recolheu e o chão continua alagado');
   });
 
   await test('o sorteio do jogo avisa antes de o perigo encostar no chão', async () => {

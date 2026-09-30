@@ -23,6 +23,7 @@ function createVehicle(id, def, color, x, y, dir) {
         animFrame: isHeli ? 1 : 0,
         animTimer: 0,
         altitude: 0,
+        elevation: 0,
     };
 }
 function vehicleSpriteKey(v) {

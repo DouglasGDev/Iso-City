@@ -7,6 +7,7 @@ import type { Map } from '../world/Map';
 import type { Vehicle } from '../entities/Vehicle';
 import type { Collider } from '../entities/types';
 import { CROUCH_SPEED } from './CrouchSystem';
+import { terrain } from './TerrainSystem';
 
 export const FENCE_CLEARANCE_PX = 12;
 export const MAX_VAULT_FENCE_THICKNESS = 0.4;
@@ -43,8 +44,13 @@ export function movePlayerGround(
     player.y = Math.max(radius, Math.min(map.worldH - radius, circle.y));
   };
   for (let step = 0; step < steps; step++) {
+    const prevX = player.x;
+    const prevY = player.y;
     if (Math.abs(sx) > 1e-8) { player.x += sx; resolve(); }
     if (Math.abs(sy) > 1e-8) { player.y += sy; resolve(); }
+    // O talude julga por último: nem o passo nem o empurrão de um carro abrem caminho
+    // morro acima. No ar não há julgamento — é para isso que serve o pulo.
+    if (player.jumpTimer <= 0) terrain.blockWalk(map, player, prevX, prevY);
   }
 }
 
@@ -63,7 +69,8 @@ export class MovementSystem {
     private getVehicles: () => readonly Vehicle[] = () => [],
   ) {}
 
-  updatePlayer(player: Player, map: Map, dt: number, runAllowed?: boolean) {
+  /** `flooded` = a água de um tsunami cobrindo o chão: ali também se nada, não se caminha. */
+  updatePlayer(player: Player, map: Map, dt: number, runAllowed?: boolean, flooded = false) {
     if (player.currentVehicleId !== null || player.health <= 0 ||
         player.state === 'driving' || player.state === 'enteringVehicle' || player.state === 'dead') {
       player.vx = 0;
@@ -84,7 +91,7 @@ export class MovementSystem {
     const runHeld = !player.crouching && (runAllowed === undefined ? inputState.runHeld : runAllowed);
     const dead = GAME_CONFIG.JOYSTICK_DEADZONE;
     const mag = magnitude;
-    const inWater = map.isWaterWorld(player.x, player.y);
+    const inWater = flooded || map.isWaterWorld(player.x, player.y);
 
     let desiredVx = 0;
     let desiredVy = 0;
@@ -96,13 +103,15 @@ export class MovementSystem {
       const ny = dy / mag;
       const t = Math.min(1, (mag - dead) / (1 - dead));
       const curve = t * t * (3 - 2 * t);
-      const maxSpeed = inWater
-        ? GAME_CONFIG.PLAYER_SWIM_SPEED
-        : player.crouching ? CROUCH_SPEED
-        : runHeld ? GAME_CONFIG.PLAYER_RUN_SPEED : GAME_CONFIG.PLAYER_WALK_SPEED;
       // Inverse of (worldX-worldY)*64, (worldX+worldY)*32.
       const { x: wx, y: wy } = screenToWorld(nx, ny);
       const wlen = Math.hypot(wx, wy) || 1;
+      const flat = inWater
+        ? GAME_CONFIG.PLAYER_SWIM_SPEED
+        : player.crouching ? CROUCH_SPEED
+        : runHeld ? GAME_CONFIG.PLAYER_RUN_SPEED : GAME_CONFIG.PLAYER_WALK_SPEED;
+      // Na ladeira o passo encurta; na água não há ladeira.
+      const maxSpeed = inWater ? flat : flat * terrain.speedFactor(map, player.x, player.y, wx / wlen, wy / wlen);
       desiredVx = (wx / wlen) * maxSpeed * curve;
       desiredVy = (wy / wlen) * maxSpeed * curve;
       moving = true;
@@ -157,7 +166,7 @@ export class MovementSystem {
     }
 
     movePlayerGround(player, map, this.collision, player.vx * dt, player.vy * dt, this.getVehicles());
-    player.swimming = map.isWaterWorld(player.x, player.y);
+    player.swimming = flooded || map.isWaterWorld(player.x, player.y);
     if (player.swimming) {
       player.anim = 'swim';
       player.state = player.speed > 0.08 ? 'walking' : 'idle';
@@ -178,7 +187,9 @@ export class MovementSystem {
       return;
     }
     const { vehicleAccel, vehicleBrake, vehicleLeft, vehicleRight } = inputState;
-    const maxSpeed = GAME_CONFIG.VEHICLE_MAX_SPEED;
+    const vdir = DIR_VECTORS[vehicle.dir];
+    // Subida corta o topo, descida alonga: é o peso da estrada de morro sem física nova.
+    const maxSpeed = GAME_CONFIG.VEHICLE_MAX_SPEED * terrain.speedFactor(map, vehicle.x, vehicle.y, vdir.wx, vdir.wy);
     const reverseMax = maxSpeed * GAME_CONFIG.VEHICLE_REVERSE_RATIO;
 
     if (vehicleAccel && !vehicleBrake) {
@@ -226,9 +237,10 @@ export class MovementSystem {
     }
 
     vehicle.facingAngle = dirToAngle(vehicle.dir);
-    const vdir = DIR_VECTORS[vehicle.dir];
-    const vx = vdir.wx * vehicle.speed;
-    const vy = vdir.wy * vehicle.speed;
+    // Relê a direção: o volante pode ter girado o carro neste mesmo tick.
+    const step = DIR_VECTORS[vehicle.dir];
+    const vx = step.wx * vehicle.speed;
+    const vy = step.wy * vehicle.speed;
     const radius = Math.max(
       GAME_CONFIG.VEHICLE_RADIUS,
       Math.min(vehicle.def.footprintW, vehicle.def.footprintH) * 0.28,
@@ -244,13 +256,28 @@ export class MovementSystem {
   }
 
   private updateHelicopter(vehicle: Vehicle, map: Map, dt: number) {
-    const { vehicleAccel, vehicleBrake, dx, dy, magnitude } = inputState;
+    const { heliUp, heliDown, dx, dy, magnitude } = inputState;
     const dead = GAME_CONFIG.JOYSTICK_DEADZONE;
-    vehicle.altitude += (GAME_CONFIG.HELI_CRUISE_ALTITUDE - vehicle.altitude) * Math.min(1, 3.2 * dt);
+
+    // Voo é por COTA (tiles acima do nível 0 do mundo), nunca por folga do solo: o chão
+    // muda sob o nariz a cada metro andado e quem segura o manche segura a máquina no
+    // céu. Sem isso o helicóptero pousava em pleno ar sobre um platô e atravessava a
+    // montanha raspando a pedra.
+    const chao = map.heightAt(vehicle.x, vehicle.y);
+    const levitacao = chao + GAME_CONFIG.HELI_CRUISE_ALTITUDE;
+    let alvo = vehicle.elevation;
+    if (heliUp) alvo += GAME_CONFIG.HELI_CLIMB_RATE * dt;
+    else if (heliDown) alvo -= GAME_CONFIG.HELI_SINK_RATE * dt;
+    // Só o manche, sem cabra: ele busca a altura de levitação e para ali. É o lift-off de
+    // quem quer atravessar a cidade por cima, e sobe na taxa do comando — um voo que salta
+    // 140px num frame não é decolagem, é teletransporte.
+    else if (magnitude > dead && vehicle.elevation < levitacao) {
+      alvo = Math.min(levitacao, vehicle.elevation + GAME_CONFIG.HELI_CLIMB_RATE * dt);
+    }
+    vehicle.elevation = Math.min(GAME_CONFIG.HELI_CEILING_ELEVATION, Math.max(chao, alvo));
 
     let vx = 0;
     let vy = 0;
-    const maxSpeed = vehicleAccel ? GAME_CONFIG.HELI_MAX_SPEED : GAME_CONFIG.HELI_MAX_SPEED * 0.58;
 
     if (magnitude > dead) {
       const nx = dx / magnitude;
@@ -259,13 +286,11 @@ export class MovementSystem {
       const curve = t * t * (3 - 2 * t);
       const { x: wx, y: wy } = screenToWorld(nx, ny);
       const wlen = Math.hypot(wx, wy) || 1;
-      const spd = maxSpeed * curve;
+      const spd = GAME_CONFIG.HELI_MAX_SPEED * curve;
       vx = (wx / wlen) * spd;
       vy = (wy / wlen) * spd;
       vehicle.dir = angleToWorldDir(Math.atan2(wy, wx));
       vehicle.speed = spd;
-    } else if (vehicleBrake) {
-      vehicle.speed = Math.max(0, vehicle.speed - GAME_CONFIG.VEHICLE_BRAKE * 1.6 * dt);
     } else {
       vehicle.speed = Math.max(0, vehicle.speed - GAME_CONFIG.VEHICLE_COAST * dt);
       const vdir = DIR_VECTORS[vehicle.dir];
@@ -273,12 +298,32 @@ export class MovementSystem {
       vy = vdir.wy * vehicle.speed;
     }
 
+    const prevX = vehicle.x;
+    const prevY = vehicle.y;
     vehicle.x += vx * dt;
     vehicle.y += vy * dt;
     vehicle.facingAngle = dirToAngle(vehicle.dir);
     const r = 0.4;
     vehicle.x = Math.max(r, Math.min(map.worldW - r, vehicle.x));
     vehicle.y = Math.max(r, Math.min(map.worldH - r, vehicle.y));
+    if (terrain.blockFlight(map, vehicle, prevX, prevY, vehicle.elevation)) vehicle.speed = 0;
+
+    // A folga é o que sobra entre a cota e o chão de agora. Saiu do platô para a
+    // planície, a cota continua e o buraco embaixo dele é que cresce.
+    const novoChao = map.heightAt(vehicle.x, vehicle.y);
+    if (vehicle.elevation < novoChao) vehicle.elevation = novoChao;
+    vehicle.altitude = vehicle.elevation - novoChao;
+  }
+
+  /**
+   * Aeronave sem piloto no comando desce até o chão DEBAIXO DELA, não até o nível zero
+   * do mundo: um helicóptero estacionado na crista tem de pousar na crista.
+   */
+  settleAirborne(vehicle: Vehicle, map: Map, dt: number) {
+    if (vehicle.def.type !== 'helicopter') return;
+    const chao = map.heightAt(vehicle.x, vehicle.y);
+    vehicle.elevation = Math.max(chao, vehicle.elevation - GAME_CONFIG.HELI_SINK_RATE * dt);
+    vehicle.altitude = vehicle.elevation - chao;
   }
 
   private slideMove(
@@ -292,6 +337,8 @@ export class MovementSystem {
     const stepX = vx * dt;
     const stepY = vy * dt;
     const queryR = radius + Math.hypot(stepX, stepY) + 1.4;
+    const prevX = e.x;
+    const prevY = e.y;
 
     if (Math.abs(stepX) > 1e-8) {
       e.x += stepX;
@@ -310,6 +357,10 @@ export class MovementSystem {
       e.x = c.x;
       e.y = c.y;
     }
+
+    // Um talude no fim da rua para o carro como uma parede: o asfalto é suavizado,
+    // então barrar aqui só pega quem tentou atalhar pelo mato.
+    terrain.blockDrive(map, e, prevX, prevY);
 
     e.x = Math.max(radius, Math.min(map.worldW - radius, e.x));
     e.y = Math.max(radius, Math.min(map.worldH - radius, e.y));

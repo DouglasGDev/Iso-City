@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FogSystem = exports.FOG = void 0;
 exports.fogRadii = fogRadii;
+const GameConfig_1 = require("../game/GameConfig");
+const IsoUtils_1 = require("../world/IsoUtils");
 const clamp = (x) => Math.max(0, Math.min(1, x));
 function target({ timeOfDay, rain, cover, dark, snow, biome }) {
     const t = Number.isFinite(timeOfDay) ? ((timeOfDay % 1) + 1) % 1 : 0.5;
@@ -67,7 +69,11 @@ class FogSystem {
     }
     view({ camera, viewW, viewH }) {
         const radius = fogRadii(viewW, viewH, camera.zoom);
-        return { x: (camera.x - camera.y) * 64, y: (camera.x + camera.y) * 32,
+        // Centro da tela = a projeção DO PONTO ELEVADO que a câmera mira, a mesma fórmula
+        // do transform da câmera. Sem o `h` o descarte de tiles e a neblina ficariam
+        // deslocados para baixo assim que o jogador subisse no morro.
+        const center = (0, IsoUtils_1.worldToScreen)(camera.x, camera.y, camera.h);
+        return { x: center.x, y: center.y,
             radiusX: radius.x / camera.zoom, radiusY: radius.y / camera.zoom };
     }
     intersects(view, x, y, width, height, padding = exports.FOG.padding) {
@@ -79,7 +85,13 @@ class FogSystem {
     worldBounds(view) {
         const x = view.x / 128 + view.y / 64;
         const y = view.y / 64 - view.x / 128;
-        const extent = Math.hypot(view.radiusX / 128, view.radiusY / 64) + exports.FOG.padding / 128 + exports.FOG.padding / 64 + 1;
+        // Um tile elevado é pintado na posição plana de (tx-h, ty-h): para a crista da
+        // montanha entrar no window de bake, a varredura tem que ir `climb` tiles além.
+        // Simétrico de propósito — o AABB continua sendo a janela centrada na vista, e quem
+        // decide o que realmente se desenha é o intersects com a altura de cada tile.
+        const climb = GameConfig_1.GAME_CONFIG.TERRAIN_MAX_LEVEL * GameConfig_1.GAME_CONFIG.TERRAIN_LEVEL_TILES;
+        const extent = Math.hypot(view.radiusX / 128, view.radiusY / 64)
+            + exports.FOG.padding / 128 + exports.FOG.padding / 64 + 1 + climb;
         return { minX: x - extent, maxX: x + extent, minY: y - extent, maxY: y + extent };
     }
 }

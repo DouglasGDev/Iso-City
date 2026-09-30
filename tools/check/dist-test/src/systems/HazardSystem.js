@@ -467,14 +467,33 @@ class HazardSystem {
             out.fx = push;
             out.fy = side;
         }
-        out.core = dist < 2.2;
+        out.core = this.inFlood(x, y);
         out.near = true;
+    }
+    /**
+     * Onde a onda já passou: o corredor de água entre o mar e a crista, mais o lábio de espuma
+     * à frente. É a mesma conta do espelho d'água pintado na tela — o que se vê alagado é o que
+     * afoga, e andar ali dentro é nadar, não andar.
+     */
+    inFlood(x, y) {
+        const along = this.wave.axis === 'y' ? y : x;
+        const across = this.wave.axis === 'y' ? x : y;
+        if (across < this.wave.u0 || across > this.wave.u1)
+            return false;
+        const crest = (this.wave.edge - this.wave.from) * this.wave.dir;
+        return (along - this.wave.from) * this.wave.dir <= crest + 1;
+    }
+    /** Chão coberto pela água do tsunami: quem pisa ali não anda, a corrente arrasta e afoga. */
+    floodedAt(x, y) {
+        if (this.kind !== 'tsunami' || this.strength <= 0.02)
+            return false;
+        return this.inFlood(x, y);
     }
     coreDamage(dt) {
         if (this.kind === 'tornado')
             return GameConfig_1.GAME_CONFIG.TORNADO_PLAYER_DMG_S * dt * this.strength;
         if (this.kind === 'tsunami')
-            return 14 * dt * this.strength;
+            return GameConfig_1.GAME_CONFIG.TSUNAMI_PLAYER_DMG_S * dt * this.strength;
         return 1.6 * dt * this.strength;
     }
     shakeFor(dt, x, y) {

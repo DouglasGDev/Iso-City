@@ -73,7 +73,10 @@ function button(p, index, value) {
 }
 function fixture() {
   const player = createPlayer(100, 100);
-  const map = { worldW: 1000, worldH: 1000, isWaterWorld: () => false, queryNearby: () => [] };
+  // Chão plano: o stub também responde o contrato de relevo que o movimento consulta.
+  const map = { worldW: 1000, worldH: 1000, isWaterWorld: () => false, queryNearby: () => [],
+    canClimb: () => true, canDriveOver: () => true, slopeAlong: () => 0,
+    heightAt: () => 0, levelAt: () => 0 };
   const movement = new MovementSystem({ resolveCircle() {} });
   return { player, map, movement };
 }
@@ -91,7 +94,10 @@ test('input normalization, invalid values, independent aim and complete reset', 
   input.queueInteract(); assert.equal(input.consumeInteract(), true); assert.equal(input.consumeInteract(), false);
   input.queueJump(); assert.equal(input.consumeJump(), true); assert.equal(input.consumeJump(), false);
   input.setAttackHeld(true); input.setRunHeld(true); input.queueEnter(); input.queueReload(); input.queueWeapon(); input.queueJump(); input.queueCrouch();
-  input.setVehicleControl('accel', true); input.setAimInput(1, 0);
+  input.setVehicleControl('accel', true); input.setHeliControl('up', true); input.setHeliControl('down', true);
+  input.setAimInput(1, 0);
+  input.resetVehicleArrows(); assert.equal(state.heliUp, false); assert.equal(state.heliDown, false);
+  assert.equal(state.vehicleAccel, false);
   input.resetInputState(); neutral();
 });
 
@@ -136,6 +142,14 @@ test('partial analog input, deadzone, friction, swimming and blocked player stat
   input.setJoystickInput(1, 0, 1);
   movement.updatePlayer(player, map, 1 / 30, true);
   near(player.speed, C.PLAYER_SWIM_SPEED); assert.equal(player.anim, 'swim');
+  // A água do tsunami não é tile de mar: é o chão alagado que o HazardSystem aponta.
+  map.isWaterWorld = () => false;
+  movement.updatePlayer(player, map, 1 / 30, true, true);
+  near(player.speed, C.PLAYER_SWIM_SPEED);
+  assert.equal(player.anim, 'swim');
+  assert.equal(player.swimming, true, 'a corrente não pôs o jogador a nadar');
+  movement.updatePlayer(player, map, 1 / 30, true, false);
+  assert.equal(player.swimming, false, 'fora da água do tsunami continua-se andando');
   for (const state of ['driving', 'enteringVehicle', 'dead']) {
     player.state = state;
     movement.updatePlayer(player, map, 1 / 30, true);
@@ -150,7 +164,8 @@ test('aim never rotates movement/facing; helicopter uses the same inverse projec
   input.setAimInput(-1, -1);
   b.movement.updatePlayer(b.player, b.map, 0.1, false);
   for (const key of ['vx', 'vy', 'facingAngle', 'direction', 'walkDir']) assert.equal(a.player[key], b.player[key]);
-  const heli = { x: 100, y: 100, speed: 0, dir: 'SE', altitude: 0, def: { type: 'helicopter' } };
+  // A cota é o estado de voo; sem ela o aparelho não tem para onde subir.
+  const heli = { x: 100, y: 100, speed: 0, dir: 'SE', altitude: 0, elevation: 0, def: { type: 'helicopter' } };
   a.movement.updateVehicle(heli, a.map, 0.1);
   near((heli.x - 100) / (heli.y - 100), 3);
 });
@@ -232,6 +247,11 @@ test('keyboard jump edges, fast taps, repeats and merged mouse/both Ctrl fire ho
   h.mouseButton(false); h.keyDown('ControlLeft'); h.keyUp('ControlLeft'); assert.equal(input.consumeAttack(), true);
   h.setDriving(true); h.mouseButton(true); h.keyDown('Space');
   assert.equal(state.attackHeld, false); assert.equal(input.consumeJump(), false);
+  // No ar o Espaço e o Ctrl viram a cabra: mexem na cota sem roubar o manche do WASD.
+  assert.equal(state.heliUp, true); assert.equal(state.heliDown, false);
+  h.keyDown('ControlLeft'); assert.equal(state.heliDown, true);
+  h.keyUp('Space'); h.keyUp('ControlLeft'); assert.equal(state.heliUp, false);
+  h.release(); neutral();
 });
 
 test('mouse right button is manual aim and left is fire; release/cancel/pause drop the aim', () => {
@@ -579,6 +599,10 @@ test('browser driving RT accelerates without shooting; stationary mouse never st
   b.step(); near(state.aimX, -Math.SQRT1_2);
   b.drive(true); button(p, 6, 0); p.axes[2] = 0; b.step(); button(p, 7, 1); b.step();
   assert.equal(state.vehicleAccel, true); assert.equal(state.attackHeld, false); assert.equal(input.consumeAttack(), false);
+  // O gatilho é pedal e cabra no mesmo toque: no ar ele move a cota, não a velocidade.
+  assert.equal(state.heliUp, true); assert.equal(state.heliDown, false);
+  button(p, 7, 0); button(p, 6, 1); b.step();
+  assert.equal(state.heliUp, false); assert.equal(state.heliDown, true);
   b.binding.dispose();
 });
 
@@ -673,7 +697,7 @@ test('rendered touch jump target works alongside joystick/run and clears on canc
     if (node.props?.testID) views.push(node);
     render(node.props?.children);
   }
-  render(ActionButtons()); effects.splice(0); // Layout is driven explicitly; no timer fakes needed.
+  render(ActionButtons({ flying: false })); effects.splice(0); // Layout is driven explicitly; no timer fakes needed.
   const jump = views.find((node) => node.props.testID === 'control-jump');
   assert.ok(jump); assert.equal(jump.props.accessibilityRole, 'button');
   assert.match(jump.props.accessibilityLabel, /Pular/);
@@ -714,10 +738,18 @@ test('rendered touch jump target works alongside joystick/run and clears on canc
   cleanups.forEach((cleanup) => cleanup()); neutral();
   down(3, 310, 204); neutral(); // delayed runOnJS after teardown must be ignored.
   game.player.currentVehicleId = 1;
-  views.length = 0; render(ActionButtons()); effects.splice(0);
+  views.length = 0; render(ActionButtons({ flying: false })); effects.splice(0);
   for (const id of ['jump', 'crouch', 'weaponPrev', 'weapon']) {
     assert.equal(views.some((node) => node.props.testID === `control-${id}`), false);
   }
+  // No ar os mesmos pedais viram cabra: o caminho de entrada não muda, só o nome.
+  const labels = (flying) => {
+    views.length = 0; render(ActionButtons({ flying })); effects.splice(0);
+    const get = (id) => views.find((node) => node.props.testID === `control-${id}`);
+    return [get('accel').props.accessibilityLabel, get('brake').props.accessibilityLabel];
+  };
+  assert.deepEqual(labels(false), ['Acelerar', 'Frear']);
+  assert.deepEqual(labels(true), ['Subir o helicóptero', 'Descer o helicóptero']);
 });
 
 test('directional weapon slot defaults forward, latest edge wins and never conflicts with E/F/R', () => {
@@ -810,6 +842,7 @@ test('cash bundles share cached 3D paths; simulation clock rotates and floats wi
   const { MarkerLayer } = source('render/MarkerLayer.tsx');
   const clock = { value: 0 };
   const game = { fog: { view: () => ({}), intersects: () => true },
+    map: { heightAt: () => 0 },
     pickups: { items: [{ id: 0, active: true, kind: 'cash', x: 1, y: 1 }] },
     missions: { state: { phase: 'break' } }, destruction: { wrecks: [] } };
   function render(node) {
