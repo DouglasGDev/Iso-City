@@ -51,7 +51,11 @@ class HazardSystem {
         this.wave = {
             u0: 0, u1: 0, from: 0, edge: 0, dir: 1, reach: 0, axis: 'y',
         };
-        this.cooldown = 75;
+        /**
+         * O primeiro perigo do jogo só pode nascer depois da janela de graça. É o avesso do
+         * cooldown: sortear em 75s fazia o reload cair em cima de um funil.
+         */
+        this.cooldown = GameConfig_1.GAME_CONFIG.HAZARD_GRACE_S;
         this.watchLeft = 0;
         this.left = 0;
         this.fadeLeft = 0;
@@ -62,6 +66,15 @@ class HazardSystem {
         this.windY = 0;
         this.camX = 120;
         this.camY = 120;
+        /**
+         * Todo sorteio do perigo passa por `rnd()`. Um NaN que entrasse direto virava rumo NaN,
+         * olho NaN e molhava wet/dark/slant para sempre — o clima não recupera sozinho.
+         */
+        this.rawRng = Math.random;
+        this.rnd = () => {
+            const v = this.rawRng();
+            return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.5;
+        };
         this.terrain = null;
     }
     /** Texto de alerta da HUD: null quando o tempo está só ruim, sem perigo. */
@@ -90,8 +103,11 @@ class HazardSystem {
     update(dt, rng, ctx) {
         if (!Number.isFinite(dt) || dt <= 0)
             return;
-        this.camX = ctx.camera.x;
-        this.camY = ctx.camera.y;
+        this.rawRng = rng;
+        // Câmera nanada (metragem do canvas ainda não medida) entraria na conta de proximidade
+        // do olho e fecharia o céu para sempre.
+        this.camX = Number.isFinite(ctx.camera.x) ? ctx.camera.x : this.camX;
+        this.camY = Number.isFinite(ctx.camera.y) ? ctx.camera.y : this.camY;
         this.terrain = ctx.terrain;
         // As rajadas vêm do relógio do próprio evento: o vento do furacão nunca para, ele oscila.
         if (this.phase !== 'calm')
@@ -101,14 +117,14 @@ class HazardSystem {
             this.strength = ease(this.strength, 0, dt / 2);
             this.cooldown -= dt;
             if (this.cooldown <= 0)
-                this.consider(rng, ctx);
+                this.consider(this.rnd, ctx);
             this.derive();
             return;
         }
         if (this.kind === 'tornado' && this.phase !== 'fading')
-            this.moveVortex(dt, rng, false);
+            this.moveVortex(dt, this.rnd, false);
         if (this.kind === 'hurricane')
-            this.moveStorm(dt, rng);
+            this.moveStorm(dt, this.rnd);
         if (this.kind === 'tsunami') {
             this.moveWave(dt, this.phase === 'active' ? 1 : this.phase === 'fading' ? -1 : 0);
         }
@@ -120,7 +136,7 @@ class HazardSystem {
                 this.phase = 'active';
                 const life = this.kind === 'hurricane' ? GameConfig_1.GAME_CONFIG.HURRICANE_LIFE_S
                     : this.kind === 'tsunami' ? GameConfig_1.GAME_CONFIG.TSUNAMI_LIFE_S : GameConfig_1.GAME_CONFIG.TORNADO_LIFE_S;
-                this.left = pick(rng, life);
+                this.left = pick(this.rnd, life);
             }
         }
         else if (this.phase === 'active') {
@@ -134,10 +150,10 @@ class HazardSystem {
         else {
             this.strength = ease(this.strength, 0, dt / 3);
             if (this.kind === 'tornado')
-                this.moveVortex(dt, rng, true);
+                this.moveVortex(dt, this.rnd, true);
             this.fadeLeft -= dt;
             if (this.fadeLeft <= 0 || this.strength <= 0.001)
-                this.finish(rng);
+                this.finish(this.rnd);
         }
         this.derive();
     }

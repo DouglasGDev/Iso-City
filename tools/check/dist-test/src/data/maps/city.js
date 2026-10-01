@@ -25,9 +25,32 @@ const RURAL_BLOCK_EVERY_SMALL_RESERVE = 3;
 const MAX_RURAL_BUILDINGS = 90;
 // Hard partitions total 720: urban infill can never spend the forest's trees.
 // The reserve grew to 20 quadras, so its quota moved up to keep the canopy readable.
-const PROP_BUDGET = { urban: 150, fences: 72, forestTrees: 200, forestDetails: 16,
-    countryside: 64, beach: 40, pinewood: 56, savanna: 36, desert: 96 };
-const MAX_PROPS = 756;
+//
+// Os tetos abaixo nasceram de medida, não de gosto. O que pesa no mobile não é o total
+// de props do mapa — é o que a janela de neblina deixa passar por quadro. Medido na
+// janela de um celular (844x390, zoom padrão) varrendo o mundo inteiro, com estas cotas:
+// mediana 7, p99 ~35, pior quadro na casa dos 50 sprites estáticos (prédio + prop juntos),
+// e o teto que o check-map cobra é 72. Ou seja: ainda há janela para encher antes de o
+// quadro pesar — é essa folga que a mata e a serra estão usando aqui.
+//
+// A mata fecha a 2.300 árvores sobre ~9.000 tiles (uma a cada ~16 tiles², contra as
+// ~41 tiles² da cota velha) e a serra sobe a 1.300: sem isso o alto do morro continuava
+// meia-clareira, e o "pode lotar de árvore" do pedido morria no orçamento, não no mapa.
+const PROP_BUDGET = { urban: 150, fences: 72, forestTrees: 2300, forestDetails: 60,
+    countryside: 110, beach: 40, pinewood: 900, savanna: 48, desert: 110, serra: 1300 };
+const MAX_PROPS = 4400;
+/**
+ * Raio da copa em tiles, medido no PNG do sprite (128px de largura = 1 tile de chão),
+ * com a pinheira um passo mais estreita que a frondosa do mesmo tamanho. É o que decide
+ * o tamanho do borro de sombra, então o número é o da silhueta desenhada — não um raio
+ * de gosto.
+ */
+const PROP_CANOPY = {
+    prop_tree_common_large: 0.44, prop_tree_common_medium: 0.34,
+    prop_tree_pine_tall: 0.34, prop_tree_pine_medium: 0.3, prop_tree_pine_small: 0.26,
+};
+/** Curva de saturação do campo de copa: ganho antes do `1 - e^-x`. Calibrado na medida. */
+const COPA_GANHO = 2.2;
 const MAX_VEHICLES = 120;
 const MAX_SPAWNS = 700;
 const FENCE_THICKNESS = 0.12;
@@ -146,6 +169,35 @@ function isNatural(biome) {
     return biome === 'forest' || biome === 'countryside' || biome === 'beach'
         || biome === 'pinewood' || biome === 'savanna' || biome === 'desert';
 }
+/**
+ * A espécie pelo nível — nunca pelo desenho da encosta. É a leitura do §8 no mapa: o pé do
+ * morro continua a mata de folha larga do vale, o meio-talude divide a frondosa com o
+ * pinho, e o alto frio e batido de vento é só conífera. Vale para o plantio da serra e
+ * para a cena de fundo da mata inteira, porque espécie escolhida só no morro deixa o vale
+ * com a mesma floresta do topo — e aí a altitude não se lê em nada.
+ *
+ * Pinhal que recebe folha larga perde a silhueta própria, e tipologia por bioma é contrato
+ * do projeto; savana é aberta de propósito; e árvore na duna ou na rocha do deserto é o
+ * mapa mentindo — lá o que existe é pedra, mato seco e sombra nua.
+ */
+function especieDoNivel(biome, nivel) {
+    if (biome === 'pinewood') {
+        return nivel >= 2 ? ['prop_tree_pine_tall', 'prop_tree_pine_medium']
+            : ['prop_tree_pine_small', 'prop_tree_pine_medium'];
+    }
+    if (biome === 'forest') {
+        return nivel >= 2.6 ? ['prop_tree_pine_tall', 'prop_tree_pine_medium']
+            : nivel >= 1.6 ? ['prop_tree_pine_small', 'prop_tree_pine_medium', 'prop_tree_common_medium']
+                : ['prop_tree_common_large', 'prop_tree_common_medium', 'prop_tree_pine_small'];
+    }
+    if (biome === 'countryside')
+        return ['prop_tree_common_medium', 'prop_tree_common_large'];
+    if (biome === 'savanna')
+        return ['prop_tree_common_medium'];
+    return null;
+}
+/** Quanto do talude de cada reserva vira árvore. Mata e pinhal fecham; campo e savana ralam. */
+const SERRA_ABERTURA = { countryside: 0.45, savanna: 0.3 };
 /**
  * Chão pisado da reserva: terra batida na mata, areia clara na praia e no deserto.
  * É a mesma chave que o teste de mapa espera encontrar na trilha.
@@ -990,7 +1042,7 @@ function generateCity(seed = 20260909) {
         return true;
     };
     const propCounts = { urban: 0, fences: 0, forestTrees: 0, forestDetails: 0,
-        countryside: 0, beach: 0, pinewood: 0, savanna: 0, desert: 0 };
+        countryside: 0, beach: 0, pinewood: 0, savanna: 0, desert: 0, serra: 0 };
     const addProp = (key, x, y, budget = 'urban') => {
         const r = { x0: x - 0.3, y0: y - 0.3, x1: x + 0.3, y1: y + 0.3 };
         if (props.length >= MAX_PROPS || propCounts[budget] >= PROP_BUDGET[budget] || !clearRect(r))
@@ -1203,18 +1255,29 @@ function generateCity(seed = 20260909) {
         // vende o vazio, não um matagal. Mesmo assim a região é grande demais para uma
         // amostragem grossa — a cota não fecharia. Praia e campo são faixas estreitas
         // sob o grid de ruas, então precisam de amostragem mais fina que a mata.
-        const spacing = biome === 'forest' || biome === 'pinewood' ? 2.5 : biome === 'savanna' ? 3.5
+        //
+        // Mata e pinhal descem a 1,6 tile: a copa dos sprites grandes mede 1,2 tile de
+        // largura, então é nesse passo que a floresta fecha e passa a ser lida como mancha
+        // contínua — com sombra própria, que é o que o morro nu não tinha.
+        const spacing = biome === 'forest' || biome === 'pinewood' ? 1.6 : biome === 'savanna' ? 3.5
             : biome === 'desert' ? 4.5 : 4;
+        // Lista base de cada bioma. A mata não tem uma: ali a espécie é da cota do sitio, e
+        // quem decide é `lista` logo abaixo.
         const keys = {
-            forest: ['prop_tree_common_large', 'prop_tree_common_medium', 'prop_tree_pine_medium', 'prop_tree_pine_small'],
             countryside: ['prop_flowers_yellow', 'prop_flowers_red', 'prop_weed_medium', 'prop_tree_common_medium', 'prop_flowers_pink'],
             beach: ['prop_rocks_brown_a', 'prop_rocks_gray_b', 'prop_weed_small_dry', 'prop_trunk_b', 'prop_weed_medium_dry'],
             pinewood: ['prop_tree_pine_tall', 'prop_tree_pine_tall', 'prop_tree_pine_medium', 'prop_tree_pine_small'],
             savanna: ['prop_weed_small_dry', 'prop_weed_small_dry', 'prop_rocks_brown_a', 'prop_tree_common_medium', 'prop_trunk_b'],
             desert: ['prop_rocks_gray_a', 'prop_weed_medium_dry', 'prop_rocks_brown_b', 'prop_weed_large_b_dry',
                 'prop_trunk_c', 'prop_tire_buried_a', 'prop_rocks_gray_c'],
-        }[biome];
+        };
         const sites = [];
+        // §8: na mata, a espécie é da cota do sitio, não do bioma inteiro. A lista fixa dava
+        // a mesma metade de conifera no vale e na crista, e aí a altitude não se lia em nada
+        // — o pinho fica no alto, a frondosa no pé, e o meio-talude divide os dois.
+        const lista = (p) => biome === 'forest'
+            ? especieDoNivel('forest', heights[Math.floor(p.y) * W + Math.floor(p.x)])
+            : keys[biome];
         for (let y = 1.5; y < H - 1; y += spacing) {
             for (let x = 1.5; x < W - 1; x += spacing) {
                 if (at(Math.floor(x), Math.floor(y))?.biome !== biome)
@@ -1232,7 +1295,8 @@ function generateCity(seed = 20260909) {
                     if (p.x <= block.x0 || p.x >= block.x1 || p.y <= block.y0 || p.y >= block.y1)
                         continue;
                     const before = propCounts[budget];
-                    addProp(keys[Math.floor(sceneryRng() * keys.length)], p.x, p.y, budget);
+                    const ks = lista(p);
+                    addProp(ks[Math.floor(sceneryRng() * ks.length)], p.x, p.y, budget);
                     if (propCounts[budget] > before && ++planted === 5)
                         break;
                 }
@@ -1240,7 +1304,7 @@ function generateCity(seed = 20260909) {
         }
         for (const p of orderedSites) {
             const details = biome === 'forest' && propCounts.forestTrees >= PROP_BUDGET.forestTrees;
-            const choices = details ? ['prop_trunk_a', 'prop_rocks_gray_b', 'prop_weed_medium'] : keys;
+            const choices = details ? ['prop_trunk_a', 'prop_rocks_gray_b', 'prop_weed_medium'] : lista(p);
             const budget = biome === 'forest' ? (details ? 'forestDetails' : 'forestTrees') : biome;
             if (propCounts[budget] >= PROP_BUDGET[budget])
                 break;
@@ -1359,6 +1423,113 @@ function generateCity(seed = 20260909) {
     // desfazer o corte de nível — e é ela que impede o morro de encostar na guia como muro.
     montarTeto();
     aparar();
+    // ---- Serra arborizada ----------------------------------------------------
+    // O morro era o lugar mais visível do mapa e o mais nu: mata e pinhal param dentro do
+    // próprio bioma, e a crista alta — justamente onde a sombra de telão mora — não recebia
+    // árvore nenhuma. Esta passada vem DEPOIS do relevo fechado porque a régua é a altura
+    // final: planta na encosta e no topo de qualquer reserva seca.
+    const serraRng = mulberry32(seed ^ 0x73657272);
+    const taludes = [];
+    for (let y = 2; y < H - 2; y++) {
+        for (let x = 2; x < W - 2; x++) {
+            const i = y * W + x;
+            if (flatTile(i))
+                continue;
+            const h = heights[i];
+            const declive = Math.max(Math.abs(h - heights[i + 1]), Math.abs(h - heights[i - 1]), Math.abs(h - heights[i + W]), Math.abs(h - heights[i - W]));
+            // Lombada de quintal não é serra: só entra o que tem caimento declarado ou topo.
+            if (h < 1.2 && declive < 0.07)
+                continue;
+            taludes.push({ x, y, biome: tiles[i].biome, nivel: h });
+        }
+    }
+    for (const p of shuffle(taludes, serraRng)) {
+        if (propCounts.serra >= PROP_BUDGET.serra)
+            break;
+        const especies = especieDoNivel(p.biome, p.nivel);
+        if (!especies)
+            continue;
+        if (serraRng() > (SERRA_ABERTURA[p.biome] ?? 1))
+            continue;
+        addProp(especies[Math.floor(serraRng() * especies.length)], p.x + 0.5 + (serraRng() - 0.5) * 0.7, p.y + 0.5 + (serraRng() - 0.5) * 0.7, 'serra');
+    }
+    // ---- Sombra de copa ------------------------------------------------------
+    // É isto que separa "morro" de "mata" na tela. A tinta de forma do GroundLayer diz em
+    // que direção a encosta olha; o escuro de verdade tem de vir de alguma coisa que está
+    // em cima do chão, e a única coisa assim no relevo é a árvore. Cada copa carimba um
+    // borro deslocado para baixo na tela — em iso, descer na tela é andar para (+x,+y), e
+    // é para lá que a luz vinda de cima projeta — colado no tronco, porque sombra que
+    // descola do pé vira mancha solta no mapa.
+    //
+    // Fica num campo do próprio tile, igual a `shades` e `relevo`: o render só lê número,
+    // nada de percorrer árvore por árvore por quadro, e é isso que permite lotar a serra
+    // sem custar um draw call a mais.
+    const copa = new Float32Array(W * H);
+    // Pena de queda do borro, em tiles. É o que faz duas copas vizinhas encostarem uma
+    // sombra na outra em vez de deixarem um vão de sol no meio da mata.
+    const COPA_PENA = 0.6;
+    for (const p of props) {
+        if (!p.key.includes('tree'))
+            continue;
+        // Raio da copa em tiles, medido no sprite: 128px de largura é um tile de chão.
+        const raio = PROP_CANOPY[p.key] ?? 0.5;
+        const sx = p.x + 0.42, sy = p.y + 0.42;
+        const alcance = raio + COPA_PENA;
+        for (let y = Math.max(0, Math.floor(sy - alcance)); y <= Math.min(H - 1, Math.floor(sy + alcance)); y++) {
+            for (let x = Math.max(0, Math.floor(sx - alcance)); x <= Math.min(W - 1, Math.floor(sx + alcance)); x++) {
+                const i = y * W + x;
+                // Cidade e água não recebem tinta nenhuma — contrato que já existe no relevo.
+                if (flatTile(i))
+                    continue;
+                const d = Math.hypot(x + 0.5 - sx, y + 0.5 - sy);
+                if (d >= alcance)
+                    continue;
+                // Cheio sob a copa, linear até zero no fim da pena.
+                copa[i] += d <= raio ? 1 : 1 - (d - raio) / COPA_PENA;
+            }
+        }
+    }
+    // O carimbo é por tile, e tile a tile a mata viraria tabuleiro. Duas passadas do mesmo
+    // binomial que alisa a cota — é o que transforma mil copas soltas numa mancha só, que
+    // é como a sombra de uma floresta se vê de cima. Tile plano e água ficam de fora da
+    // média: a sombra da encosta não sangra para o asfalto do lado.
+    const borrarCopa = new Float32Array(W * H);
+    for (let passo = 0; passo < 2; passo++) {
+        borrarCopa.set(copa);
+        for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W; x++) {
+                const i = y * W + x;
+                if (flatTile(i)) {
+                    copa[i] = 0;
+                    continue;
+                }
+                let soma = borrarCopa[i] * 4;
+                let peso = 4;
+                for (const [dx, dy] of DIRS4) {
+                    const j = (y + dy) * W + x + dx;
+                    if (x + dx < 0 || y + dy < 0 || x + dx >= W || y + dy >= H || flatTile(j))
+                        continue;
+                    soma += borrarCopa[j] * 2;
+                    peso += 2;
+                }
+                for (const [dx, dy] of DIAS4) {
+                    const j = (y + dy) * W + x + dx;
+                    if (x + dx < 0 || y + dy < 0 || x + dx >= W || y + dy >= H || flatTile(j))
+                        continue;
+                    soma += borrarCopa[j] * 2;
+                    peso += 2;
+                }
+                copa[i] = soma / peso;
+            }
+        }
+    }
+    // Ganho calibrado na medida, não no gosto. A curva é exponencial de propósito: dentro
+    // da mata fechada dez copas carimbam o mesmo losango, e o que se quer é que ele encoste
+    // no escuro sem virar uma placa de valor 1 igual à placa ao lado — o moteado é o que
+    // ainda se lê como folha, não como tinta. Uma árvore só no campo, que é o caso claro,
+    // fica no meio do caminho e não no preto.
+    for (let i = 0; i < W * H; i++)
+        copa[i] = 1 - Math.exp(-COPA_GANHO * copa[i]);
     // ---- Relevo sombreado ---------------------------------------------------
     // A luz vem de cima da tela, como em qualquer mapa topográfico: o desnível vira
     // tinta, não geometria. É isto que faz a serra aparecer sem escada de terraço — a
@@ -1439,5 +1610,5 @@ function generateCity(seed = 20260909) {
     // tinta da serra não pode subir na rua nem contornar o quarteirão.
     for (let i = 0; i < W * H; i++)
         relevo[i] = flatTile(i) ? 0 : varrido[i];
-    return { tilesW: W, tilesH: H, tiles, heights, shades, relevo, buildings, props, vehicles, npcSpawns, playerSpawn, worldW: W, worldH: H };
+    return { tilesW: W, tilesH: H, tiles, heights, shades, relevo, copa, buildings, props, vehicles, npcSpawns, playerSpawn, worldW: W, worldH: H };
 }
