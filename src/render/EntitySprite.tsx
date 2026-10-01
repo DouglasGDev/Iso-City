@@ -12,6 +12,7 @@ import { MeleeSwing, type MeleeVisualState } from './WeaponEffects';
 import { BLOOD_POOL_STAINS, deathPose, type BloodStain } from '../entities/NPC';
 import { crouchPose } from '../entities/Player';
 import { dirToWorldVec, ELEVATION_PX, worldToScreen } from '../world/IsoUtils';
+import { contactShadow, entityShadowWidth, SHADOW_FLATTEN } from './ContactShadow';
 
 interface Props {
   id: string;
@@ -238,7 +239,6 @@ export function EntitySprite({ id }: Props) {
 
   const splashX = useDerivedValue(() => screen.value.x, [screen]);
   const splashY = useDerivedValue(() => screen.value.y - 4, [screen]);
-  const shadowY = useDerivedValue(() => screen.value.y - 4, [screen]);
   const bloodTransform = useDerivedValue(() => [
     { translateX: splashX.value }, { translateY: splashY.value },
   ], [splashX, splashY]);
@@ -308,14 +308,33 @@ export function EntitySprite({ id }: Props) {
   ) : null;
 
   const opacity = useDerivedValue(() => death.value.alpha, [death]);
-  const jumpShadow = useDerivedValue(() => Math.min(0.25, jumpLift.value / 30), [jumpLift]);
+
+  // Sombra de contato: ela fica no CHÃO (o `h` do laço de simulação é a cota do piso sob a
+  // entidade) enquanto o corpo sobe por `jumpLift`/`lift`. A folga entre os dois é o que o
+  // olho lê como altura numa câmera que não se move — em um terraço, num pulo ou no ar.
+  const shadowRx = entityShadowWidth(w);
+  const shadowGap = useDerivedValue(() => jumpLift.value + lift, [jumpLift, lift]);
+  const shadowTransform = useDerivedValue(() => {
+    const s = contactShadow(shadowGap.value);
+    return [
+      { translateX: screen.value.x },
+      { translateY: screen.value.y - 1 + s.drop },
+      { scaleX: s.spread },
+      { scaleY: SHADOW_FLATTEN * s.spread },
+    ];
+  }, [screen, shadowGap]);
+  // Em cima d'água não há chão seco para sombrear: o respingo do nado já faz esse papel.
+  const shadowAlpha = useDerivedValue(
+    () => (swimming ? 0 : contactShadow(shadowGap.value).fade), [swimming, shadowGap]);
 
   if (!image || w <= 0 || h <= 0) return null;
 
   return (
     <Group opacity={opacity}>
-      {id === 'player' ? <Circle cx={splashX} cy={shadowY} r={7} color="#17251e" opacity={jumpShadow} /> : null}
-      {lift > 4 ? <Circle cx={splashX} cy={shadowY} r={14} color="rgba(0,0,0,0.28)" /> : null}
+      <Group transform={shadowTransform} opacity={shadowAlpha}>
+        <Circle cx={0} cy={0} r={shadowRx} color="#252b20" opacity={0.16} />
+        <Circle cx={0} cy={0} r={shadowRx * 0.62} color="#1d2219" opacity={0.14} />
+      </Group>
       {swimming ? (
         <>
           <Circle cx={splashX} cy={splashY} r={20} color="rgba(70, 170, 240, 0.32)" />
