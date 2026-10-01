@@ -85,7 +85,7 @@ const fogState = () => evaluate(`(() => {const s = qa.g.fog.snapshot, h = s.colo
   return { rgb: [0, 2, 4].map((i) => parseInt(h.substr(i, 2), 16)), positions: s.positions, colors: s.colors };})()`);
 async function viewport(width, height, mobile = true) {
   await send('Emulation.setDeviceMetricsOverride', { width, height, screenWidth: width, screenHeight: height, deviceScaleFactor: 1, mobile });
-  await send('Emulation.setTouchEmulationEnabled', { enabled: mobile, maxTouchPoints: 5 });
+  await send('Emulation.setTouchEmulationEnabled', mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
 }
 const key = (type, code, key, windowsVirtualKeyCode) => send('Input.dispatchKeyEvent', {type,code,key,windowsVirtualKeyCode});
 async function exposeGame() {
@@ -120,6 +120,8 @@ async function exposeGame() {
   await viewport(844, 390);
   errors.length = 0;
   await send('Page.navigate', { url: 'http://localhost:8082/?isolated-test=1' });
+  // Navegar reaplica o override da aba: reafirmar, senão o desktop herda o toque e perde o teclado.
+  await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   await until('!!document.body?.innerText.match(/JOGAR|NOVO JOGO/)', 'initial asset loading', 180000);
   await tapPoint(await textCenter('JOGAR', 'NOVO JOGO'));
   await until('!!document.querySelector("[data-testid=control-weapon]")', 'game controls');
@@ -421,6 +423,8 @@ async function exposeGame() {
 
   await viewport(844, 390, false);
   await send('Page.navigate', { url: 'http://localhost:8082/?isolated-test=desktop' });
+  // Navegar reaplica o override da aba: reafirmar, senão o desktop herda o toque e perde o teclado.
+  await send('Emulation.setTouchEmulationEnabled', { enabled: false });
   await until('!!document.body?.innerText.match(/JOGAR|NOVO JOGO/)', 'desktop asset loading', 180000);
   const play = await textCenter('JOGAR', 'NOVO JOGO');
   await send('Input.dispatchMouseEvent',{type:'mousePressed',...play,button:'left',clickCount:1});

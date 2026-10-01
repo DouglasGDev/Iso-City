@@ -57,6 +57,8 @@ async function main() {
   await until('location.href==="about:blank"', 'clean context');
   await send('Emulation.setDeviceMetricsOverride', { width: 900, height: 520, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: 'http://localhost:8082/' });
+  // Navegar reaplica o override da aba: reafirmar, senão o desktop herda o toque e perde o teclado.
+  await send('Emulation.setTouchEmulationEnabled', { enabled: false });
   await until(`${PLAY_LABEL}!==null`, 'menu', 90000);
   await tapPoint(await evaluate(PLAY_LABEL));
   await until('document.body.innerText.includes("HP 100")', 'HUD');

@@ -20,10 +20,12 @@ const ease = (from, to, step) => from < to ? Math.min(to, from + step) : Math.ma
 const pick = (rng, range) => range[0] + rng() * (range[1] - range[0]);
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 /**
- * Clima severo: tornado (funil que anda pelo mapa), furacão (vento global que empurra
- * tudo) e tsunami (frente de onda que sobe a costa). É uma camada por cima das frentes
- * normais: o WeatherSystem escolhe o tempo, aqui entra o perigo que aquele tempo permite.
- * Não conhece o GameState — recebe clima, terreno e entidades por contexto.
+ * Clima severo: tornado (funil que anda pelo mapa), furacão (olho que cruza o mapa com um
+ * campo de vento em volta) e tsunami (frente de onda que sobe a costa). É uma camada por
+ * cima das frentes normais: o WeatherSystem escolhe o tempo, aqui entra o perigo que aquele
+ * tempo permite. Nenhum dos três alcança além do que a tela pode mostrar — o que empurra o
+ * player está, por contrato, onde ele consegue ver. Não conhece o GameState — recebe clima,
+ * terreno e entidades por contexto.
  */
 class HazardSystem {
     constructor() {
@@ -39,6 +41,12 @@ class HazardSystem {
         this.slant = 0;
         /** Funil em tiles do mundo; o raio só cresce enquanto há tornado. */
         this.vortex = { x: 0, y: 0, radius: 0, spin: 0 };
+        /**
+         * Olho do furacão, em tiles do mundo, e o raio do campo de vento. É o único furacão
+         * que existe: o que a tela mostra é o que empurra, e fora deste círculo o tempo é só
+         * chuva. `radius` sai de `derive()` — nunca é um número solto.
+         */
+        this.storm = { x: 0, y: 0, radius: 0, spin: 0 };
         /** A onda avança de `from` até `edge` no eixo `axis`, varrendo o trecho [u0, u1] do outro. */
         this.wave = {
             u0: 0, u1: 0, from: 0, edge: 0, dir: 1, reach: 0, axis: 'y',
@@ -99,6 +107,8 @@ class HazardSystem {
         }
         if (this.kind === 'tornado' && this.phase !== 'fading')
             this.moveVortex(dt, rng, false);
+        if (this.kind === 'hurricane')
+            this.moveStorm(dt, rng);
         if (this.kind === 'tsunami') {
             this.moveWave(dt, this.phase === 'active' ? 1 : this.phase === 'fading' ? -1 : 0);
         }
@@ -160,8 +170,7 @@ class HazardSystem {
                 this.kill(npc);
                 killed = true;
             }
-            else if (f.near && this.kind !== 'hurricane'
-                && (npc.state === 'idle' || npc.state === 'walking')) {
+            else if (f.near && (npc.state === 'idle' || npc.state === 'walking')) {
                 npc.state = 'fleeing';
                 npc.fleeTimer = 5;
             }
@@ -193,7 +202,7 @@ class HazardSystem {
             this.body(animal, animal.radius, f, dt, 0.85, ctx);
             if (f.core)
                 killed = (0, Animal_1.damage)(animal, 200) || killed;
-            else if (f.near && this.kind !== 'hurricane' && animal.state !== 'fleeing') {
+            else if (f.near && animal.state !== 'fleeing') {
                 animal.state = 'fleeing';
                 animal.fleeTimer = 6;
             }
@@ -212,7 +221,7 @@ class HazardSystem {
         if (this.kind === 'tornado')
             this.vortexForce(x, y, out);
         else if (this.kind === 'hurricane')
-            this.windForce(out);
+            this.windForce(x, y, out);
         else
             this.waveForce(x, y, out);
         return out.fx !== 0 || out.fy !== 0;
@@ -286,6 +295,13 @@ class HazardSystem {
             this.heading = rng() * Math.PI * 2;
             this.windX = Math.cos(this.heading);
             this.windY = Math.sin(this.heading);
+            // O olho entra a barlavento, ainda fora do próprio alcance, e cruza por cima da
+            // câmera: o vento só pega quem já está vendo a massa de nuvem chegar. Com `strict`
+            // falso (QA e roteiro) ele nasce dentro do campo, para a cena não esperar.
+            const d = GameConfig_1.GAME_CONFIG.HURRICANE_REACH_TILES * (strict ? 1.2 : 0.8);
+            this.storm.x = this.camX - this.windX * d;
+            this.storm.y = this.camY - this.windY * d;
+            this.storm.spin = 0;
             return true;
         }
         if (kind === 'tornado') {
@@ -344,6 +360,7 @@ class HazardSystem {
         this.strength = 0;
         this.elapsed = 0;
         this.vortex.radius = 0;
+        this.storm.spin = 0;
         this.wave.edge = this.wave.from;
         this.wave.reach = 0;
         this.cooldown = pick(rng, GameConfig_1.GAME_CONFIG.HAZARD_COOLDOWN_S);
@@ -387,6 +404,48 @@ class HazardSystem {
         this.vortex.x = x;
         this.vortex.y = y;
     }
+    /** O olho quica nas bordas do mapa em vez de ir embora pelo mar e deixar o tempo aberto. */
+    keepStormInside() {
+        const W = this.terrain?.worldW ?? 240;
+        const H = this.terrain?.worldH ?? 240;
+        // Folga larga: a tempestade vem DE FORA do mapa, então a borda de rebate não é o chão,
+        // é um anel bem além dele.
+        const m = GameConfig_1.GAME_CONFIG.HURRICANE_REACH_TILES;
+        let x = this.storm.x;
+        let y = this.storm.y;
+        if (x < -m) {
+            x = -m;
+            this.heading = Math.PI - this.heading;
+        }
+        else if (x > W + m) {
+            x = W + m;
+            this.heading = Math.PI - this.heading;
+        }
+        if (y < -m) {
+            y = -m;
+            this.heading = -this.heading;
+        }
+        else if (y > H + m) {
+            y = H + m;
+            this.heading = -this.heading;
+        }
+        this.storm.x = x;
+        this.storm.y = y;
+    }
+    /**
+     * Deslocamento do olho: quase em linha reta, com um desvio preguiçoso. É uma massa de
+     * tempestade de cem tiles, não um funil — ela não faz curvas fechadas.
+     */
+    moveStorm(dt, rng) {
+        this.storm.spin += dt * (0.9 + 0.5 * this.strength);
+        this.heading += (rng() * 2 - 1) * 0.16 * dt;
+        this.windX = Math.cos(this.heading);
+        this.windY = Math.sin(this.heading);
+        const speed = GameConfig_1.GAME_CONFIG.HURRICANE_TRACK_SPEED * (0.6 + 0.4 * this.strength);
+        this.storm.x += this.windX * speed * dt;
+        this.storm.y += this.windY * speed * dt;
+        this.keepStormInside();
+    }
     moveWave(dt, sign) {
         if (!sign)
             return;
@@ -407,12 +466,20 @@ class HazardSystem {
     }
     derive() {
         const s = this.strength;
-        this.wet = this.kind === 'hurricane' ? s * GameConfig_1.GAME_CONFIG.HURRICANE_WET
+        // O campo de vento é o único número que vale: é ele que `windForce` usa como alcance e
+        // é ele que a HazardLayer desenha. Raio visto = raio que puxa, sempre no mesmo tique.
+        this.storm.radius = this.kind === 'hurricane'
+            ? GameConfig_1.GAME_CONFIG.HURRICANE_REACH_TILES * (0.55 + 0.45 * s) : 0;
+        // O céu fecha conforme o olho se aproxima, não porque existe um furacão em algum lugar
+        // do mapa. É a contrapartida visual do limite do vento: longe do olho, tempo normal.
+        const near = this.kind === 'hurricane' ? this.stormProximity() : 1;
+        this.wet = this.kind === 'hurricane' ? s * GameConfig_1.GAME_CONFIG.HURRICANE_WET * near
             : this.kind === 'tsunami' ? s * 0.5 : 0;
-        this.dark = this.kind === 'hurricane' ? s * 0.2 : this.kind === 'tornado' ? s * 0.12 : 0;
+        this.dark = this.kind === 'hurricane' ? s * 0.2 * near
+            : this.kind === 'tornado' ? s * 0.12 : 0;
         if (this.kind === 'hurricane') {
             const cross = (this.windX - this.windY) * 0.7;
-            this.slant = s * Math.max(-1.5, Math.min(1.5, cross * (0.6 + 0.4 * this.gust)));
+            this.slant = s * near * Math.max(-1.5, Math.min(1.5, cross * (0.6 + 0.4 * this.gust)));
         }
         else if (this.kind === 'tornado') {
             this.slant = s * Math.sin(this.vortex.spin) * 0.5;
@@ -420,6 +487,15 @@ class HazardSystem {
         else {
             this.slant = 0;
         }
+    }
+    /**
+     * Quão perto a câmera está do olho, em 0..1: 1 embaixo do olho, 0 quando o campo inteiro
+     * já ficou para trás. Dá margem (2 × raio) para a chuva entortar antes de o vento pegar.
+     */
+    stormProximity() {
+        const reach = Math.max(1, this.storm.radius);
+        const d = Math.hypot(this.camX - this.storm.x, this.camY - this.storm.y);
+        return clamp01(1 - d / (reach * 2));
     }
     vortexForce(x, y, out) {
         const reach = this.vortex.radius * GameConfig_1.GAME_CONFIG.TORNADO_REACH;
@@ -438,12 +514,32 @@ class HazardSystem {
         out.core = d < this.vortex.radius;
         out.near = true;
     }
-    windForce(out) {
-        const push = GameConfig_1.GAME_CONFIG.HURRICANE_PUSH * this.strength * (0.5 + 0.5 * this.gust);
-        out.fx = this.windX * push;
-        out.fy = this.windY * push;
+    /** Espiral ciclônica em volta do olho: dentro do olho é calmo, na parede do olho arremessa. */
+    windForce(x, y, out) {
+        const field = this.storm.radius;
+        if (field <= 0)
+            return;
+        const dx = x - this.storm.x;
+        const dy = y - this.storm.y;
+        const d = Math.hypot(dx, dy);
+        if (d > field)
+            return;
+        const eye = GameConfig_1.GAME_CONFIG.HURRICANE_EYE_TILES;
+        const wall = GameConfig_1.GAME_CONFIG.HURRICANE_WALL_TILES;
+        // No olho não se ouve nada: é a calmaria que antecede a parede voltar a bater.
+        if (d < eye)
+            return;
+        // Pico na parede do olho e decaimento linear até sumir na borda do campo.
+        const profile = d <= wall ? 0.55 + 0.45 * ((d - eye) / Math.max(0.001, wall - eye))
+            : Math.max(0, 1 - (d - wall) / Math.max(0.001, field - wall));
+        const push = GameConfig_1.GAME_CONFIG.HURRICANE_PUSH * this.strength * profile * (0.5 + 0.5 * this.gust);
+        const ux = d > 1e-4 ? dx / d : 1;
+        const uy = d > 1e-4 ? dy / d : 0;
+        // Tangencial por cima do puxão para dentro, no mesmo sentido do giro da nuvem desenhada.
+        out.fx = (-uy * 1.3 - ux * 0.55) * push;
+        out.fy = (ux * 1.3 - uy * 0.55) * push;
+        out.core = d <= wall;
         out.near = true;
-        out.core = this.gust > 0.98 && this.strength > 0.9;
     }
     waveForce(x, y, out) {
         const along = this.wave.axis === 'y' ? y : x;
@@ -494,11 +590,16 @@ class HazardSystem {
             return GameConfig_1.GAME_CONFIG.TORNADO_PLAYER_DMG_S * dt * this.strength;
         if (this.kind === 'tsunami')
             return GameConfig_1.GAME_CONFIG.TSUNAMI_PLAYER_DMG_S * dt * this.strength;
-        return 1.6 * dt * this.strength;
+        return GameConfig_1.GAME_CONFIG.HURRICANE_PLAYER_DMG_S * dt * this.strength;
     }
     shakeFor(dt, x, y) {
-        if (this.kind === 'hurricane')
-            return dt * 1.6 * this.strength * (0.4 + 0.6 * this.gust);
+        if (this.kind === 'hurricane') {
+            // A tela treme dentro do campo de vento, e na medida em que ele aperta: na borda do
+            // furacão a câmera para de tremer exatamente quando o vento para de empurrar.
+            const field = Math.max(0.001, this.storm.radius);
+            const d = Math.hypot(x - this.storm.x, y - this.storm.y) / field;
+            return dt * 1.6 * this.strength * (0.4 + 0.6 * this.gust) * Math.max(0, 1 - Math.min(1, d));
+        }
         const d = this.kind === 'tornado'
             ? Math.hypot(x - this.vortex.x, y - this.vortex.y) / (this.vortex.radius * GameConfig_1.GAME_CONFIG.TORNADO_REACH)
             : Math.abs(((this.wave.axis === 'y' ? y : x) - this.wave.edge) * this.wave.dir) / 8;

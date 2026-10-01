@@ -41,7 +41,9 @@ async function tap(code, value, number) { await key('keyDown', code, value, numb
 async function board(finder, idExpr) {
   await until('qa.g.exitLock<=0', 'cooldown de saída do carro', 3000);
   for (let i = 0; i < 8; i++) {
-    if (!await evaluate(finder)) { await delay(200); continue; }
+    // A viatura anda e a guarnição muda de humor entre o último olhar e o E: quem procura
+    // alvo num relângulo perde a janela e a checagem virava "viatura não dirigível".
+    if (!await until(finder, 'alvo tripulado', 4000)) { await delay(150); continue; }
     await tap('KeyE', 'e', 69);
     if (await until(`qa.g.player.currentVehicleId===${idExpr}`, 'embarque', 1500)) return true;
     await delay(120);
@@ -55,8 +57,10 @@ async function screenshot(name) {
 async function launch() {
   await send('Page.navigate', { url: 'about:blank' });
   await send('Emulation.setDeviceMetricsOverride', { width: 1000, height: 600, deviceScaleFactor: 1, mobile: false });
-  await send('Emulation.setTouchEmulationEnabled', { enabled: false, maxTouchPoints: 5 });
+  await send('Emulation.setTouchEmulationEnabled', { enabled: false });
   await send('Page.navigate', { url: 'http://localhost:8082/?carjack-qa=1' });
+  // Navegar reaplica o override da aba: reafirmar, senão o desktop herda o toque e perde o teclado.
+  await send('Emulation.setTouchEmulationEnabled', { enabled: false });
   // Bundle web com perfil de browser novo leva mais de um minuto; sem margem aqui o teste
   // reclama do menu antes de o Metro terminar de servir o bundle.
   if (!await until('!!document.body?.innerText.match(/JOGAR|NOVO JOGO/)', 'menu', 180000)) {
@@ -133,8 +137,13 @@ async function launch() {
     // Depois de uma perseguição a guarnição está a pé e volta para o carro no próprio tempo.
     // O vão tem de ser maior que o alcance de entrada: com outro carro por perto o E é dele,
     // não da viatura, e a checagem viria uma troca de carro qualquer por "viatura não dirigível".
+    // Só vale guarnição que ainda tem motivo para ficar dentro do carro. Uma unidade em
+    // `respond`/`deployed` desembarca sozinha para caçar o jogador no minuto seguinte, e o
+    // E cairia sobre uma viatura vazia: a checagem diria "dirigível" sem nunca ter expulsado
+    // ninguém. Patrulha de cruzeiro e standby da esquadra são os alvos honestos.
     const finder = `(()=>{const g=qa.g,u=g.police.units.find(u=>{const v=g.vehicles.find(v=>v.id===u.vehicleId);
       return v&&v.def.baseKey===${JSON.stringify(baseKey)}&&v.state!=='destroyed'&&v.altitude<=0.5&&
+      u.mode!=='respond'&&u.mode!=='deployed'&&
       u.crew.some(id=>{const n=g.npcs.find(n=>n.id===id);return n&&!n.dead&&n.inVehicle})});
       if(!u)return 0;const car=g.vehicles.find(v=>v.id===u.vehicleId);
       // Viatura de patrulha não espera visitante: encosta o jogador a 0,85 tile do flanco,

@@ -342,3 +342,123 @@ clampToRoom(huge, RW, RH, 4000, 2000);
 assert.equal(huge.x, RW / 2);
 assert.equal(huge.y, RH / 2);
 console.log('OK indoor camera clamps to the room on every edge and centres on oversized viewports');
+
+// --- A sala é um plano à parte, não um lugar do mapa -------------------------
+// O pedido do jogador, escrito em asserção: dentro de um interior as coordenadas da sala
+// não existem na cidade. A rua vê a âncora da porta, o save grava a rua, sair devolve ao
+// pé da porta por onde se entrou, e o chão do jogador vem do plano dele — nunca do relevo.
+{
+  // O round anterior fechou com overlay aberto: sem tela limpa o update não roda.
+  Object.assign(ui, { paused: false, mapOpen: false, shopOpen: false, overlay: null });
+  const door = g.interiors.entrances.find((e) => e.kind === 'home') ?? g.interiors.entrances[0];
+  // Meio tile do lado de fora do vão, de propósito: a volta tem que ser este ponto exato,
+  // não o centro do lote nem a coordenada da porta.
+  const desde = { x: door.x + Math.cos(door.facing) * 0.4, y: door.y + Math.sin(door.facing) * 0.4 };
+  Object.assign(g.player, { health: 100, currentVehicleId: null, swimming: false });
+  g.player.x = desde.x; g.player.y = desde.y;
+  g.interiors.update(0.6);
+  input.inputState.interactQueued = true;
+  g.update(1 / 60);
+  const room = g.interiors.active;
+  assert.ok(room, 'a porta abriu');
+  assert.ok(Math.hypot(g.player.x - desde.x, g.player.y - desde.y) > 0.5, 'o jogador foi para o plano da sala');
+  assert.ok(Math.hypot(g.worldPosition.x - desde.x, g.worldPosition.y - desde.y) < 1e-9,
+    'a rua enxerga a âncora, jamais a coordenada de dentro');
+  assert.notEqual(g.worldPosition, g.player, 'worldPosition é o pé da porta, não o corpo na sala');
+
+  // O plano é autossuficiente: tamanho próprio, chão liso e nada do mundo lá dentro.
+  assert.ok(room.map.worldW >= 7 && room.map.worldH >= 5, 'a sala tem dimensão própria');
+  assert.ok(Array.from(room.map.data.heights).every((h) => h === 0), 'o piso da sala é liso por construção');
+  assert.equal(room.map.data.buildings.length, 0, 'nenhum prédio da cidade mora dentro da sala');
+  assert.equal(room.map.data.vehicles.length, 0, 'nenhum carro da cidade mora dentro da sala');
+
+  // O chão que o sprite usa é o da sala. A cidade, naquele mesmo par de números, tem
+  // relevo — e era justamente isso que levantava o jogador dentro de casa antes de o
+  // render passar a ler o mapa ativo.
+  const cidade = g.map.heightAt(g.player.x, g.player.y);
+  // A sala é um Map de verdade, e a malha de cantos que desenha o relevo é resolvida no
+  // construtor: mexer em `data.heights` por fora não mudaria a cota lida. O que prova o
+  // contrato é um plano da sala com ladeira, construído pela mesma via do jogo.
+  const salaComCota = (nivel) => new WorldMap({
+    ...room.map.data,
+    heights: Float32Array.from(room.map.data.heights, () => nivel),
+  });
+  const planoOriginal = room.map;
+  room.map = salaComCota(2);
+  assert.equal(g.playerGround(), 2, 'o chão do jogador vem do plano da sala');
+  room.map = planoOriginal;
+  assert.equal(g.playerGround(), 0, 'a sala é lisa: quem está dentro pisa o piso dela');
+  if (cidade > 0) assert.notEqual(g.playerGround(), cidade, `o relevo da cidade (${cidade.toFixed(2)} tiles) não alcança ninguém lá dentro`);
+
+  // O save feito de dentro grava a rua. Carregar a sala não devolve o jogador ao mapa
+  // com coordenadas de cômodo — que é exatamente o bug que este bloco barra.
+  const save = g.snapshot();
+  assert.ok(Math.hypot(save.player.x - desde.x, save.player.y - desde.y) < 1e-9,
+    'o snapshot grava a âncora na porta, não a sala');
+  const reloaded = new GameState();
+  reloaded.applySave(save);
+  assert.equal(reloaded.interiors.active, null, 'o load abre na rua');
+  assert.ok(Math.hypot(reloaded.player.x - desde.x, reloaded.player.y - desde.y) < 1e-9,
+    'o load devolve o jogador ao pé da porta');
+
+  // Sair pela porta de dentro: volta para onde entrou, de frente para a rua.
+  g.player.x = room.exit.x; g.player.y = room.exit.y;
+  g.interiors.update(0.6);
+  input.inputState.interactQueued = true;
+  g.update(1 / 60);
+  assert.equal(g.interiors.active, null, 'a sala fechou');
+  assert.equal(g.interiors.street, null, 'sem sala, sem âncora');
+  assert.ok(Math.hypot(g.player.x - desde.x, g.player.y - desde.y) < 1e-9,
+    'sair devolve ao ponto exato da calçada por onde se entrou');
+  assert.equal(g.worldPosition, g.player, 'na rua, o mundo vê o próprio corpo');
+  assert.equal(g.activeMap, g.map, 'e o mapa ativo volta a ser a cidade');
+  g.interiors.update(0.6);
+}
+// Quem é algemado na rua não volta para o beco onde caiu: sai pela porta de quem prendeu.
+{
+  const jailDoor = g.interiors.jailEntrance;
+  if (jailDoor) {
+    Object.assign(g.player, { health: 100, currentVehicleId: null, swimming: false });
+    g.player.x = jailDoor.x + 9; g.player.y = jailDoor.y + 9;
+    g.interiors.open(jailDoor, g.player);
+    assert.ok(Math.hypot(g.interiors.street.x - jailDoor.x, g.interiors.street.y - jailDoor.y) < 1e-9,
+      'preso entra pela porta e por ela volta, não pelo ponto da captura');
+    g.interiors.leave(g.player);
+    g.interiors.update(0.6);
+  }
+}
+console.log('OK interior é plano à parte: âncora na rua, save na calçada, saída no ponto de entrada, chão da sala');
+
+// --------------------------------------------------- a porta nunca abre para a encosta
+// Sair de uma sala devolve o jogador ao pé da fachada. Se o tile seguinte estiver mais
+// alto que o passo, ele saiu da loja para ficar preso no morro — era exatamente o que o
+// relevo fazia com as casas do campo, que ficam em bioma natural e portanto fora da
+// planície urbana. Da porta tem de dar para andar o mundo inteiro.
+function walkableFrom(world, from, limit = 40000) {
+  const key = (x, y) => `${x},${y}`;
+  const start = [Math.floor(from.x), Math.floor(from.y)];
+  const seen = new Set([key(...start)]);
+  const queue = [start];
+  for (let i = 0; i < queue.length && seen.size < limit; i++) {
+    const [x, y] = queue[i];
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy, id = key(nx, ny);
+      if (seen.has(id) || nx < 0 || ny < 0 || nx >= world.data.tilesW || ny >= world.data.tilesH) continue;
+      if (!clearAt(world, nx + 0.5, ny + 0.5)) continue;
+      if (!world.canClimb(x + 0.5, y + 0.5, nx + 0.5, ny + 0.5)) continue;
+      seen.add(id); queue.push([nx, ny]);
+    }
+  }
+  return seen.size;
+}
+const step = GAME_CONFIG.TERRAIN_STEP_UP_TILES;
+for (const e of interiors.entrances) {
+  const sole = world.heightAt(e.x, e.y);
+  for (const [dx, dy] of [[0.9, 0], [-0.9, 0], [0, 0.9], [0, -0.9]]) {
+    const d = Math.abs(world.heightAt(e.x + dx, e.y + dy) - sole);
+    assert.ok(d < step, `porta ${e.id} (${e.label}) abre para um degrau de ${d.toFixed(2)} tiles`);
+  }
+  const alcance = walkableFrom(world, e);
+  assert.ok(alcance > 2000, `porta ${e.id} (${e.label}) não leva a lugar nenhum: só ${alcance} tiles andáveis`);
+}
+console.log(`OK relevo nunca tranca uma porta: soleira nivelada e ${world.data.tilesW}x${world.data.tilesH} andáveis a partir de cada uma das ${interiors.entrances.length} portas`);

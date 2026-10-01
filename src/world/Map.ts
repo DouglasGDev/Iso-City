@@ -47,6 +47,29 @@ const LANDMARK_KINDS: { re: RegExp; kind: Landmark['kind'] }[] = [
   { re: /^bld_(cafe|pizza|icecream|gunshop|fruitstand)/, kind: 'shop' },
 ];
 
+/**
+ * Cota de um CANTO da malha, em coordenadas inteiras: a média dos tiles que encostam
+ * naquele vértice. É a superfície que o GroundLayer entorta, e por isso mora aqui — o
+ * chão desenhado e o sprite que pisa nele têm de ler o mesmo número, senão o personagem
+ * flutua sobre um relevo e anda sobre outro.
+ */
+export function vertexHeight(data: CityMapData, x: number, y: number): number {
+  const W = data.tilesW;
+  const hs = data.heights;
+  let soma = 0;
+  let n = 0;
+  for (let dy = -1; dy <= 0; dy++) {
+    for (let dx = -1; dx <= 0; dx++) {
+      const tx = x + dx;
+      const ty = y + dy;
+      if (tx < 0 || ty < 0 || tx >= W || ty >= data.tilesH) continue;
+      soma += hs[ty * W + tx];
+      n++;
+    }
+  }
+  return n ? soma / n : 0;
+}
+
 export class Map {
   readonly data: CityMapData;
   readonly staticColliders: Collider[];
@@ -70,12 +93,16 @@ export class Map {
   private roadGrid: number[][] = [];
   private nodeGridCols = 0;
   private nodeGridRows = 0;
+  /** Cantos da malha já promedidos: (tilesW+1)·(tilesH+1) cotas, calculadas uma vez. */
+  private cornerH: Float32Array = new Float32Array(0);
 
   constructor(data: CityMapData, extraColliders: Collider[] = []) {
     // O relevo é dado do mapa, não suposição: um chão sem malha de altura é plano, e é
     // assim que interior antigo e fixture de teste continuam lendo altura sem crash.
     if (!data.heights) data.heights = new Float32Array(data.tilesW * data.tilesH);
+    if (!data.shades) data.shades = new Float32Array(data.tilesW * data.tilesH);
     this.data = data;
+    this.buildCorners();
     const colliders: Collider[] = [...extraColliders];
     const buildingColliders: Collider[] = [];
     for (const b of data.buildings) {
@@ -523,6 +550,10 @@ export class Map {
   }
 
   isWaterWorld(x: number, y: number): boolean {
+    // NaN passa por toda comparação de limite (`NaN < 0` e `NaN >= tilesW` são ambos
+    // falsos) e devolve `tiles[NaN]`, que é undefined: um só pedestre com posição quebrada
+    // derrubava o update inteiro, frame após frame.
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
     const tx = Math.floor(x);
     const ty = Math.floor(y);
     if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH) return false;
@@ -544,9 +575,9 @@ export class Map {
   }
 
   /**
-   * Altura do chão em tiles, losango a losango e sem interpolar: o relevo é feito de
-   * terraços, e um valor suave entre dois degraus faria o sprite deslizar pela face
-   * da montanha em vez de parar nela.
+   * Altura do chão em tiles, losango a losango: é a cota das REGRAS — quem pode subir,
+   * onde o carro perde força, o que é parede. Para desenhar, use `heightSmoothAt`, que é
+   * a superfície contínua; a cota quantizada serve para decidir, nunca para saltar a tela.
    */
   heightAt(x: number, y: number): number {
     return this.heightAtTile(Math.floor(x), Math.floor(y));
@@ -558,33 +589,76 @@ export class Map {
     return this.data.heights[ty * this.data.tilesW + tx];
   }
 
-  /** Altura em degraus (1 = 1/4 de tile). É a unidade das regras de climb. */
-  levelAt(x: number, y: number): number {
-    return Math.round(this.heightAt(x, y) / GAME_CONFIG.TERRAIN_LEVEL_TILES);
+  private buildCorners() {
+    const { tilesW: W, tilesH: H } = this.data;
+    const c = new Float32Array((W + 1) * (H + 1));
+    for (let y = 0; y <= H; y++) {
+      for (let x = 0; x <= W; x++) c[y * (W + 1) + x] = vertexHeight(this.data, x, y);
+    }
+    this.cornerH = c;
   }
 
   /**
-   * A única "colisão" do relevo: comparar dois níveis. Um tile mais alto que o atual
-   * a mais de um degrau é parede, e uma queda funda demais é borda — é assim que a
-   * montanha barra o NPC sem nenhuma geometria nova nem câmera em 3D.
+   * Cota contínua do chão: bilinear entre os cantos da malha, ou seja, a altura VISUAL.
+   * O tile quantizado é regra de movimento, não aparência—entre dois tiles a cota salta de
+   * um dia inteiro, e na tela isso é o personagem subindo e descendo de degrau no mesmo
+   * lugar enquanto anda. Aqui a superfície é a mesma que o chão desenhado entortou.
+   */
+  heightSmoothAt(x: number, y: number): number {
+    const W = this.data.tilesW;
+    const H = this.data.tilesH;
+    if (!this.cornerH.length || W < 1 || H < 1) return 0;
+    // NaN não pode virar cota: um único número assim na árvore de transforms derruba o
+    // canvas inteiro, e a tela fecha em branco sem mensagem.
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return 0;
+    const cx = Math.min(W - 1, Math.max(0, Math.floor(x)));
+    const cy = Math.min(H - 1, Math.max(0, Math.floor(y)));
+    const fx = Math.min(1, Math.max(0, x - cx));
+    const fy = Math.min(1, Math.max(0, y - cy));
+    const s = W + 1;
+    const a = this.cornerH[cy * s + cx];
+    const b = this.cornerH[cy * s + cx + 1];
+    const c = this.cornerH[(cy + 1) * s + cx];
+    const d = this.cornerH[(cy + 1) * s + cx + 1];
+    const norte = a + (b - a) * fx;
+    const sul = c + (d - c) * fx;
+    return norte + (sul - norte) * fy;
+  }
+
+  /** Sombra da encosta (-1 a +1): tinta do relevo, nunca geometria. */
+  shadeAtTile(tx: number, ty: number): number {
+    if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH) return 0;
+    return this.data.shades![ty * this.data.tilesW + tx];
+  }
+
+  /**
+   * A única "colisão" do relevo: comparar duas cotas. Encosta é andar; o que passa
+   * de TERRAIN_STEP_UP_TILES entre um tile e o próximo é parede, e queda funda
+   * demais é borda — é assim que a montanha barra o NPC sem geometria nova nem
+   * câmera em 3D.
    */
   canClimb(fromX: number, fromY: number, toX: number, toY: number): boolean {
-    const up = this.levelAt(toX, toY) - this.levelAt(fromX, fromY);
-    return up <= GAME_CONFIG.TERRAIN_STEP_UP_FOOT && -up <= GAME_CONFIG.TERRAIN_MAX_DROP;
+    const up = this.heightAt(toX, toY) - this.heightAt(fromX, fromY);
+    return up <= GAME_CONFIG.TERRAIN_STEP_UP_TILES && -up <= GAME_CONFIG.TERRAIN_MAX_DROP_TILES;
   }
 
   /**
-   * Roda não faz trilha: o gerador suaviza o asfalto inteiro, então um carro que
-   * encare um degrau está cortando campo, não subindo rua.
+   * Roda não faz trilha: o gerador aplaina o asfalto inteiro dentro de um declive
+   * suave, então um carro que encare um ressalto está cortando campo, não subindo rua.
    */
   canDriveOver(fromX: number, fromY: number, toX: number, toY: number): boolean {
-    const up = this.levelAt(toX, toY) - this.levelAt(fromX, fromY);
-    return up <= GAME_CONFIG.TERRAIN_STEP_UP_VEHICLE && -up <= GAME_CONFIG.TERRAIN_STEP_UP_VEHICLE;
+    const up = this.heightAt(toX, toY) - this.heightAt(fromX, fromY);
+    return Math.abs(up) <= GAME_CONFIG.TERRAIN_STEP_UP_VEHICLE;
   }
 
-  /** Inclinação no ponto, em níveis por tile: positiva subindo na direção dada. */
+  /**
+   * Inclinação no ponto, em tiles de desnível por tile andado: positiva subindo. Lê a
+   * superfície contínua de propósito—medida no tile quantizado, o declive mudaria de um
+   * salto para outro conforme o carro cruzasse a borda do losango, e a velocidade do
+   * motor oscilaria em degrau na mesma encosta.
+   */
   slopeAlong(x: number, y: number, dx: number, dy: number): number {
-    return this.levelAt(x + dx, y + dy) - this.levelAt(x, y);
+    return this.heightSmoothAt(x + dx, y + dy) - this.heightSmoothAt(x, y);
   }
 }
 

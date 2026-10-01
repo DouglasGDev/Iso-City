@@ -122,7 +122,7 @@ export function MarkerLayer({ game, clock }: { game: GameState; clock: SharedVal
   return (
     <Group>
       {pickups.map((p) => {
-        const s = worldToScreen(p.x, p.y, game.map.heightAt(p.x, p.y));
+        const s = worldToScreen(p.x, p.y, game.map.heightSmoothAt(p.x, p.y));
         if (!game.fog.intersects(view, s.x - 20, s.y - 28, 40, 40)) return null;
         if (p.kind === 'ammo') {
           return (
@@ -163,7 +163,7 @@ export function MarkerLayer({ game, clock }: { game: GameState; clock: SharedVal
 
       {missionTarget ? (() => {
         const s = worldToScreen(missionTarget.x, missionTarget.y,
-          game.map.heightAt(missionTarget.x, missionTarget.y));
+          game.map.heightSmoothAt(missionTarget.x, missionTarget.y));
         if (!game.fog.intersects(view, s.x - 44, s.y - 48, 88, 88)) return null;
         const color =
           ms.phase === 'giver' ? '#ffe082' : ms.phase === 'toPickup' ? '#ff8a50' : '#4dd0e1';

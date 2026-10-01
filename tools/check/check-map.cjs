@@ -33,8 +33,11 @@ const { generateCity } = load(path.join(root, 'src/data/maps/city.ts'));
 const { GAME_CONFIG } = load(path.join(root, 'src/game/GameConfig.ts'));
 const { VEHICLE_DEFS } = load(path.join(root, 'src/data/vehicles.ts'));
 const { BUILDING_CATALOG } = load(path.join(root, 'src/data/buildings.ts'));
+const { BUILDING_GEOMETRY } = load(path.join(root, 'src/assets/BuildingGeometry.ts'));
 const { Map: CityMap } = load(path.join(root, 'src/world/Map.ts'));
 const { drawRoad } = load(path.join(root, 'src/render/RoadPainter.ts'));
+const { worldToScreen } = load(path.join(root, 'src/world/IsoUtils.ts'));
+const { FogSystem, FOG } = load(path.join(root, 'src/systems/FogSystem.ts'));
 
 const manifest = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'assets', 'AssetManifest.ts'), 'utf8');
 const registered = new Set([...manifest.matchAll(/"([^"]+\.png)": require\(/g)].map((m) => m[1]));
@@ -98,8 +101,72 @@ const reachable = (adj, start = 0) => {
   return queue.length;
 };
 
+/**
+ * ---- Janela de neblina: o teto de mobile de verdade -------------------------
+ * O contrato antigo contava o mapa inteiro ("756 props no mundo"). Nunca foi isso que
+ * pesa no celular: o render descarta tudo que a janela de neblina não alcança, então quem
+ * decide o quadro é o PIOR ponto do mundo, não a soma dele. Aqui se refaz exatamente o
+ * que `buildStaticNodes` + `FogSystem.intersects` fazem, com o PNG e a âncora reais de
+ * cada sprite, varrendo a câmera pelo mapa. É o que permite lotar a serra de árvore sem
+ * prometer fluidez no escuro.
+ */
+const TELEFONE = { w: 844, h: 390 };
+const pngTam = new Map();
+function tamPNG(key) {
+  if (!pngTam.has(key)) {
+    const arq = path.join(spritesDir, key);
+    pngTam.set(key, fs.existsSync(arq) ? PNG.sync.read(fs.readFileSync(arq)) : null);
+  }
+  return pngTam.get(key);
+}
+function spritesEstaticos(city) {
+  const noAlto = (x, y) => city.heights[Math.max(0, Math.min(city.tilesW * city.tilesH - 1,
+    Math.floor(y) * city.tilesW + Math.floor(x)))];
+  const nodes = [];
+  for (const b of city.buildings) {
+    const img = tamPNG(`Buildings/${b.key}.png`);
+    const g = BUILDING_GEOMETRY[b.key];
+    if (!img || !g) continue;
+    const escala = b.footprintW * 64 / g.span;
+    const w = img.width * escala, h = img.height * escala;
+    const p = worldToScreen(b.x, b.y, noAlto(b.x, b.y));
+    nodes.push({ x: p.x + w / 2 - g.anchorX * escala, y: p.y + h - g.anchorY * escala, w, h });
+  }
+  for (const pr of city.props) {
+    const img = tamPNG(`Props/${pr.key}.png`);
+    if (!img) continue;
+    const escala = pr.renderScale ?? 1;
+    const w = img.width * escala, h = img.height * escala;
+    const a = pr.renderAnchor ?? { x: 0.5, y: 1 };
+    const p = worldToScreen(pr.x, pr.y, noAlto(pr.x, pr.y));
+    nodes.push({ x: p.x + w * (0.5 - a.x), y: p.y + h * (1 - a.y), w, h });
+  }
+  return nodes;
+}
+function janelaPior(city, nodes) {
+  const fog = new FogSystem();
+  const zoom = GAME_CONFIG.ZOOM_DEFAULT;
+  const amostra = [];
+  for (let cy = 3; cy < city.tilesH - 3; cy += 4) {
+    for (let cx = 3; cx < city.tilesW - 3; cx += 4) {
+      const h = city.heights[Math.floor(cy) * city.tilesW + Math.floor(cx)];
+      const view = fog.view({ camera: { x: cx, y: cy, zoom, h }, viewW: TELEFONE.w, viewH: TELEFONE.h });
+      let n = 0;
+      for (const s of nodes) {
+        if (fog.intersects(view, s.x - s.w / 2, s.y - s.h, s.w, s.h)) n++;
+      }
+      amostra.push(n);
+    }
+  }
+  amostra.sort((a, b) => a - b);
+  return { varreduras: amostra.length, mediana: amostra[amostra.length >> 1],
+    p99: amostra[Math.floor(amostra.length * 0.99)], max: amostra[amostra.length - 1] };
+}
+
 function validate(city, seed, generationMs) {
   const check = (ok, msg) => report(ok, `seed ${seed}: ${msg}`);
+  // Números que só interessam para a linha de estatística do fim.
+  const medido = {};
   const W = city.tilesW;
   const H = city.tilesH;
   const tileAt = (x, y) => x >= 0 && y >= 0 && x < W && y < H ? city.tiles[y * W + x] : undefined;
@@ -169,13 +236,17 @@ function validate(city, seed, generationMs) {
         crosswalks++;
         check(!t.bridge && !!t.lane && steps.some(([dx, dy]) => tileAt(x + dx, y + dy)?.lane === null), `faixa longe do cruzamento (${x},${y})`);
         const stripes = [];
+        // O painter recebe a cota dos quatro cantos do tile, que é o que a malha do
+        // GroundLayer desenha. Faixa de pedestre só existe na cidade, e a cidade é
+        // travada em zero pelo contrato do relevo — os quatro cantos são o próprio tile.
+        const h = city.heights[y * city.tilesW + x] ?? 0;
         drawRoad({ drawPath() {}, drawLine(x1, y1, x2, y2, paint) {
           if (paint.color === '#ecebe5') stripes.push([x1, y1, x2, y2]);
-        } }, city, x, y);
+        } }, city, x, y, h, h, h, h);
         check(stripes.length === 5, `faixa sem cinco barras (${x},${y})`);
         // O painter eleva o tile inteiro em h * 64 px; o inverso tem que devolver essa
         // elevação antes de recalcular o tile, senão a barra "invade" o vizinho de mentirinha.
-        const lift = (city.heights[y * city.tilesW + x] ?? 0) * 64;
+        const lift = h * 64;
         for (const [sx, sy, ex, ey] of stripes) {
           const dx = (ex - sx) / 128 + (ey - sy) / 64;
           const dy = (ey - sy) / 64 - (ex - sx) / 128;
@@ -403,7 +474,20 @@ function validate(city, seed, generationMs) {
     cells(r, (x, y) => check(!!tileAt(x, y) && !isRoad(x, y) && tileAt(x, y).kind !== 'water' && !isSidewalk(x, y), `prop ${p.key} bloqueia calcada/agua/estrada`));
     check(!buildingRects.some((b) => overlaps(r, b)), `prop ${p.key} sobre building`);
   }
-  check(city.props.length <= 756, 'cenario excede limite mobile');
+  // O que pesa no celular é o pior quadro, não o mapa inteiro: ver o comentário de
+  // `spritesEstaticos`. O teto do mundo continua existindo (memória e custo de geração),
+  // só que na ordem de grandeza certa — e medido, não chutado.
+  check(city.props.length <= 3600, 'cenario excede o teto de props do mundo');
+  {
+    const estaticos = spritesEstaticos(city);
+    check(estaticos.length === city.props.length + city.buildings.length,
+      'sprite sem PNG/geometria legivel na varredura de janela');
+    const janela = janelaPior(city, estaticos);
+    // Medido no gerador atual: mediana 6, p99 33, pior quadro 42 sprites estáticos.
+    // O teto abaixo é folga de ~70% sobre o pior, não uma licença para crescer.
+    check(janela.max <= 72, `pior quadro de cena tem ${janela.max} sprites estaticos (limite mobile)`);
+    medido.janela = `${janela.varreduras} vistas: mediana ${janela.mediana} p99 ${janela.p99} max ${janela.max}`;
+  }
   const urbanProps = city.props.filter((p) => !p.collider && !naturalBiomes.includes(tileAt(Math.floor(p.x), Math.floor(p.y))?.biome));
   check(urbanProps.length <= 150, 'decoracao urbana consumiu reserva de arvores/cercas');
   check(urbanProps.filter((p) => p.y < waterTop).length >= 40 && urbanProps.filter((p) => p.y > waterBottom).length >= 40,
@@ -470,15 +554,21 @@ function validate(city, seed, generationMs) {
   }
   check(city.vehicles.length === 120, 'frota estacionada deve permanecer em 120');
 
-  // Conservative full-footprint flood fill tests dry access from the player,
-  // including the bridges. Trees/furniture count as obstacles even when decorative.
+  // Flood andável do jogador: só entra nisso o que o Map.ts recolhe como collider de
+  // verdade (cerca, lixo, rocha, toco). Tratava-se copa de árvore como muro, e com a
+  // mata fechada do #129 isso declarou a floresta inteira inacessível — andando, o
+  // jogador atravessa árvore sem nem notar. O que continua proibido, e é checado acima
+  // com o retângulo cru de TODO prop, é objeto decorar em cima de trilha ou entrada.
   const propRects = city.props.map(propRect);
   for (let i = 0; i < propRects.length; i++) {
     for (let j = 0; j < i; j++) check(!overlaps(propRects[i], propRects[j]), 'props sobrepostos');
   }
+  const solido = (p) => !!p.collider || /^prop_(trashcan|rocks|trunk)/.test(p.key);
   const blocked = new Uint8Array(W * H);
   for (const r of [...buildingRects, ...propRects, ...vehicleRects]) {
     cells(r, (x, y) => check(!protectedPaths.has(y * W + x), 'objeto bloqueia entrada central/trilha natural'));
+  }
+  for (const r of [...buildingRects, ...city.props.filter(solido).map(propRect), ...vehicleRects]) {
     cells({ x0: Math.max(0, r.x0 - 0.2), y0: Math.max(0, r.y0 - 0.2),
       x1: Math.min(W, r.x1 + 0.2), y1: Math.min(H, r.y1 + 0.2) }, (x, y) => {
       if (circleHits({ x: x + 0.5, y: y + 0.5 }, 0.2, r)) blocked[y * W + x] = 1;
@@ -560,13 +650,18 @@ function validate(city, seed, generationMs) {
     const decorations = city.props.filter((p) => tileAt(Math.floor(p.x), Math.floor(p.y))?.biome === biome);
     check(indices.length >= 800 && terrain.length >= 500 && naturalBlocks[biome] >= 2, `regiao ${biome} pequena/somente nominal`);
     check(connected.size === indices.length, `regiao ${biome} fragmentada`);
-    check(indices.filter((i) => dryAccess.has(i)).length >= indices.length * 0.9, `regiao ${biome} sem acesso seco suficiente`);
+    check(indices.filter((i) => dryAccess.has(i)).length >= indices.length * 0.95, `regiao ${biome} sem acesso seco suficiente`);
     check(trails.length >= 100 && trails.every((i) => dryAccess.has(i)), `trilhas ${biome} ausentes/bloqueadas`);
     check(decorations.length >= 10 && new Set(decorations.map((p) => p.key)).size >= 3, `props ${biome} ausentes/pouco variados`);
     check(new Set(terrain.map((i) => city.tiles[i].key)).size >= 3, `terreno ${biome} uniforme`);
     if (biome === 'forest') {
       const trees = decorations.filter((p) => p.key.includes('tree'));
-      check(trees.length === 200 && decorations.length === 216, 'cota florestal rebalanceada de 200 arvores + 16 detalhes nao foi preservada');
+      // A cota fixa de "200 árvores + 16 detalhes" morreu com o morro nu do #129: o que
+      // define mata não é um número absoluto, é a DENSIDADE POR TILE, que é o que a tela
+      // lê. Medido em três seeds: ~1 árvore a cada 5 tiles² de mata (1693-1721 num total
+      // de 8961 tiles). A copa abaixo é que cobra o resultado visual.
+      check(trees.length >= indices.length * 0.15 && trees.length <= indices.length * 0.25,
+        `densidade de mata ${trees.length}/${indices.length} fugiu do dossel medido`);
       check(indices.length >= W * H * 0.09 && naturalBlocks.forest >= 12, 'floresta nao cresceu proporcionalmente ao mundo');
       for (let row = 0; row < yLines.length - 1; row++) {
         for (let col = 0; col < xLines.length - 1; col++) {
@@ -579,19 +674,34 @@ function validate(city, seed, generationMs) {
     } else if (biome === 'countryside') {
       // Campo e praia são faixas de orla com largura fixa: ao crescer o miolo urbano,
       // a fatia delas sobre o mundo inteiro cai de propósito. O que não pode cair é a
-      // área absoluta (e a cota de decoração, checada acima).
-      check(decorations.length === 64 && indices.length >= W * H * 0.09, 'reserva proporcional/cota de campo nao preservada');
+      // área absoluta (e a decoração, checada acima). No campo a árvore é rara de
+      // propósito — prado com uma ou outra no alto, não mata.
+      //
+      // A faixa de decoração subiu junto com a cota nova de serra (240-340 -> 330-460):
+      // a metade das árvores que o talude do campo recebe agora cai dentro desta reserva.
+      // O que segura o prado não é o total, é a proporção de árvore por tile, checada
+      // logo abaixo em árvores/tiles.
+      check(decorations.length >= 330 && decorations.length <= 460
+        && indices.length >= W * H * 0.09, 'reserva proporcional/cota de campo nao preservada');
+      check(decorations.filter((p) => p.key.includes('tree')).length < indices.length * 0.05,
+        'campo virou floresta e perdeu o prado');
       check(terrain.filter((i) => city.tiles[i].kind === 'grass').length > 600
         && decorations.some((p) => p.key.includes('flowers')), 'campo sem prados/floracao');
     } else if (biome === 'pinewood') {
-      check(decorations.length === 56 && naturalBlocks.pinewood >= 6, 'pinhal sem cota/quadras coerentes');
+      // 500-640 -> 560-720: o pinhal ganhou a cota própria de 900 árvores e o plantio da
+      // serra no talude de pinheiro, que antes competia com o teto velho e morria antes
+      // da crista.
+      check(decorations.length >= 560 && decorations.length <= 720 && naturalBlocks.pinewood >= 6,
+        'pinhal sem cota/quadras coerentes');
       check(decorations.every((p) => p.key.includes('tree_pine')), 'pinhal precisa de silhuetas de coniferas');
     } else if (biome === 'savanna') {
-      check(decorations.length === 36 && naturalBlocks.savanna >= 6, 'savana sem cota/quadras coerentes');
+      check(decorations.length >= 50 && decorations.length <= 120 && naturalBlocks.savanna >= 6,
+        'savana sem cota/quadras coerentes');
       check(terrain.filter((i) => city.tiles[i].key === 'tile_ground_dirt_drypatch').length > terrain.length * 0.4
         && decorations.some((p) => p.key.includes('dry')), 'savana sem manchas secas/vegetacao distinta');
     } else if (biome === 'beach') {
-      check(decorations.length === 40 && indices.length >= W * H * 0.035, 'reserva proporcional/cota de praia nao preservada');
+      check(decorations.length >= 36 && decorations.length <= 44 && indices.length >= W * H * 0.035,
+        'reserva proporcional/cota de praia nao preservada');
       const shoreline = terrain.filter((i) => steps.some(([dx, dy]) => tileAt(i % W + dx, Math.floor(i / W) + dy)?.kind === 'water'));
       // Areia clara na margem, areia seca um pouco mais para dentro — nada de terra verde.
       check(shoreline.length >= 24
@@ -599,16 +709,90 @@ function validate(city, seed, generationMs) {
         && terrain.filter((i) => city.tiles[i].key === 'tile_ground_sand_dry').length >= 150,
         'praia sem margem de agua e faixa arenosa seca');
     } else {
-      check(decorations.length === 96 && indices.length >= W * H * 0.05 && naturalBlocks.desert >= 4,
+      check(decorations.length >= 96 && decorations.length <= 115 && indices.length >= W * H * 0.05 && naturalBlocks.desert >= 4,
         'reserva proporcional/cota de deserto nao preservada');
       check(terrain.filter((i) => city.tiles[i].key === 'tile_ground_sand_dry').length > 1000
         && terrain.filter((i) => city.tiles[i].key === 'tile_ground_sand_dune').length > 400,
         'deserto sem poeira seca e faixas de duna');
-      // Pedra e mato seco, sem floresta: a assinatura visual do bioma.
+      // Pedra e mato seco, sem floresta: a assinatura visual do bioma. E é por isso que o
+      // morro do deserto é o único que continua sem sombra de copa — pedra nua não tem.
       check(decorations.every((p) => !p.key.includes('tree')) && decorations.some((p) => p.key.includes('dry'))
         && decorations.some((p) => p.key.includes('rocks')), 'deserto sem vegetacao rasteira/dunas vivas');
     }
     natureStats.push(`${biome}=${indices.length}dry/${decorations.length}props`);
+  }
+
+  // ---- Sombra de copa: o contrato do #129 ------------------------------------
+  // "Ajustar pra ter sombra apenas onde tem árvore" tem duas metades, e as duas são
+  // checáveis: nada escurece sem uma árvore em cima, e a mata fechada ESCURECE de verdade
+  // — o morro de pinheiro sem sombra nenhuma é o bug original voltando pelo outro lado.
+  const copa = city.copa;
+  check(!!copa && copa.length === W * H, 'mapa sem campo de copa para o GroundLayer');
+  if (copa) {
+    // Mesmo deslocamento do gerador: em iso o borro cai para (+x,+y). O raio 3 é medido,
+    // não chutado — a dois tiles de um pé de árvore a copa ainda chega a 0,53, e a três
+    // já morre em 0,12, abaixo do que muda pixel. Ou seja: penumbra até onde a pena do
+    // borro alcança, e nunca mancha solta em chão onde não existe árvore.
+    const VISIVEL = 0.15;
+    const pe = new Uint8Array(W * H);
+    for (const p of city.props) {
+      if (!p.key.includes('tree')) continue;
+      const cx = Math.floor(p.x + 0.42), cy = Math.floor(p.y + 0.42);
+      for (let y = cy - 3; y <= cy + 3; y++) {
+        for (let x = cx - 3; x <= cx + 3; x++) if (x >= 0 && y >= 0 && x < W && y < H) pe[y * W + x] = 1;
+      }
+    }
+    let naCidade = 0, semArvore = 0;
+    for (let i = 0; i < W * H; i++) {
+      if (copa[i] < VISIVEL) continue;
+      const t = city.tiles[i];
+      if (!naturalBiomes.includes(t.biome) || t.kind === 'water') naCidade++;
+      else if (!pe[i]) semArvore++;
+    }
+    check(naCidade === 0, `${naCidade} tiles de cidade/agua receberam sombra de copa`);
+    check(semArvore === 0, `${semArvore} tiles sombreados sem nenhuma arvore em cima`);
+    for (const biome of ['forest', 'pinewood']) {
+      const indices = city.tiles.flatMap((t, i) => t.biome === biome && t.kind !== 'water' ? [i] : []);
+      const sombreado = indices.filter((i) => copa[i] >= VISIVEL).length;
+      // Medido nas três seeds: 75-77% do chão de mata sob dossel. O resto é clareira,
+      // orla e a borda do bioma — mata fechada ao ponto de não ter nem um palmo de sol
+      // seria floresta de tabuleiro.
+      check(sombreado >= indices.length * 0.7,
+        `${biome} continua morro nu: só ${(100 * sombreado / indices.length).toFixed(0)}% da reserva tem sombra de copa`);
+      natureStats.push(`${biome}-copa ${(100 * sombreado / indices.length).toFixed(0)}%`);
+    }
+    // O morro nu do pedido original era justamente o alto sem árvore. Nas reservas
+    // arborizadas, a crista tem de estar coberta — senão o que pinta o topo é só a tinta
+    // de forma e o problema volta pela outra ponta.
+    const cristas = city.tiles.flatMap((t, i) => (t.biome === 'forest' || t.biome === 'pinewood')
+      && t.kind !== 'water' && city.heights[i] >= 1.6 ? [i] : []);
+    const cristaSombra = cristas.filter((i) => copa[i] >= VISIVEL).length;
+    check(cristas.length >= 500 && cristaSombra >= cristas.length * 0.65,
+      `crista arborizada segue nua: ${(100 * cristaSombra / Math.max(1, cristas.length)).toFixed(0)}% de ${cristas.length} tiles`);
+    natureStats.push(`crista-copa ${(100 * cristaSombra / Math.max(1, cristas.length)).toFixed(0)}%`);
+
+    // §8 do relevo: a espécie é do nível, não do desenho da encosta. O pé do morro é a
+    // folha larga do vale; o alto, batido de vento e frio, é do pinho. Em float32 de cota
+    // a faixa de transição é larga, então as duas réuas abaixo medem dominância, não pureza.
+    const nivel = (de, ate) => {
+      const arvores = city.props.filter((p) => {
+        if (!p.key.includes('tree')) return false;
+        const i = (Math.floor(p.y) * W) + Math.floor(p.x);
+        const t = city.tiles[i];
+        return t && t.biome === 'forest' && city.heights[i] >= de && city.heights[i] < ate;
+      });
+      return { n: arvores.length, pinho: arvores.filter((p) => p.key.includes('pine')).length };
+    };
+    const vale = nivel(0, 0.8), topo = nivel(1.6, Infinity);
+    const pct = (o) => (100 * o.pinho / Math.max(1, o.n)).toFixed(0);
+    check(vale.n >= 40 && topo.n >= 40, `mata sem arvore nas faixas de cota (vale ${vale.n}, crista ${topo.n})`);
+    // Medido nas três seeds: o vale fica em 33-35% de conifera e o alto do morro em
+    // 63-68%. As duas réguas abaixo têm folga em volta disso; o que não pode acontecer de
+    // novo é o que a lista fixa dava — 48% nas duas pontas, ou seja, nenhuma serra na
+    // paisagem.
+    check(+pct(topo) >= 55, `crista da mata nao virou pinhal: ${pct(topo)}% de conifera`);
+    check(+pct(vale) <= 45, `pe do morro perdeu a folha larga: ${pct(vale)}% de conifera`);
+    natureStats.push(`cota-arvore vale=${pct(vale)}% topo=${pct(topo)}%`);
   }
 
   safeSpawn(city.playerSpawn, 'player spawn');
@@ -661,7 +845,7 @@ function validate(city, seed, generationMs) {
     check(dryAccess.has(Math.floor(station.front.y) * W + Math.floor(station.front.x)), 'delegacia sem acesso fisico seco');
   }
   check(npcOrder === JSON.stringify(city.npcSpawns) && vehicleOrder === JSON.stringify(city.vehicles), 'Map alterou ordem/indices NPC/veiculos');
-  console.log(`seed ${seed}: ${W}x${H}; buildings=${city.buildings.length}; props=${city.props.length}; parked=${city.vehicles.length}; npcSpawns=${city.npcSpawns.length}; roads=${roadTiles.length}; bridges=${bridgeCount}; ${natureStats.join('; ')}; generation=${generationMs.toFixed(1)}ms; runtimeMap=${mapMs.toFixed(1)}ms`);
+  console.log(`seed ${seed}: ${W}x${H}; buildings=${city.buildings.length}; props=${city.props.length}; parked=${city.vehicles.length}; npcSpawns=${city.npcSpawns.length}; roads=${roadTiles.length}; bridges=${bridgeCount}; ${natureStats.join('; ')}; janela=${medido.janela}; generation=${generationMs.toFixed(1)}ms; runtimeMap=${mapMs.toFixed(1)}ms`);
 }
 
 // Preserve exhaustive runtime asset checks, including unused vehicle variants.

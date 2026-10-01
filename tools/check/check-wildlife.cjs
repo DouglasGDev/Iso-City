@@ -270,6 +270,36 @@ test('wandering alternates pauses/steps; calls are throttled, local and optional
   assert.equal(calls.length, count);
 });
 
+test('voz fiel à cena: invisível não conversa, susto fura a tela e não vira coro', () => {
+  const { system, animal, context } = single('deer');
+  const calls = [];
+  context.onCall = (a, c) => calls.push(c);
+  context.isVisible = () => false;
+  context.player = { x: animal.x + 8, y: animal.y };
+  for (let i = 0; i < 400; i++) system.update(0.05, context);
+  assert.equal(calls.length, 0, 'bicho do outro lado da tela conversando com o player');
+
+  // O susto é a única voz autorizada a atravessar a beirada: quem o produziu chegou por trás.
+  Object.assign(animal, { state: 'idle', fleeTimer: 0, speed: 0, callTimer: 0 });
+  context.player = { x: animal.x - 1, y: animal.y };
+  system.update(0.1, context);
+  assert.deepEqual(calls, ['alarm'], 'o alarme não chegou ao ouvido');
+
+  // E não vira coro: o segundo animal assustado na mesma varredura espera a janela do alarme.
+  const b = createAnimal(1, 'boar', 84, 60, 77);
+  system.animals.push(b);
+  context.player = { x: b.x - 1, y: b.y };
+  for (let i = 0; i < 4; i++) system.update(0.05, context);
+  assert.equal(calls.length, 1, 'dois sustos em 0,2s viraram coro de uivo');
+
+  // De volta ao campo de visão, a conversa ociosa continua existindo.
+  context.isVisible = () => true;
+  Object.assign(animal, { state: 'idle', fleeTimer: 0, speed: 0, callTimer: 0 });
+  context.player = { x: animal.x + 10, y: animal.y };
+  for (let i = 0; i < 80; i++) system.update(0.05, context);
+  assert.ok(calls.includes('idle'), 'a conversa ociosa morreu junto com o filtro de tela');
+});
+
 test('far animals freeze ALL state, RNG, animation and collision work even with noise; 32 is inclusive', () => {
   const { system, animal, context, resetQueries, queries } = single();
   Object.assign(animal, { state: 'walking', speed: 1, decisionTimer: 0 });

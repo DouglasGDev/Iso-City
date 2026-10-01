@@ -89,7 +89,7 @@ class FogSystem {
         // montanha entrar no window de bake, a varredura tem que ir `climb` tiles além.
         // Simétrico de propósito — o AABB continua sendo a janela centrada na vista, e quem
         // decide o que realmente se desenha é o intersects com a altura de cada tile.
-        const climb = GameConfig_1.GAME_CONFIG.TERRAIN_MAX_LEVEL * GameConfig_1.GAME_CONFIG.TERRAIN_LEVEL_TILES;
+        const climb = GameConfig_1.GAME_CONFIG.TERRAIN_MAX_ELEVATION;
         const extent = Math.hypot(view.radiusX / 128, view.radiusY / 64)
             + exports.FOG.padding / 128 + exports.FOG.padding / 64 + 1 + climb;
         return { minX: x - extent, maxX: x + extent, minY: y - extent, maxY: y + extent };

@@ -35,8 +35,10 @@ async function touch(selector) {
 async function launch(mobile) {
   await send('Page.navigate', { url: 'about:blank' });
   await send('Emulation.setDeviceMetricsOverride', { width: mobile ? 844 : 1000, height: mobile ? 390 : 600, deviceScaleFactor: 1, mobile });
-  await send('Emulation.setTouchEmulationEnabled', { enabled: mobile, maxTouchPoints: 5 });
+  await send('Emulation.setTouchEmulationEnabled', mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
   await send('Page.navigate', { url: 'http://localhost:8082/?city-life-qa=' + Number(mobile) });
+  // Navegar reaplica o override da aba: reafirmar, senão o desktop herda o toque e perde o teclado.
+  await send('Emulation.setTouchEmulationEnabled', mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
   await until('!!document.body?.innerText.match(/JOGAR|NOVO JOGO/)', 'menu', 90000);
   const p = await evaluate(`(()=>{const e=[...document.querySelectorAll('div')].find(e=>e.childElementCount===0&&(e.textContent==='JOGAR'||e.textContent==='NOVO JOGO'));const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
   if (mobile) {

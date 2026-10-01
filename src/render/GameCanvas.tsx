@@ -64,7 +64,7 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
 
   const camera = useSharedValue({
     x: game.camera.x, y: game.camera.y, zoom: game.camera.zoom,
-    h: game.activeMap.heightAt(game.camera.x, game.camera.y),
+    h: game.activeMap.heightSmoothAt(game.camera.x, game.camera.y),
   });
   const shake = useSharedValue({ x: 0, y: 0 });
   const env = useSharedValue({ night: 0, warm: 0, rain: 0, snow: 0, bolt: 0 });
@@ -147,9 +147,9 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
         x: game.camera.x,
         y: game.camera.y,
         zoom: game.camera.zoom,
-        // Dentro de uma sala o mapa ativo é o da casa, e o chão dele é plano: é por
-        // isso que a câmera nunca dá um pulo ao entrar na porta.
-        h: game.activeMap.heightAt(game.camera.x, game.camera.y),
+        // A cota da câmera já vem suavizada do jogo: aqui ela só atravessa para o UI
+        // thread, no mesmo embalo de x e y.
+        h: game.camera.h,
       };
       shake.value = { x: game.shakeX, y: game.shakeY };
       env.value = {
@@ -168,6 +168,7 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
         spin: hz.vortex.spin,
         time: game.time,
         vortex: { x: hz.vortex.x, y: hz.vortex.y, radius: hz.vortex.radius },
+        storm: { x: hz.storm.x, y: hz.storm.y, radius: hz.storm.radius, spin: hz.storm.spin },
         wave: { u0: hz.wave.u0, u1: hz.wave.u1, from: hz.wave.from, edge: hz.wave.edge, dir: hz.wave.dir, axis: hz.wave.axis },
       };
       // Neve cai devagar; a chuva continua na velocidade de sempre.
@@ -175,9 +176,13 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
       rainY.value = (game.time * fall) % rainTileH;
       const weapon = game.weapons;
       const player = game.player;
+      // O chão do jogador é o do cenário ativo: o piso plano da sala quando há uma porta
+      // aberta, o relevo da cidade quando não há. Ler `game.map` aqui levantaria o sprite
+      // dentro da loja pelo morro que existe do lado de fora — a sala não está no mapa.
+      const groundMap = game.activeMap;
       // O foco da oclusão é o mesmo ponto que o sprite pinta: sem o termo de altura o
       // jogador em cima do morro não "empurra" o prédio que o cobre.
-      const ground = game.map.heightAt(player.x, player.y);
+      const ground = groundMap.heightSmoothAt(player.x, player.y);
       const focusPoint = worldToScreen(player.x, player.y, ground);
       focus.value = { x: focusPoint.x, y: focusPoint.y,
         depth: depthOf(player.x, player.y, ground), active: !game.interiors.active };
@@ -197,11 +202,13 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
             ? { x: player.x + direction.x / aimLength * 2, y: player.y + direction.y / aimLength * 2, h: ground }
             : null;
       weapons.value = {
-        tracers: [...weapon.tracers, ...game.police.tracers].map((t) => ({
-          ...t, h1: game.map.heightAt(t.x1, t.y1), h2: game.map.heightAt(t.x2, t.y2),
+        // O tiro da rua não atravessa a parede: dentro de uma sala só se desenha o que
+        // aconteceu dentro dela, nas coordenadas do plano da sala.
+        tracers: [...game.weapons.tracers, ...(game.interiors.active ? [] : game.police.tracers)].map((t) => ({
+          ...t, h1: groundMap.heightSmoothAt(t.x1, t.y1), h2: groundMap.heightSmoothAt(t.x2, t.y2),
         })),
         target: manualTarget ?? (onFoot && weapon.aimTarget
-          ? { ...weapon.aimTarget, h: game.map.heightAt(weapon.aimTarget.x, weapon.aimTarget.y) } : null),
+          ? { ...weapon.aimTarget, h: groundMap.heightSmoothAt(weapon.aimTarget.x, weapon.aimTarget.y) } : null),
         muzzle: weapon.fireFlash > 0 ? {
           x: game.player.x + Math.cos(weapon.aimAngle) * 0.3,
           y: game.player.y + Math.sin(weapon.aimAngle) * 0.3,
@@ -211,19 +218,19 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
       for (const [id, sv] of animalSVs) {
         const animal = game.wildlife.animals[id];
         if (!animal) continue;
-        sv.position.value = { x: animal.x, y: animal.y, h: game.map.heightAt(animal.x, animal.y) };
+        sv.position.value = { x: animal.x, y: animal.y, h: game.map.heightSmoothAt(animal.x, animal.y) };
         sv.visual.value = animalVisualState(animal, game.time);
       }
       for (const [id, sv] of entitySVs) {
         if (id === 'player') {
-          sv.value = { x: game.player.x, y: game.player.y, h: game.map.heightAt(game.player.x, game.player.y) };
+          sv.value = { x: game.player.x, y: game.player.y, h: ground };
           continue;
         }
         const [kind, idxStr] = id.split(':');
         const idx = Number(idxStr);
         if (kind === 'npc') {
           const npc = game.npcs[idx];
-          if (npc) sv.value = { x: npc.x, y: npc.y, h: game.map.heightAt(npc.x, npc.y) };
+          if (npc) sv.value = { x: npc.x, y: npc.y, h: game.map.heightSmoothAt(npc.x, npc.y) };
         } else if (kind === 'inmate') {
           const inmate = game.jail.byId(idx);
           if (inmate) sv.value = { x: inmate.x, y: inmate.y, h: 0 };
@@ -234,7 +241,7 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
           const v = game.vehicles[idx];
           // A âncora do sprite é sempre o chão: a folga do helicóptero entra como lift
           // (`altitude * ELEVATION_PX`) em cima desta altura, nunca no lugar dela.
-          if (v) sv.value = { x: v.x, y: v.y, h: game.map.heightAt(v.x, v.y) };
+          if (v) sv.value = { x: v.x, y: v.y, h: game.map.heightSmoothAt(v.x, v.y) };
         }
       }
     });

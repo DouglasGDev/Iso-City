@@ -32,6 +32,11 @@ export interface Furniture {
   height: number;
   color: string;
 }
+/**
+ * Uma sala fechada. Tudo aqui — mapa, móveis, saída, balcão — vive no PLANO DELA, um
+ * quadrado próprio de `map.worldW × map.worldH` tiles que não tem relação nenhuma com
+ * o mapa da cidade. `entrance` é o único endereço dela no mundo de fora.
+ */
 export interface InteriorRoom {
   id: number;
   label: string;
@@ -44,6 +49,17 @@ export interface InteriorRoom {
   service: { x: number; y: number; label: string; cost: number; action: 'heal' | 'bail' | 'none' };
   shop: { title: string; items: ShopItem[] } | null;
 }
+/**
+ * Onde a rua vê quem cruzou a porta. Uma sala é um plano à parte: as coordenadas de
+ * dentro (0..7 × 0..5) não são um lugar no mapa da cidade, então nada que pertença ao
+ * mundo pode ler o jogador enquanto ele estiver lá. Este ponto é o substituto.
+ */
+export interface StreetAnchor {
+  x: number;
+  y: number;
+  facing: number;
+}
+
 export interface InteriorContext {
   player: Player;
   heal: () => void;
@@ -178,6 +194,13 @@ function makeRoom(entrance: Entrance): InteriorRoom {
 export class InteriorSystem {
   readonly entrances: Entrance[] = [];
   active: InteriorRoom | null = null;
+  /**
+   * O lugar da cidade onde o jogador está, do ponto de vista de quem ficou na rua.
+   * Enquanto `active` existe, `player.x/y` são do plano da sala e não significam nada
+   * no mapa — este é o ponto que a rua enxerga, que o save grava e para onde a porta
+   * devolve. Null só quando não há sala aberta.
+   */
+  street: StreetAnchor | null = null;
   message = '';
   /**
    * Gancho da cadeia (injetado pelo GameState): a cela e o painel são interação de
@@ -322,6 +345,9 @@ export class InteriorSystem {
       if (!entrance) return false;
       let room = this.rooms.get(entrance.id);
       if (!room) { room = makeRoom(entrance); this.rooms.set(entrance.id, room); }
+      // Entra pelo pé da porta: é de lá que a rua continua vendo o jogador, e é para lá
+      // que a saída devolve — não para o centro do lote ao lado.
+      this.street = { x: player.x, y: player.y, facing: player.facingAngle };
       this.active = room;
       this.place(player, room.map.data.playerSpawn);
       ctx.onTransition();
@@ -406,6 +432,8 @@ export class InteriorSystem {
       room = makeRoom(entrance);
       this.rooms.set(entrance.id, room);
     }
+    // Quem é algemado na rua não volta para o beco onde caiu: sai pela porta de quem o prendeu.
+    this.street = { x: entrance.x, y: entrance.y, facing: entrance.facing };
     this.active = room;
     this.place(player, room.map.data.playerSpawn);
     return room;
@@ -413,10 +441,11 @@ export class InteriorSystem {
 
   leave(player: Player) {
     if (!this.active) return;
-    const entrance = this.active.entrance;
+    const back = this.street ?? this.active.entrance;
     this.active = null;
-    this.place(player, entrance);
-    player.facingAngle = entrance.facing;
+    this.street = null;
+    this.place(player, back);
+    player.facingAngle = back.facing;
     player.direction = angleToWorldDir(player.facingAngle);
   }
 

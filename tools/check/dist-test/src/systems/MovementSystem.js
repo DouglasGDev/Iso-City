@@ -262,8 +262,15 @@ class MovementSystem {
         // muda sob o nariz a cada metro andado e quem segura o manche segura a máquina no
         // céu. Sem isso o helicóptero pousava em pleno ar sobre um platô e atravessava a
         // montanha raspando a pedra.
-        const chao = map.heightAt(vehicle.x, vehicle.y);
-        const levitacao = chao + GameConfig_1.GAME_CONFIG.HELI_CRUISE_ALTITUDE;
+        //
+        // Duas leituras do mesmo chão, dois papéis. A cota que desenha a máquina e que a
+        // impede de afundar é a superfície da malha (`heightSmoothAt`) — pousar na encosta é
+        // pousar na rampa que está na tela. Já o alvo de levitação busca o platô ONDE a
+        // máquina está (`heightAt`, a cota das regras): se ele lesse a face misturada à frente,
+        // o próprio alvo subiria conforme o nariz encosta na montanha, e o rotor içaria o
+        // helicóptero pelo talude sem ninguém tocar no pé de cabra. Muro é muro.
+        const chao = map.heightSmoothAt(vehicle.x, vehicle.y);
+        const levitacao = map.heightAt(vehicle.x, vehicle.y) + GameConfig_1.GAME_CONFIG.HELI_CRUISE_ALTITUDE;
         let alvo = vehicle.elevation;
         if (heliUp)
             alvo += GameConfig_1.GAME_CONFIG.HELI_CLIMB_RATE * dt;
@@ -309,7 +316,7 @@ class MovementSystem {
             vehicle.speed = 0;
         // A folga é o que sobra entre a cota e o chão de agora. Saiu do platô para a
         // planície, a cota continua e o buraco embaixo dele é que cresce.
-        const novoChao = map.heightAt(vehicle.x, vehicle.y);
+        const novoChao = map.heightSmoothAt(vehicle.x, vehicle.y);
         if (vehicle.elevation < novoChao)
             vehicle.elevation = novoChao;
         vehicle.altitude = vehicle.elevation - novoChao;
@@ -321,7 +328,7 @@ class MovementSystem {
     settleAirborne(vehicle, map, dt) {
         if (vehicle.def.type !== 'helicopter')
             return;
-        const chao = map.heightAt(vehicle.x, vehicle.y);
+        const chao = map.heightSmoothAt(vehicle.x, vehicle.y);
         vehicle.elevation = Math.max(chao, vehicle.elevation - GameConfig_1.GAME_CONFIG.HELI_SINK_RATE * dt);
         vehicle.altitude = vehicle.elevation - chao;
     }

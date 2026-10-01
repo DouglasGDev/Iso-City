@@ -94,11 +94,15 @@ const { BUILDING_GEOMETRY } = source('assets/BuildingGeometry.ts');
 const ground = source('render/GroundLayer.tsx');
 const sorted = source('render/SortedWorldLayer.tsx');
 const { FogLayer } = source('render/FogLayer.tsx');
+const { SnowSystem } = source('systems/SnowSystem.ts');
 const fog = new FogSystem();
 const viewports = [[320, 568], [390, 844], [844, 390], [768, 1024], [1366, 768], [1920, 1080], [2560, 1080]];
 const zooms = [...new Set([C.ZOOM_MIN, C.ZOOM_DEFAULT, C.ZOOM_MAX])];
 const contexts = viewports.flatMap(([viewW, viewH]) => zooms.map((zoom) => ({
   camera: { x: 79.25, y: 80.75, zoom }, viewW, viewH,
+  // Neve sem neve: o bake acordou para o nível da nevasca, e o oracle usa o sistema real
+  // em vez de um objeto inventado — se a API do chão mudar, este checo avisa sozinho.
+  snow: new SnowSystem(),
 })));
 let passed = 0;
 let failed = 0;
@@ -143,7 +147,7 @@ function tileGame(ctx, width = C.MAP_TILES_W, height = C.MAP_TILES_H) {
     // Chão plano de propósito: este oracle mede culling, não relevo (check-terrain cuida do relevo).
     map: { data: { tilesW: width, tilesH: height, buildings: [], props: [], heights,
       tiles: Array.from({ length: width * height }, (_, i) => ({ kind: i % 5 ? 'grass' : 'road',
-        key: i % 7 ? 'tile_ground_grass' : 'missing-tile' })) }, heightAt: () => 0 },
+        key: i % 7 ? 'tile_ground_grass' : 'missing-tile' })) }, heightAt: () => 0, heightSmoothAt: () => 0 },
   };
 }
 function drawnTiles(record) {

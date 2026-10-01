@@ -9,6 +9,11 @@ export interface AmbientContext {
   rain: number;
   /** Neve não faz barulho de água: o leito pedido é o vento. */
   snow?: boolean;
+  /**
+   * 0..1 de névoa. Não cai nada, mas o mundo não fica mudo: a névoa pede um sopro de vento
+   * no canal do clima e abafa os pássaros, que é como névoa soa na rua.
+   */
+  mist?: number;
   /** Clima severo toma o mesmo canal do tempo enquanto durar (null = chuva normal). */
   hazardBed?: WeatherBed | null;
   hazardVolume?: number;
@@ -43,6 +48,8 @@ export class AmbientSystem {
   private stableFor = 0;
   private volume = 0;
   private rainVolume = 0;
+  private mistVolume = 0;
+  private mist = 0;
   private snow = false;
   private hazardBed: WeatherBed | null = null;
   private hazardVolume = 0;
@@ -57,6 +64,7 @@ export class AmbientSystem {
     if (!Number.isFinite(dt) || dt <= 0) return;
     dt = Math.min(dt, 0.25);
     this.snow = !!context.snow;
+    this.mist = Number.isFinite(context.mist) ? Math.max(0, Math.min(1, context.mist as number)) : 0;
     this.hazardBed = context.hazardBed ?? null;
     this.hazardVolume = Number.isFinite(context.hazardVolume)
       ? Math.max(0, Math.min(1, context.hazardVolume as number))
@@ -66,18 +74,22 @@ export class AmbientSystem {
     else this.stableFor += dt;
     if (!context.outdoors) {
       this.current = null;
-      this.volume = this.rainVolume = this.hazardVolume = 0;
+      this.volume = this.rainVolume = this.mistVolume = this.hazardVolume = 0;
       this.publish();
       return;
     }
     if (!this.current) this.current = next;
     const switching = next !== this.current && this.stableFor >= 1.2;
     const wet = Number.isFinite(context.rain) ? Math.max(0, Math.min(1, context.rain)) : 0;
-    const target = switching ? 0 : 0.48 * (1 - wet * 0.35);
+    // A névoa abafa a região junto com a chuva: o que se ouve na rua enevoada é longe e mole.
+    const target = switching ? 0 : 0.48 * (1 - wet * 0.35 - this.mist * 0.22);
     this.volume += Math.max(-dt * 0.7, Math.min(dt * 0.7, target - this.volume));
     if (switching && this.volume <= 0.001) { this.current = next; this.volume = 0; }
     const rainTarget = wet < 0.025 ? 0 : wet * (this.snow ? 0.4 : 0.58);
     this.rainVolume += Math.max(-dt * 0.4, Math.min(dt * 0.4, rainTarget - this.rainVolume));
+    // Névoa entra devagar e sai devagar: é o passo do som que fecha a visão, não o da chuva.
+    const mistTarget = this.mist < 0.03 ? 0 : 0.1 + this.mist * 0.12;
+    this.mistVolume += Math.max(-dt * 0.2, Math.min(dt * 0.2, mistTarget - this.mistVolume));
     this.publish();
   }
 
@@ -89,7 +101,7 @@ export class AmbientSystem {
     this.current = null;
     this.candidate = null;
     this.stableFor = 0;
-    this.volume = this.rainVolume = this.hazardVolume = 0;
+    this.volume = this.rainVolume = this.mistVolume = this.hazardVolume = 0;
     this.hazardBed = null;
     this.sentKey = undefined;
     this.sentVolume = -1;
@@ -101,8 +113,12 @@ export class AmbientSystem {
     // Quantized requests avoid flooding the async native channel with per-frame volume changes.
     const volume = Math.round(this.volume * 50) / 50;
     // Um só leito de tempo por quadro: o perigo severo abafa a chuva, não toca junto dela.
-    const bed: WeatherBed = this.hazardBed ?? (this.snow ? 'wind' : 'rain');
-    const wet = Math.round((this.hazardBed ? this.hazardVolume : this.rainVolume) * 50) / 50;
+    // Neve e névoa são as duas frentes sem água: pedem o vento. Mas a névoa só manda no canal
+    // quando não chove de verdade — senão um véu de névoa silenciaria a chuva que cai nele.
+    const bed: WeatherBed = this.hazardBed
+      ?? (this.snow || (this.mistVolume > 0.01 && this.rainVolume < 0.03) ? 'wind' : 'rain');
+    const wet = Math.round((this.hazardBed ? this.hazardVolume
+      : Math.max(this.rainVolume, this.mistVolume)) * 50) / 50;
     if (this.sentKey !== this.current || this.sentVolume !== volume) {
       this.output.ambient(this.current, volume);
       this.sentKey = this.current;

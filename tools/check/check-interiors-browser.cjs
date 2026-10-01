@@ -50,8 +50,10 @@ async function boot(width, height, mobile) {
   await send('Page.navigate', { url: 'about:blank' });
   await until('location.href==="about:blank"', 'clean context');
   await send('Emulation.setDeviceMetricsOverride', { width, height, screenWidth: width, screenHeight: height, deviceScaleFactor: 1, mobile });
-  await send('Emulation.setTouchEmulationEnabled', { enabled: mobile, maxTouchPoints: 5 });
+  await send('Emulation.setTouchEmulationEnabled', mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
   await send('Page.navigate', { url: 'http://localhost:8082/' });
+  // Navegar reaplica o override da aba: reafirmar, senão o desktop herda o toque e perde o teclado.
+  await send('Emulation.setTouchEmulationEnabled', mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
   // Bundle web frio leva mais de um minuto no Metro: sem margem aqui a checagem reclama do menu.
   await until(`!!document.querySelector('[data-testid="menu-new"],[data-testid="menu-play"]')
     ||!!document.body?.innerText.match(/JOGAR|NOVO JOGO/)`, 'menu', 180000);
