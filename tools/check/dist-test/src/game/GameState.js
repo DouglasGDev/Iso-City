@@ -37,6 +37,7 @@ const MissionSystem_1 = require("../systems/MissionSystem");
 const PickupSystem_1 = require("../systems/PickupSystem");
 const DayNightSystem_1 = require("../systems/DayNightSystem");
 const WeatherSystem_1 = require("../systems/WeatherSystem");
+const SnowSystem_1 = require("../systems/SnowSystem");
 const HazardSystem_1 = require("../systems/HazardSystem");
 const DestructionSystem_1 = require("../systems/DestructionSystem");
 const FogSystem_1 = require("../systems/FogSystem");
@@ -123,6 +124,8 @@ class GameState {
         this.pickups = new PickupSystem_1.PickupSystem();
         this.dayNight = new DayNightSystem_1.DayNightSystem();
         this.weather = new WeatherSystem_1.WeatherSystem(() => SoundManager_1.sound.play('thunder'));
+        /** A neve que fica depois que a frente passa; lê o clima, não o contrário. */
+        this.snow = new SnowSystem_1.SnowSystem();
         this.hazard = new HazardSystem_1.HazardSystem();
         this.destruction = new DestructionSystem_1.DestructionSystem();
         this.fog = new FogSystem_1.FogSystem();
@@ -349,6 +352,7 @@ class GameState {
         }
         this.dayNight.update(dt);
         this.weather.update(dt, this.rnd, this.biomeAtCamera);
+        this.snow.update(dt, this.weather.kind, this.weather.intensity);
         this.hazard.update(dt, this.rnd, this.hazardContext());
         this.combat.update(dt);
         this.player.attackTimer = Math.max(0, this.player.attackTimer - dt);
@@ -449,8 +453,16 @@ class GameState {
                     SoundManager_1.sound.play('bodyHit', 0.3);
             },
             onCall: (animal) => {
-                if (!room)
-                    SoundManager_1.sound.play('animalCall', Math.max(0.08, 0.4 - Math.hypot(animal.x - this.player.x, animal.y - this.player.y) * 0.02));
+                if (room)
+                    return;
+                // Queda até zero, sem piso. O `Math.max(0.08, ...)` de antes é metade do pedido:
+                // um bicho na beira do mundo soava a 0,12 e um ao lado do player a 0,4 — três
+                // vezes mais baixo continua sendo um uivo na mesma sala, e a sala estava vazia.
+                const d = Math.hypot(animal.x - this.player.x, animal.y - this.player.y);
+                const perto = 1 - d / WildlifeSystem_1.WILDLIFE_CALL_RADIUS;
+                if (perto <= 0)
+                    return;
+                SoundManager_1.sound.play('animalCall', 0.4 * perto);
             },
             isVisible: (x, y) => {
                 const p = (0, IsoUtils_1.worldToScreen)(x, y, this.map.heightSmoothAt(x, y));
@@ -858,7 +870,7 @@ class GameState {
         const biome = this.map.data.tiles[Math.floor(position.y) * this.map.data.tilesW + Math.floor(position.x)]?.biome ?? 'residential';
         this.biomeAtCamera = biome;
         const environment = { timeOfDay: this.dayNight.t, rain: this.weather.intensity + this.hazard.wet,
-            cover: this.weather.cover, dark: this.hazard.dark, biome };
+            cover: this.weather.cover, mist: this.weather.mist, dark: this.hazard.dark, biome };
         this.fog.update(dt, environment);
         this.ambient.update(dt, {
             ...environment,

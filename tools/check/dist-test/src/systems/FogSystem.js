@@ -5,16 +5,19 @@ exports.fogRadii = fogRadii;
 const GameConfig_1 = require("../game/GameConfig");
 const IsoUtils_1 = require("../world/IsoUtils");
 const clamp = (x) => Math.max(0, Math.min(1, x));
-function target({ timeOfDay, rain, cover, dark, snow, biome }) {
+function target({ timeOfDay, rain, cover, mist, dark, snow, biome }) {
     const t = Number.isFinite(timeOfDay) ? ((timeOfDay % 1) + 1) % 1 : 0.5;
     // Neve usa a mesma intensidade da chuva, mas tinta para branco frio em vez de cinza molhado.
     const wet = !snow && Number.isFinite(rain) ? clamp(rain) : 0;
     const white = snow && Number.isFinite(rain) ? clamp(rain) : 0;
     const cloud = Number.isFinite(cover) ? clamp(cover ?? 0) : 0;
+    // Névoa não molha e não escurece: ela clareia e chega mais perto. É o único termo que
+    // encolhe de verdade a distância visível, e é por isso que a frente de névoa se percebe.
+    const haze = Number.isFinite(mist) ? clamp(mist ?? 0) : 0;
     // O perigo fecha o céu por cima das nuvens: menos luz do dia, mais parede de névoa.
     const gloom = Number.isFinite(dark) ? clamp(dark ?? 0) : 0;
     const daylight = (t < 0.2 || t > 0.86 ? 0 : t < 0.3 ? (t - 0.2) / 0.1 : t < 0.72 ? 1 : (0.86 - t) / 0.14)
-        * (1 - cloud * 0.55) * (1 - gloom * 0.5);
+        * (1 - cloud * 0.55) * (1 - haze * 0.3) * (1 - gloom * 0.5);
     const warm = Math.max(0, 1 - Math.abs(t - 0.27) / 0.07, 1 - Math.abs(t - 0.8) / 0.08);
     // Tinted shade rather than a pale gray wall. Match the local landscape at the opaque rim,
     // but keep hue muted and dark: a saturated mid-tone washes the whole visible scene.
@@ -25,9 +28,11 @@ function target({ timeOfDay, rain, cover, dark, snow, biome }) {
                     : biome === 'industrial' ? [68, 62, 54] : [50, 66, 70];
     const night = [15, 27, 43];
     const rgb = base.map((v, i) => (night[i] + (v - night[i]) * daylight) * (1 - wet * 0.22 - white * 0.12)
-        + [24, 7, -5][i] * warm + [0, 5, 10][i] * wet + [30, 34, 38][i] * white);
+        + [24, 7, -5][i] * warm * (1 - haze) + [0, 5, 10][i] * wet + [30, 34, 38][i] * white
+        // A névoa é clara: a parede passa por cima da cor do bioma em vez de escurecê-la.
+        + [86, 90, 94][i] * haze);
     const wooded = biome === 'forest' || biome === 'pinewood';
-    return { rgb, clarity: 0.60 - wet * 0.09 - white * 0.11 - cloud * 0.03 - gloom * 0.05
+    return { rgb, clarity: 0.60 - wet * 0.09 - white * 0.11 - cloud * 0.03 - haze * 0.24 - gloom * 0.05
             - (1 - daylight) * 0.035 - (wooded ? 0.025 : 0) };
 }
 function publish(rgb, clarity) {

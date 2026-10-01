@@ -174,11 +174,38 @@ exports.GAME_CONFIG = {
     WEATHER_FADE_S: 6,
     /** Uma estação do ano dura um dia do jogo; o ano inteiro cabe em 20 minutos. */
     SEASON_LENGTH_S: 300,
+    /**
+     * A partir daqui a frente que já está no céu pode crescer para o próximo estágio (névoa →
+     * nublado → garoa → chuva → tempestade). É o "pegar desprevenido": ninguém escolheu a
+     * tempestade, ela nasceu da garoa que já estava sobre a cabeça do jogador.
+     */
+    WEATHER_ESCALATE_FIRST_S: [14, 30],
+    /** Recomeço da janela quando a tentativa não pegou: cresce aos poucos, não de uma vez. */
+    WEATHER_ESCALATE_RETRY_S: [10, 20],
+    /**
+     * Neve no chão: uma frente inteira de neve forte (40..95s) cobre o mundo todo. Mais que
+     * isso e a nevasca vira paisagem permanente; menos e ela some antes de o jogador voltar.
+     */
+    SNOW_ACCUMULATE_S: 90,
+    /**
+     * Derreter é o dobro de acumular. É o "fazer durar" do pedido: a frente passa, o céu
+     * limpa, e a serra continua branca por um dia e meio de jogo.
+     */
+    SNOW_MELT_S: 420,
     /** ---- Clima severo (tornado, furacão, tsunami) ---- */
-    /** Pausa entre eventos: o espetáculo é raro, senão vira cenário permanente. */
-    HAZARD_COOLDOWN_S: [210, 420],
+    /**
+     * Pausa entre eventos: dez a meia hora de jogo. O pedido é explícito — tsunami e tornado
+     * têm que ser raros, e quem preenche o mundo é o clima normal. Uma sessão comum pode
+     * atravessar sem nenhum; quando vem, é notícia em vez de cenário.
+     */
+    HAZARD_COOLDOWN_S: [600, 1800],
     /** Reavalia quando o clima ainda não ajuda o perigo que foi sorteado. */
-    HAZARD_RETRY_S: 40,
+    HAZARD_RETRY_S: 90,
+    /**
+     * Nenhum perigo nos primeiros cinco minutos do jogo recém-carregado: o jogador explora o
+     * mapa antes de a casa cair. Sem isso, o reload caía em cima de um funil.
+     */
+    HAZARD_GRACE_S: 300,
     HAZARD_WATCH_S: 12,
     HAZARD_FADE_S: 9,
     /** Tempo de vida do funil e o alcance do vento dele em múltiplos do raio. */

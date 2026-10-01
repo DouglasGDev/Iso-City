@@ -513,6 +513,11 @@ class Map {
         return x >= margin && x <= this.worldW - margin && y >= margin && y <= this.worldH - margin;
     }
     isWaterWorld(x, y) {
+        // NaN passa por toda comparação de limite (`NaN < 0` e `NaN >= tilesW` são ambos
+        // falsos) e devolve `tiles[NaN]`, que é undefined: um só pedestre com posição quebrada
+        // derrubava o update inteiro, frame após frame.
+        if (!Number.isFinite(x) || !Number.isFinite(y))
+            return false;
         const tx = Math.floor(x);
         const ty = Math.floor(y);
         if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH)
