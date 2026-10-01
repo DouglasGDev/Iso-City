@@ -118,3 +118,14 @@ npx expo export --platform android   # valida o bundle (Metro)
 npx tsc -p tools\check\tsconfig.json; node tools\check\check-map.cjs   # valida o mapa
 node tools/generate-sfx.js   # regenera os WAVs sintetizados em assets/Audio/generated
 ```
+
+## Licença
+
+Código deste repositório: **MIT** (ver [`LICENSE`](LICENSE)). Pode usar, modificar e
+redistribuir — inclusive comercialmente — desde que o aviso
+`Copyright (c) 2026 DouglasGDev` e a licença continuem junto. Esse é o ponto do
+projeto: livre com crédito.
+
+Arte de terceiros não é coberta pela MIT: os sprites e áudios vêm de packs da Kenney
+(CC0) e de outros conjuntos licenciados, cada um com seu crédito registrado junto ao
+arquivo em `assets/`.
