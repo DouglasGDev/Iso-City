@@ -3,6 +3,7 @@ import { Group, Image, Path, Skia, type SkImage } from '@shopify/react-native-sk
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
 import type { WeaponTracer } from '../systems/WeaponSystem';
 import { meleeMotion } from '../entities/Player';
+import { worldToScreen } from '../world/IsoUtils';
 import type { MeleeId } from '../data/weapons';
 import type { Dir4 } from '../game/GameConfig';
 
@@ -44,14 +45,18 @@ export function MeleeSwing({ state, batImage = null }: {
     const extension = 0.1 + reach * (batWeapon ? 0.18 : 0.28);
     // Shoulders sit on the facing-perpendicular iso axis; they roll back on the windup and forward on the hit.
     const shoulder = { x: side * (3 + reach * 1.6 - wind * 2.6), y: -20 - reach * 1.2 + wind * 1.4 };
-    const hand = { x: shoulder.x + (fx - fy) * 64 * extension - wind * side * 7.5,
-      y: -18 + (fx + fy) * 32 * extension + wind * 5 - drive * (batWeapon ? 7 : 3) };
+    // O braço é um vetor do mundo, não um ponto: passa pela mesma projeção iso, e o
+    // `extension` é o comprimento do golpe em tela.
+    const facing = worldToScreen(fx, fy);
+    const hand = { x: shoulder.x + facing.x * extension - wind * side * 7.5,
+      y: -18 + facing.y * extension + wind * 5 - drive * (batWeapon ? 7 : 3) };
     const elbow = { x: (shoulder.x + hand.x) / 2 + side * (4 - reach * 2) + wind * side * 3,
       y: (shoulder.y + hand.y) / 2 + 3 - wind * 2 };
     const bx = Math.cos(s.angle + swing);
     const by = Math.sin(s.angle + swing);
-    const tip = { x: hand.x + (bx - by) * 64 * 0.48,
-      y: hand.y + (bx + by) * 32 * 0.48 - 12 * (1 - Math.max(0, reach)) };
+    const blade = worldToScreen(bx, by);
+    const tip = { x: hand.x + blade.x * 0.48,
+      y: hand.y + blade.y * 0.48 - 12 * (1 - Math.max(0, reach)) };
     return { side, shoulder, hand, elbow, tip, reach, swing };
   }, [state]);
 
@@ -173,22 +178,25 @@ export function WeaponEffects({ state }: { state: SharedValue<WeaponVisualState>
       const dx = t.x2 - t.x1;
       const dy = t.y2 - t.y1;
       const offset = Math.min(0.25, 0.3 / Math.max(0.001, Math.hypot(dx, dy)));
-      const x = t.x1 + dx * offset;
-      const y = t.y1 + dy * offset;
-      path.moveTo((x - y) * 64, (x + y) * 32 - 23 - t.h1 * 64);
-      path.lineTo((t.x2 - t.y2) * 64, (t.x2 + t.y2) * 32 - 23 - t.h2 * 64);
+      const from = worldToScreen(t.x1 + dx * offset, t.y1 + dy * offset, t.h1);
+      const to = worldToScreen(t.x2, t.y2, t.h2);
+      path.moveTo(from.x, from.y - 23);
+      path.lineTo(to.x, to.y - 23);
     }
     return path;
   }, [state]);
   const impacts = useDerivedValue(() => {
     const path = Skia.Path.Make();
     for (const t of state.value.tracers) {
-      if (t.hit) path.addCircle((t.x2 - t.y2) * 64, (t.x2 + t.y2) * 32 - 23 - t.h2 * 64, 2 + t.life * 16);
+      if (!t.hit) continue;
+      const to = worldToScreen(t.x2, t.y2, t.h2);
+      path.addCircle(to.x, to.y - 23, 2 + t.life * 16);
     }
     const m = state.value.muzzle;
     if (m) {
-      const x = (m.x - m.y) * 64;
-      const y = (m.x + m.y) * 32 - 23 - m.h * 64;
+      const at = worldToScreen(m.x, m.y, m.h);
+      const x = at.x;
+      const y = at.y - 23;
       path.moveTo(x - 7, y);
       path.lineTo(x - 2, y - 2);
       path.lineTo(x, y - 7);
@@ -212,7 +220,9 @@ export function WeaponEffects({ state }: { state: SharedValue<WeaponVisualState>
   }, []);
   const aimTransform = useDerivedValue(() => {
     const t = state.value.target;
-    return [{ translateX: t ? (t.x - t.y) * 64 : 0 }, { translateY: t ? (t.x + t.y) * 32 - t.h * 64 - (t.lift ?? 20) : 0 }];
+    if (!t) return [{ translateX: 0 }, { translateY: 0 }];
+    const p = worldToScreen(t.x, t.y, t.h);
+    return [{ translateX: p.x }, { translateY: p.y - (t.lift ?? 20) }];
   }, [state]);
   const aimOpacity = useDerivedValue(() => state.value.target ? 0.85 : 0, [state]);
   return (

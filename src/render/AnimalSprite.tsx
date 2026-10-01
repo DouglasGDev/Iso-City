@@ -4,6 +4,7 @@ import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
 import {
   animalSpritePose, type Animal, type AnimalPoint, type AnimalSpecies, type AnimalVisualState,
 } from '../entities/Animal';
+import { worldToScreen } from '../world/IsoUtils';
 
 export interface AnimalSpriteProps {
   /** Only immutable identity/species is read from the JS model. Reuse this object after respawn. */
@@ -257,10 +258,10 @@ export function AnimalSprite({ animal, position, visual, clock }: AnimalSpritePr
   const { w, h } = SIZE[species];
   const pose = useDerivedValue(() => animalSpritePose(visual.value, clock.value), [visual, clock]);
   const opacity = useDerivedValue(() => pose.value.alpha, [pose]);
-  const world = useDerivedValue(() => [
-    { translateX: Math.round((position.value.x - position.value.y) * 64) },
-    { translateY: Math.round((position.value.x + position.value.y) * 32 - position.value.h * 64) },
-  ], [position]);
+  const world = useDerivedValue(() => {
+    const p = worldToScreen(position.value.x, position.value.y, position.value.h);
+    return [{ translateX: Math.round(p.x) }, { translateY: Math.round(p.y) }];
+  }, [position]);
   const body = useDerivedValue(() => [
     { translateY: pose.value.offsetY + pose.value.bob },
     { rotate: pose.value.rotation },
