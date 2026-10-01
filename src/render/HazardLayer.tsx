@@ -1,6 +1,7 @@
 import { Group, Path, Skia, type SkPath } from '@shopify/react-native-skia';
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
 import { GAME_CONFIG } from '../game/GameConfig';
+import { worldToScreen } from '../world/IsoUtils';
 import type { HazardKind } from '../systems/HazardSystem';
 
 /** Estado por quadro, igual ao das armas: os caminhos são montados fora do React. */
@@ -26,8 +27,19 @@ export const HAZARD_VISUAL_IDLE: HazardVisualState = {
   wave: { u0: 0, u1: 0, from: 0, edge: 0, dir: 1, axis: 'y' },
 };
 
-const px = (x: number, y: number) => (x - y) * 64;
-const py = (x: number, y: number) => (x + y) * 32;
+// Nada deste arquivo roda no JS thread: cada caminho é montado dentro de um
+// `useDerivedValue`, na UI thread. Por isso toda ajuda aqui carrega a diretiva
+// `'worklet'` — sem ela o Reanimated não registra a função, e no aparelho a chamada
+// vira "x is not a function" no meio de um furacão. Além disso o `path` é um objeto
+// nativo do Skia criado lá: uma função do JS thread jamais poderia recebê-lo.
+const px = (x: number, y: number) => {
+  'worklet';
+  return worldToScreen(x, y).x;
+};
+const py = (x: number, y: number, h = 0) => {
+  'worklet';
+  return worldToScreen(x, y, h).y;
+};
 const FUNNEL_HEIGHT = 250;
 /** O raio do funil é o alcance do vento; a nuvem visível é bem mais estreita que ele. */
 const FUNNEL_VISUAL = 0.42;
@@ -39,12 +51,18 @@ const FUNNEL_VISUAL = 0.42;
 const RING_X = 64 * Math.SQRT2;
 
 /** Largura (px) da coluna a `t` do chão: pé estreito, ombro largo. */
-const funnelHalf = (r: number, t: number) => r * (0.28 + t * 0.7);
+const funnelHalf = (r: number, t: number) => {
+  'worklet';
+  return r * (0.28 + t * 0.7);
+};
 /** O eixo do funil varre em arco: sem isso a coluna parece um cilindro parado. */
-const funnelSway = (r: number, spin: number, t: number) =>
-  Math.sin(spin * 1.25 + t * 3.4) * r * 0.34 * t;
+const funnelSway = (r: number, spin: number, t: number) => {
+  'worklet';
+  return Math.sin(spin * 1.25 + t * 3.4) * r * 0.34 * t;
+};
 
 function funnelCentre(s: HazardVisualState, t: number) {
+  'worklet';
   const r = Math.max(0.5, s.vortex.radius) * 64 * FUNNEL_VISUAL;
   const bx = px(s.vortex.x, s.vortex.y);
   const by = py(s.vortex.x, s.vortex.y);
@@ -54,6 +72,7 @@ function funnelCentre(s: HazardVisualState, t: number) {
 
 /** Corpo do funil: sobe pela margem esquerda e desce pela direita. */
 function funnelPath(path: SkPath, s: HazardVisualState) {
+  'worklet';
   const steps = 8;
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
@@ -72,15 +91,19 @@ function funnelPath(path: SkPath, s: HazardVisualState) {
 
 /** Elipse iso: um círculo de `r` tiles no chão vira 2:1 na tela. */
 function isoEllipse(path: SkPath, cx: number, cy: number, rx: number) {
+  'worklet';
   path.moveTo(cx - rx, cy);
   path.conicTo(cx, cy - rx * 0.71, cx + rx, cy, 1);
   path.conicTo(cx, cy + rx * 0.71, cx - rx, cy, 1);
   path.close();
 }
 
+const BAND_T = [0.18, 0.46, 0.78];
+
 /** Bandas da frente da coluna: um arco que corre pela elipse em três alturas. */
 function bands(path: SkPath, s: HazardVisualState) {
-  for (const t of [0.18, 0.46, 0.78]) {
+  'worklet';
+  for (const t of BAND_T) {
     const c = funnelCentre(s, t);
     const w = funnelHalf(c.r, t) * 0.62;
     // Janela de ~240° sobre a elipse: com o spin as pontes andam, e é isso que se lê como giro.
@@ -96,6 +119,7 @@ function bands(path: SkPath, s: HazardVisualState) {
 
 /** Detritos orbitando a base: é o giro que se lê primeiro num tornado. */
 function debris(path: SkPath, s: HazardVisualState) {
+  'worklet';
   const c = funnelCentre(s, 0);
   const foot = funnelHalf(c.r, 0);
   for (let i = 0; i < 8; i++) {
@@ -108,11 +132,13 @@ function debris(path: SkPath, s: HazardVisualState) {
 
 /** Ponto do corredor da onda (u = praia, a = terra adentro) no espaço do mundo. */
 function wavePoint(axis: 'x' | 'y', u: number, a: number) {
+  'worklet';
   return axis === 'y' ? { x: u, y: a } : { x: a, y: u };
 }
 
 /** Elipse do chão iso: um círculo de `r` tiles em torno do ponto (x, y) do mundo. */
 function stormRing(path: SkPath, x: number, y: number, r: number) {
+  'worklet';
   const cx = px(x, y);
   const cy = py(x, y);
   const rx = Math.max(1, r) * RING_X;
@@ -127,17 +153,20 @@ function stormRing(path: SkPath, x: number, y: number, r: number) {
  * caminho + `evenOdd` e o buraco vira o buraco — é ele que diz de onde a tempestade vem.
  */
 function stormCover(path: SkPath, s: HazardVisualState) {
+  'worklet';
   stormRing(path, s.storm.x, s.storm.y, s.storm.radius);
   stormRing(path, s.storm.x, s.storm.y, Math.min(GAME_CONFIG.HURRICANE_EYE_TILES, s.storm.radius));
 }
 
 /** Olho calmo: o céu claro dentro do recorte, onde o vento para. */
 function stormEye(path: SkPath, s: HazardVisualState) {
+  'worklet';
   stormRing(path, s.storm.x, s.storm.y, Math.min(GAME_CONFIG.HURRICANE_EYE_TILES, s.storm.radius));
 }
 
 /** Braços espiralados: é o giro que se lê como furacão, e ele enrola para dentro do olho. */
 function stormArms(path: SkPath, s: HazardVisualState) {
+  'worklet';
   const r = Math.max(1, s.storm.radius);
   // O traço é largo e tem ponta redonda, então cada extremidade sai meio traço além do
   // ponto final: o braço começa na borda do olho e termina no limite do campo de vento.
@@ -152,9 +181,7 @@ function stormArms(path: SkPath, s: HazardVisualState) {
       const t = dentro + (i / steps) * (fora - dentro);
       const a = s.storm.spin * 0.8 + arm * (Math.PI * 2 / 3) + (1 - t) * 2.7;
       const d = r * t;
-      const wx = s.storm.x + Math.cos(a) * d;
-      const wy = s.storm.y + Math.sin(a) * d;
-      const at = { x: px(wx, wy), y: py(wx, wy) };
+      const at = worldToScreen(s.storm.x + Math.cos(a) * d, s.storm.y + Math.sin(a) * d);
       if (i === 0) path.moveTo(at.x, at.y);
       else path.lineTo(at.x, at.y);
     }
@@ -163,12 +190,13 @@ function stormArms(path: SkPath, s: HazardVisualState) {
 
 /** Área coberta pela água: do mar (atrás da origem) até a crista. */
 function floodPath(path: SkPath, s: HazardVisualState) {
+  'worklet';
   const { u0, u1, from, edge, dir, axis } = s.wave;
   const back = from - dir * 9;
   const corners: [number, number][] = [[u0, back], [u1, back], [u1, edge], [u0, edge]];
   corners.forEach(([u, a], i) => {
     const p = wavePoint(axis, u, a);
-    const at = { x: px(p.x, p.y), y: py(p.x, p.y) };
+    const at = worldToScreen(p.x, p.y);
     if (i === 0) path.moveTo(at.x, at.y);
     else path.lineTo(at.x, at.y);
   });
@@ -177,28 +205,32 @@ function floodPath(path: SkPath, s: HazardVisualState) {
 
 /** Crista quebrando: a linha da frente de onda com um lábio de espuma acima. */
 function crestPath(path: SkPath, s: HazardVisualState) {
+  'worklet';
   const { u0, u1, edge, axis } = s.wave;
   const steps = 16;
-  const point = (i: number, lift: number) => {
+  for (let i = 0; i <= steps; i++) {
     const u = u0 + (u1 - u0) * (i / steps);
     const a = edge + Math.sin(u * 0.8 + s.time * 2.6) * 0.35;
     const p = wavePoint(axis, u, a);
-    return { x: px(p.x, p.y), y: py(p.x, p.y) - lift };
-  };
-  for (let i = 0; i <= steps; i++) {
-    const p = point(i, 0);
-    if (i === 0) path.moveTo(p.x, p.y);
-    else path.lineTo(p.x, p.y);
+    const at = worldToScreen(p.x, p.y);
+    if (i === 0) path.moveTo(at.x, at.y);
+    else path.lineTo(at.x, at.y);
   }
   for (let i = steps; i >= 0; i--) {
-    const p = point(i, 30 * s.strength);
-    path.lineTo(p.x, p.y);
+    const u = u0 + (u1 - u0) * (i / steps);
+    const a = edge + Math.sin(u * 0.8 + s.time * 2.6) * 0.35;
+    const p = wavePoint(axis, u, a);
+    const at = worldToScreen(p.x, p.y);
+    path.lineTo(at.x, at.y - 30 * s.strength);
   }
   path.close();
 }
 
 /** Só vale mostrar o perigo fora de casa e com força: dentro do quarto nada é desenhado. */
-const shown = (s: HazardVisualState) => s.strength > 0.02;
+const shown = (s: HazardVisualState) => {
+  'worklet';
+  return s.strength > 0.02;
+};
 
 export function HazardLayer({ state }: { state: SharedValue<HazardVisualState> }) {
   const tornado = useDerivedValue(() => (state.value.kind === 'tornado' && shown(state.value) ? 1 : 0), [state]);

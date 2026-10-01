@@ -17,8 +17,14 @@ export const ELEVATION_PX = 64;
  * Projeção iso 2:1 do jogo. `h` desloca só o eixo Y de tela: o X continua
  * (x - y), ou seja, elevar o chão não gira nem inclina a câmera. É assim que o
  * relevo entra sem tirar do jogo a identidade isométrica.
+ *
+ * O `'worklet'` não é enfeite: a câmera calcula esta projeção na UI thread
+ * (`useDerivedValue` em GameCanvas), e lá um import de módulo não existe — sem o
+ * registro do Reanimated o device morre com "worldToScreen is not a function",
+ * enquanto a web, que roda tudo no mesmo contexto, nunca reclama.
  */
 export function worldToScreen(x: number, y: number, h = 0): IsoPoint {
+  'worklet';
   return { x: (x - y) * 64, y: (x + y) * 32 - h * ELEVATION_PX };
 }
 

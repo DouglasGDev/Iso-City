@@ -11,7 +11,7 @@ import type { Dir4 } from '../game/GameConfig';
 import { MeleeSwing, type MeleeVisualState } from './WeaponEffects';
 import { BLOOD_POOL_STAINS, deathPose, type BloodStain } from '../entities/NPC';
 import { crouchPose } from '../entities/Player';
-import { dirToWorldVec, ELEVATION_PX } from '../world/IsoUtils';
+import { dirToWorldVec, ELEVATION_PX, worldToScreen } from '../world/IsoUtils';
 
 interface Props {
   id: string;
@@ -233,7 +233,7 @@ export function EntitySprite({ id }: Props) {
     const p = sv.value;
     // O `h` vem do laço de simulação: no UI thread não há Map para consultar, e a
     // sombra precisa ficar no chão do terraço junto com o corpo.
-    return { x: (p.x - p.y) * 64, y: (p.x + p.y) * 32 - p.h * 64 };
+    return worldToScreen(p.x, p.y, p.h);
   }, [sv]);
 
   const splashX = useDerivedValue(() => screen.value.x, [screen]);
