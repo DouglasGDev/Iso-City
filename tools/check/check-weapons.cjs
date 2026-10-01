@@ -1121,6 +1121,7 @@ async function checkMeleeRender() {
         if (id === '../world/IsoUtils') return load('src/world/IsoUtils.ts');
         if (id === './AssetManifest') return { ASSET_FILES: {} };
         if (id === './SharedValues') return { entitySVs: new Map() };
+        if (id === './ContactShadow') return load('src/render/ContactShadow.ts');
         if (id === './entityImages') return load('src/render/entityImages.ts');
         if (id === './WeaponEffects') return load('src/render/WeaponEffects.tsx');
         if (id === '../data/weapons') return { isGunId };
@@ -1364,6 +1365,10 @@ async function checkMeleeRender() {
     const p = game.player;
     const body = asset(characterKey(p.char, 'idle', 'SE', 0));
     const idle = snapshot(view.tick(), body);
+    // A comparação de "fantasma" abaixo é da árvore inteira, então a referência também tem
+    // de ser da árvore inteira: a sombra de contato desenha no chão, fora do recorte do
+    // sprite, e uma base sem sombra nunca bateria com um corpo com sombra.
+    const idleFull = snapshot(view.tick());
     for (const equipped of ['unarmed', 'bat']) {
       for (const transition of ['swap', 'swim', 'health', 'dead', 'vehicle', 'missing']) {
         Object.assign(p, { attackTimer: 0.15, attackWeapon: equipped, swimming: false,
@@ -1390,18 +1395,18 @@ async function checkMeleeRender() {
           assert.deepEqual(swimming, snapshot(view.tick()), 'swimming has neither arm cut nor floating bat');
         } else {
           assert.deepEqual(snapshot(tree, body), idle, `${transition}: full base restored`);
-          if (equipped === 'bat') assert.deepEqual(snapshot(tree), idle, `${transition}: stale bat absent`);
+          if (equipped === 'bat') assert.deepEqual(snapshot(tree), idleFull, `${transition}: stale bat absent`);
         }
         Object.assign(p, { attackTimer: 0, swimming: false, health: 100, state: 'idle' });
         game.weapons.equipped = 'unarmed';
-        assert.deepEqual(snapshot(view.tick()), idle, `${transition}: recovered sprite without ghosts`);
+        assert.deepEqual(snapshot(view.tick()), idleFull, `${transition}: recovered sprite without ghosts`);
       }
     }
     game.weapons.equipped = 'bat';
     const heldBat = snapshot(view.tick(), body);
     assert.notDeepEqual(heldBat, idle, 'resting visible bat still replaces the base arm');
     game.weapons.equipped = 'unarmed';
-    assert.deepEqual(snapshot(view.tick()), idle, 'unequipping the resting bat restores both base arms');
+    assert.deepEqual(snapshot(view.tick()), idleFull, 'unequipping the resting bat restores both base arms');
     view.dispose();
   });
   test('crouch renderer lowers the rigid torso by eight pixels and keeps folded feet on the ground', () => {

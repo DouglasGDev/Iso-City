@@ -1,10 +1,11 @@
 import { memo, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { Group, Image, type SkImage } from '@shopify/react-native-skia';
+import { Group, Image, Path, Skia, type SkImage, type SkPath } from '@shopify/react-native-skia';
 import { useDerivedValue, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { buildingKey, propKey } from '../assets/AssetRegistry';
 import { spriteStore } from '../assets/SpriteStore';
 import { BUILDING_GEOMETRY } from '../assets/BuildingGeometry';
 import { depthOf, ELEVATION_PX, worldToScreen } from '../world/IsoUtils';
+import { buildingShadowDrop, lotShadow } from './ContactShadow';
 import type { FogView } from '../systems/FogSystem';
 import { GAME_CONFIG } from '../game/GameConfig';
 import type { GameState } from '../game/GameState';
@@ -25,6 +26,8 @@ interface StaticNode {
   w: number;
   h: number;
   depth: number;
+  /** Os dois losangos do lote deslocados para baixo: a sombra de contato do prédio. */
+  shade?: { penumbra: SkPath; core: SkPath };
 }
 
 function buildStaticNodes(game: GameState): StaticNode[] {
@@ -34,13 +37,20 @@ function buildStaticNodes(game: GameState): StaticNode[] {
     if (!img) continue;
     // O prédio pisa o próprio terraço: o `h` é o do lote, nivelado no gerador, e o
     // sprite sobe junto com o chão em vez de ficar enterrado na encosta.
-    const p = worldToScreen(b.x, b.y, game.map.heightSmoothAt(b.x, b.y));
+    const groundH = game.map.heightSmoothAt(b.x, b.y);
+    const p = worldToScreen(b.x, b.y, groundH);
     const geometry = BUILDING_GEOMETRY[b.key];
     const scale = b.footprintW * 64 / geometry.span;
     const w = img.width() * scale, h = img.height() * scale;
+    // A sombra nasce do mesmo losango do colisor: se o prédio ocupa o lote, é o lote que
+    // ele escurece. Fica pré-montada aqui, uma vez por partida, porque prédios não andam.
+    const drop = buildingShadowDrop(h);
+    const penumbra = Skia.Path.Make(), core = Skia.Path.Make();
+    lotShadow(penumbra, b.x, b.y, b.footprintW, groundH, drop);
+    lotShadow(core, b.x, b.y, b.footprintW, groundH, drop * 0.4);
     nodes.push({ id: `building:${i}`, img,
       sx: p.x + w / 2 - geometry.anchorX * scale, sy: p.y + h - geometry.anchorY * scale,
-      w, h, depth: depthOf(b.x, b.y, game.map.heightSmoothAt(b.x, b.y)) });
+      w, h, depth: depthOf(b.x, b.y, groundH), shade: { penumbra, core } });
   }
   for (const [i, pr] of game.map.data.props.entries()) {
     const img = spriteStore[propKey(pr.key)];
@@ -76,6 +86,12 @@ const BuildingSprite = memo(function BuildingSprite({ node, focus }: {
   }, [sx, sy, w, h, depth, focus]);
   const sprite = <Image image={node.img} x={sx - w / 2} y={sy - h} width={w} height={h} fit="fill" />;
   return <Group>
+    {/* A sombra vai por baixo e FORA do recorte de oclusão: ela é tinta no chão, não
+        fachada, então o buraco que abre a parede para mostrar o jogador não pode levá-la. */}
+    {node.shade && <>
+      <Path path={node.shade.penumbra} color="#20261f" opacity={0.17} />
+      <Path path={node.shade.core} color="#1a201a" opacity={0.13} />
+    </>}
     <Group clip={opening} invertClip>{sprite}</Group>
     <Group clip={opening} opacity={0.16}>{sprite}</Group>
   </Group>;

@@ -25,8 +25,16 @@ const stubs = {
   'react-native-reanimated': { useDerivedValue: (get) => ({ get value() { return get(); } }) },
   '@shopify/react-native-skia': {
     Picture: 'Picture', Group: 'Group', Image: 'Image', Rect: 'Rect', RadialGradient: 'RadialGradient',
+    Path: 'Path',
     Skia: {
-      Path: { Make: () => ({ ovals: [], addOval(rect) { this.ovals.push(rect); } }) },
+      Path: { Make: () => ({
+        ovals: [], points: [],
+        addOval(rect) { this.ovals.push(rect); },
+        addCircle(x, y, r) { this.ovals.push({ x: x - r, y: y - r, width: r * 2, height: r * 2 }); },
+        moveTo(x, y) { this.points.push([x, y]); },
+        lineTo(x, y) { this.points.push([x, y]); },
+        close() {},
+      }) },
       XYWHRect: (x, y, width, height) => ({ x, y, width, height }),
       PictureRecorder() {
         const record = { draws: [], events: [], disposed: false };
@@ -93,6 +101,7 @@ const registry = source('assets/AssetRegistry.ts');
 const { BUILDING_GEOMETRY } = source('assets/BuildingGeometry.ts');
 const ground = source('render/GroundLayer.tsx');
 const sorted = source('render/SortedWorldLayer.tsx');
+const { buildingShadowDrop } = source('render/ContactShadow.ts');
 const { FogLayer } = source('render/FogLayer.tsx');
 const { SnowSystem } = source('systems/SnowSystem.ts');
 const fog = new FogSystem();
@@ -414,10 +423,40 @@ test('actual SortedWorldLayer keeps exact tall static bounds, lifted vehicles an
     const actualBuilding = children.find((child) => child.key === 'building:0');
     const wrapper = actualBuilding.type(actualBuilding.props);
     const transparent = wrapper.type({ ...wrapper.props, focus: { value: { x: 0, y: 0, depth: 0, active: false } } });
-    const sprite = transparent.props.children[0].props.children;
+    // A sombra de contato é tinta no chão: vem antes da fachada e fica FORA do recorte de
+    // oclusão, senão o buraco que abre a parede para mostrar o jogador levaria a sombra junto.
+    const shade = transparent.props.children[0];
+    assert.equal(shade.type, 'Fragment', 'prédio desenha a sombra antes do sprite');
+    assert.equal(shade.props.children.length, 2, 'penumbra e núcleo');
+    assert.deepEqual(shade.props.children.map((p) => p.type), ['Path', 'Path']);
+    // A forma da sombra do prédio é o LOSANGO DO COLISOR, não a caixa do sprite: se ela
+    // nascer da moldura da arte, cada fachada nova muda de sombra sozinha. Os quatro vértices
+    // vêm da projeção oficial do lote [x-side,x]×[y-side,y] e caem TODOS na mesma linha de
+    // drop — sol a pino pelo topo da tela, sem deslize lateral. Lidos da ÁRVORE desenhada,
+    // porque é ela que vai para a tela, não o nó que a origem guardou.
+    const drop = buildingShadowDrop(building.h);
+    assert.ok(drop <= 18 && drop >= 2.5, `a sombra do prédio saiu do teto de 18px: drop ${drop.toFixed(1)}`);
+    const lote = [[b.x - b.footprintW, b.y - b.footprintW], [b.x, b.y - b.footprintW],
+      [b.x, b.y], [b.x - b.footprintW, b.y]];
+    const esperados = (desloca) => lote.map(([cx, cy]) => {
+      const q = worldToScreen(cx, cy, 0);
+      return [q.x, q.y + desloca];
+    });
+    const [penumbra, core] = shade.props.children;
+    assert.deepEqual(penumbra.props.path.points, esperados(drop),
+      'a penumbra não é o losango do lote deslocado para baixo');
+    assert.deepEqual(core.props.path.points, esperados(drop * 0.4),
+      'o núcleo da sombra não é o losango do lote na meia altura da penumbra');
+    assert.deepEqual(penumbra.props.path.points.map((p) => p[0]),
+      core.props.path.points.map((p) => p[0]), 'a sombra deslizou para o lado ao encolher');
+    for (const p of [penumbra, core]) {
+      assert.ok(p.props.opacity > 0 && p.props.opacity < 0.25,
+        `a sombra do prédio tem opacidade ${p.props.opacity}: tinta de contato é leve, ou vira buraco no chão`);
+    }
+    const sprite = transparent.props.children[1].props.children;
     assert.equal(sprite.type, 'Image'); near(sprite.props.x, p.x - g.anchorX * scale); near(sprite.props.y, p.y - g.anchorY * scale);
-    assert.equal(transparent.props.children[0].props.invertClip, true);
-    assert.equal(transparent.props.children[1].props.opacity, 0.16);
+    assert.equal(transparent.props.children[1].props.invertClip, true);
+    assert.equal(transparent.props.children[2].props.opacity, 0.16);
     const items = sorted.visibleItems(game, nodes);
     for (let i = 1; i < items.length; i++) assert.ok(items[i].depth >= items[i - 1].depth);
     assert.equal(children.at(-1).key, 'veh:2', 'airborne vehicle keeps elevated depth');
