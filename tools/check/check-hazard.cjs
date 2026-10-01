@@ -80,6 +80,8 @@ function wake(system, context, seconds = 400) {
 }
 /** força() precisa do terreno já conhecido: um tique comum antes apresenta o mapa. */
 const prime = (system, context) => system.update(DT, fixed(0.4), context);
+/** Distância do vento mais forte: o meio da parede do olho, sempre dentro do campo. */
+const paredeDo = (h) => Math.min((C.HURRICANE_EYE_TILES + C.HURRICANE_WALL_TILES) / 2, h.storm.radius * 0.7);
 
 test('nenhum perigo nasce em céu limpo, no frio ou dentro de casa', () => {
   const dry = terrain({ water: 0 });
@@ -140,6 +142,26 @@ test('o aviso vem antes do perigo e o evento termina sozinho', () => {
   assert.equal(h.alert, null);
   assert.equal(h.bed, null);
   assert.equal(heard.length, 1, 'o aviso repetiu');
+});
+
+test('o jogo recém-carregado tem janela de graça antes de qualquer perigo', () => {
+  const h = new HazardSystem();
+  assert.equal(h.cooldown, C.HAZARD_GRACE_S, 'o perigo novo não começou na janela de graça');
+  const context = ctx({});
+  // Céu perfeito para o pior cenário: tempestade de verão na beira do mar. Mesmo assim,
+  // nada de funil nos primeiros minutos — o pedido é de tempo normal, não de desastre.
+  const praia = ctx({ season: 'verao', weather: 'storm', camera: { x: 60, y: 20 } });
+  assert.equal(wake(h, praia, C.HAZARD_GRACE_S - 20), -1, 'o perigo veio antes da hora');
+  assert.ok(wake(h, praia, C.HAZARD_GRACE_S + 60) > 0, 'a janela de graça não terminou nunca');
+  assert.ok(h.kind, 'a praia em tempestade de verão não chamou nada');
+});
+
+test('o perigo severo é raro: o cooldown é de dez minutos para cima', () => {
+  // O pedido do player: tsunami e tornado não podem ser cenário permanente. Se o intervalo
+  // mínimo cair abaixo de dez minutos de jogo, o espetáculo voltou a ser rotina.
+  assert.ok(C.HAZARD_COOLDOWN_S[0] >= 600, `cooldown mínimo de ${C.HAZARD_COOLDOWN_S[0]}s`);
+  assert.ok(C.HAZARD_GRACE_S < C.HAZARD_COOLDOWN_S[0],
+    'a janela de graça tem que caber dentro do cooldown');
 });
 
 test('o intervalo entre eventos respeita o cooldown sorteado', () => {
@@ -272,37 +294,152 @@ test('quem dirige apanha junto com o carro, mas só o carro é empurrado', () =>
   assert.equal(hits[0][0], player, 'o motorista não apanhou junto com o carro');
 });
 
-test('furacão empurra tudo na mesma direção, molha, escurece e deita a chuva', () => {
+test('o furacão é um olho que anda: o vento para no próprio raio', () => {
+  const h = new HazardSystem();
+  const context = ctx({});
+  prime(h, context);
+  h.force('hurricane', 30);
+  assert.ok(h.storm.radius > 0 && h.storm.radius <= C.HURRICANE_REACH_TILES + 1e-9,
+    `campo de vento ${h.storm.radius} fora do configurado`);
+  const out = { fx: 0, fy: 0, core: false, near: false };
+  // Parede do olho: a faixa que arremessa e fere.
+  const parede = (C.HURRICANE_EYE_TILES + C.HURRICANE_WALL_TILES) / 2;
+  h.forceAt(h.storm.x + parede, h.storm.y, out);
+  assert.ok(out.fx !== 0 || out.fy !== 0, 'a parede do olho não empurra');
+  assert.equal(out.core, true, 'a parede do olho não é núcleo');
+  assert.equal(out.near, true);
+  const leste = { fx: out.fx, fy: out.fy };
+  // Do lado de lá o giro inverte: é uma espiral em volta do olho, não uma frente de vento.
+  h.forceAt(h.storm.x - parede, h.storm.y, out);
+  assert.ok(Math.sign(out.fy) !== Math.sign(leste.fy), 'o vento não gira em volta do olho');
+  // Olho calmo: no centro do furacão o vento para, como na vida real.
+  h.forceAt(h.storm.x + C.HURRICANE_EYE_TILES * 0.5, h.storm.y, out);
+  assert.equal(out.fx, 0);
+  assert.equal(out.fy, 0);
+  assert.equal(out.near, false, 'o olho calmo empurra alguém');
+  assert.equal(out.core, false, 'o olho calmo machuca');
+  // Borda do campo: empurra pouco e só ali dentro. Uma passada além não é nada.
+  h.forceAt(h.storm.x + h.storm.radius * 0.95, h.storm.y, out);
+  assert.equal(out.near, true, 'a borda do campo perdeu o vento antes da hora');
+  assert.equal(out.core, false, 'a borda do campo arremessa');
+  h.forceAt(h.storm.x + h.storm.radius + 2, h.storm.y, out);
+  assert.equal(out.near, false, 'o vento alcançou além do raio que é desenhado');
+  assert.equal(out.fx, 0);
+  assert.equal(out.fy, 0);
+});
+
+test('o que puxa é o que se vê: céu, tremor e arrasto seguem a distância do olho', () => {
+  const h = new HazardSystem();
+  const context = ctx({});
+  prime(h, context);
+  h.force('hurricane', 30);
+  // force() põe o olho dentro do alcance da câmera: com ele em cima, o tempo fecha.
+  run(h, 1, fixed(0.5), context);
+  assert.ok(h.wet > 0.05, `umidade ${h.wet} com o olho na câmera`);
+  assert.ok(h.dark > 0.02, `céu ${h.dark} com o olho na câmera`);
+  assert.ok(Math.abs(h.slant) > 0.05, `chuva ${h.slant} em pé com o olho na câmera`);
+
+  // Na borda do campo (fora da parede do olho) o vento empurra e põe para correr, mas não mata.
+  const banda = h.storm.radius * 0.85;
+  const dentro = { x: h.storm.x + banda, y: h.storm.y, radius: C.NPC_RADIUS, dead: false,
+    inVehicle: false, state: 'walking', fleeTimer: 0, health: 100 };
+  const fora = { x: h.storm.x + h.storm.radius + 8, y: h.storm.y, radius: C.NPC_RADIUS,
+    dead: false, inVehicle: false, state: 'walking', fleeTimer: 0, health: 100 };
+  const antes = { dentro: { x: dentro.x, y: dentro.y }, fora: { x: fora.x, y: fora.y } };
+  const player = { x: fora.x, y: fora.y, radius: C.PLAYER_RADIUS, currentVehicleId: null };
+  let shook = 0;
+  h.sweep(DT, swept({ player, npcs: [dentro, fora], shake: () => { shook++; } }));
+  assert.ok(Math.hypot(dentro.x - antes.dentro.x, dentro.y - antes.dentro.y) > 0.02,
+    'o pedestre dentro do campo não foi empurrado');
+  assert.equal(dentro.dead, false, 'a borda do campo matou quem só levou vento');
+  assert.equal(dentro.state, 'fleeing', 'quem está no vento do furacão não corre dele');
+  assert.deepEqual({ x: fora.x, y: fora.y }, antes.fora, 'o pedestre fora do campo se mexeu');
+  assert.equal(fora.state, 'walking', 'o furacão pôs para correr quem nem sente o vento');
+  assert.equal(shook, 0, 'a câmera treme com o player fora do campo de vento');
+
+  // O MESMO furacão, com o olho do outro lado do mapa: céu normal, sem um tique de vento.
+  h.storm.x = 60 + C.HURRICANE_REACH_TILES * 6;
+  h.storm.y = 60;
+  h.update(DT, fixed(0.5), context);
+  assert.equal(h.kind, 'hurricane');
+  assert.equal(h.wet, 0, 'o céu fechou por um furacão que está longe');
+  assert.equal(h.dark, 0, 'o céu escureceu longe do olho');
+  assert.equal(Math.abs(h.slant), 0, 'a chuva entortou longe do olho');
+  const out = { fx: 0, fy: 0, core: false, near: false };
+  h.forceAt(60, 60, out);
+  assert.equal(out.near, false, 'o vento de um olho distante alcança a câmera');
+});
+
+test('o olho cruza o mapa por cima da câmera em vez de ficar plantado', () => {
+  const h = new HazardSystem();
+  const context = ctx({});
+  prime(h, context);
+  h.force('hurricane', 60);
+  const start = { x: h.storm.x, y: h.storm.y };
+  // rng 0.5: rumo π e nenhum desvio — o olho entra a leste e varre o mapa para oeste.
+  assert.ok(start.x > 60, `o olho nasceu a sotavento (${start.x})`);
+  let maisPerto = Infinity;
+  const radii = [];
+  run(h, 40, fixed(0.5), context, (s) => {
+    assert.ok(s.storm.x >= -C.HURRICANE_REACH_TILES && s.storm.x <= 120 + C.HURRICANE_REACH_TILES,
+      `o olho fugiu do mapa (${s.storm.x})`);
+    assert.ok(s.storm.y >= -C.HURRICANE_REACH_TILES && s.storm.y <= 120 + C.HURRICANE_REACH_TILES,
+      `o olho fugiu do mapa (${s.storm.y})`);
+    maisPerto = Math.min(maisPerto, Math.hypot(s.storm.x - 60, s.storm.y - 60));
+    radii.push(s.storm.radius);
+  });
+  assert.ok(Math.hypot(h.storm.x - start.x, h.storm.y - start.y) > 20, 'o olho ficou plantado');
+  assert.ok(maisPerto < C.HURRICANE_REACH_TILES, `o olho passou a ${maisPerto} tiles da câmera`);
+  assert.ok(Math.max(...radii) <= C.HURRICANE_REACH_TILES + 1e-9 && Math.min(...radii) > 0,
+    `o campo de vento saiu do configurado (${Math.min(...radii)}..${Math.max(...radii)})`);
+});
+
+test('o campo de vento cresce com a força, e nunca passa do raio configurado', () => {
+  const h = new HazardSystem();
+  prime(h, ctx({}));
+  h.force('hurricane', 30);
+  // Volta ao começo do aviso: o raio não é um número solto, é a força em tiles.
+  h.strength = 0.2;
+  h.update(DT, fixed(0.5), ctx({}));
+  const antes = h.storm.radius;
+  assert.ok(antes < C.HURRICANE_REACH_TILES, `campo ${antes} já no teto com força 0.2`);
+  run(h, 6, fixed(0.5), ctx({}));
+  assert.ok(h.storm.radius > antes + 1, `campo ${antes} → ${h.storm.radius} no auge`);
+  assert.ok(h.storm.radius <= C.HURRICANE_REACH_TILES + 1e-9, `campo ${h.storm.radius} passou do teto`);
+});
+
+test('o furacão molha, deita a chuva e não abre um segundo leito', () => {
   const h = new HazardSystem();
   prime(h, ctx({}));
   h.force('hurricane', 30);
   assert.equal(h.bed, null, 'o furacão abriu um segundo leito de clima');
-  const npcs = Array.from({ length: 6 }, (_, i) => ({ x: 20 + i * 8, y: 30 + i * 5,
-    radius: C.NPC_RADIUS, dead: false, inVehicle: false, state: 'walking', fleeTimer: 0, health: 100 }));
-  const start = npcs.map((n) => ({ x: n.x, y: n.y }));
   const out = { fx: 0, fy: 0, core: false, near: false };
-  h.forceAt(60, 60, out);
-  assert.ok(out.fx !== 0 || out.fy !== 0, 'vento global sem força');
-  assert.equal(out.near, true, 'o furacão só alcança um ponto');
-  assert.equal(out.core, false, 'rajada comum matou alguém');
-  for (let i = 0; i < 20; i++) h.sweep(DT, swept({ npcs }));
-  npcs.forEach((n, i) => {
-    const d = { x: n.x - start[i].x, y: n.y - start[i].y };
-    assert.ok(Math.hypot(d.x, d.y) > 0.05, `pedestre ${i} não foi empurrado`);
-    assert.ok(Math.abs(d.x) > 1e-6 || Math.abs(out.fx) < 1e-6, `pedestre ${i} saiu do vento`);
-    assert.equal(n.state, 'walking', 'o furacão pôs o pedestre para correr');
-    assert.equal(n.dead, false, 'vento comum matou quem não estava no núcleo');
-  });
-  assert.ok(h.wet > 0 && h.wet <= C.HURRICANE_WET + 1e-9, `umidade do furacão ${h.wet}`);
-  assert.ok(h.dark > 0 && h.dark <= 1, `céu do furacão ${h.dark}`);
-  assert.ok(h.slant !== 0 && Math.abs(h.slant) <= 1.5 + 1e-9, `inclinação ${h.slant}`);
+  h.forceAt(h.storm.x + paredeDo(h), h.storm.y, out);
+  assert.ok(out.fx !== 0 || out.fy !== 0, 'o campo de vento sem força no meio');
   // A rajada oscila: o vento nunca é o mesmo dois tiques seguidos.
   const push = [];
   run(h, 12, fixed(0.5), ctx({}), (system) => {
-    system.forceAt(60, 60, out);
+    system.forceAt(system.storm.x + paredeDo(system), system.storm.y, out);
     push.push(Math.hypot(out.fx, out.fy));
   });
   assert.ok(Math.max(...push) > Math.min(...push) * 1.05, 'o vento não variou');
+  // E com a força toda ele fere: a parede do olho não é só incômodo.
+  const h2 = new HazardSystem();
+  prime(h2, ctx({}));
+  h2.force('hurricane', 30);
+  run(h2, 8, fixed(0.5), ctx({}));
+  let hurt = 0;
+  const vitima = { x: h2.storm.x + paredeDo(h2), y: h2.storm.y, radius: C.PLAYER_RADIUS,
+    currentVehicleId: null };
+  for (let i = 0; i < 10; i++) {
+    h2.update(DT, fixed(0.5), ctx({}));
+    vitima.x = h2.storm.x + paredeDo(h2);
+    vitima.y = h2.storm.y;
+    h2.sweep(DT, swept({ player: vitima,
+      health: { damage: (p, amount) => { hurt += amount; return true; } } }));
+  }
+  assert.ok(hurt > 0, 'a parede do olho não feriu ninguém');
+  assert.ok(hurt <= C.HURRICANE_PLAYER_DMG_S * 1.05, `um segundo na parede custa ${hurt}`);
 });
 
 test('o tsunami sobe da costa, para no limite e volta para o mar', () => {
@@ -502,6 +639,11 @@ test('dt inválido e rng maluco não travam nem explodem o ciclo', () => {
       if (wild.kind === 'tsunami') {
         assert.ok(Number.isFinite(wild.wave.edge) && wild.wave.reach >= 0);
         assert.ok(wild.wave.reach <= C.TSUNAMI_REACH_TILES + 1e-6);
+      }
+      if (wild.kind === 'hurricane') {
+        assert.ok(Number.isFinite(wild.storm.x) && Number.isFinite(wild.storm.y));
+        assert.ok(wild.storm.radius >= 0 && wild.storm.radius <= C.HURRICANE_REACH_TILES + 1e-6,
+          `campo de vento ${wild.storm.radius}`);
       }
     }
   }

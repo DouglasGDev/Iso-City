@@ -332,6 +332,7 @@ test('raster dimensions and exterior alpha also work for odd sums, thin and empt
 });
 
 const { __testMapCanvas: MapCanvas, MiniMap, FullMap } = source('ui/MiniMap.tsx');
+const { InteriorPlan } = source('ui/InteriorPlan.tsx');
 const { remainingRouteDistance } = source('world/Gps.ts');
 const canvasProps = { mapW: 390, mapH: 844, zoom: 1, panX: 0, panY: 0, detailed: true };
 function walk(tree, ancestors = [], out = []) {
@@ -364,7 +365,10 @@ function fixture(empty = false) {
       npc(201, 'civilian', known, { dead: true }), npc(202, 'cop', known, { inVehicle: true })],
     vehicles: [car(3, 'sedan', known), car(4, 'police', known), car(103, 'sedan', unknown), car(104, 'police', unknown),
       car(203, 'sedan', known, { state: 'destroyed' })],
-    interiors: { active: null, entrances: [{ id: 6, ...known, kind: 'home' }, { id: 106, ...unknown, kind: 'home' }] },
+    interiors: { active: null, street: null, entrances: [{ id: 6, ...known, kind: 'home' }, { id: 106, ...unknown, kind: 'home' }] },
+    // GameState.worldPosition é um getter real: a cidade só enxerga o pé da porta.
+    get worldPosition() { return this.interiors.active ? (this.interiors.street ?? this.interiors.active.entrance) : this.player; },
+    crowd: { list: [] }, jail: { occupants: [], keysOnFloor: null },
     pickups: { items: [{ id: 5, ...known, kind: 'ammo', active: true }, { id: 105, ...unknown, kind: 'ammo', active: true }] },
     missions: { state: { phase: 'travel', target: { x: 47.75, y: 31.25 } } }, police: { searchArea: null },
     // O radar pergunta o que a polícia vê; o fixture devolve o que o teste quiser desenhar.
@@ -380,6 +384,17 @@ function fixture(empty = false) {
   e.update = () => assert.fail('rendering must not update exploration');
   e.breakTrail = () => assert.fail('rendering must not alter exploration trail');
   return currentGame;
+}
+/** A porta fica no lote 36,27 da cidade; a sala tem 7×5 tiles do plano dela. */
+const roomEntrance = { x: 36.4, y: 26.9, facing: 0 };
+function roomShape() {
+  return {
+    kind: 'shop', label: 'Mercado do Bairro', entrance: roomEntrance,
+    service: { x: 1.4, y: 4.2 }, exit: { x: 3.5, y: 0.2 },
+    map: { worldW: 7, worldH: 5 },
+    furniture: [{ id: 'shelf-a', kind: 'shelf', x: 0.6, y: 1.2, w: 1.4, d: 0.5, color: '#6b5f4a' },
+      { id: 'counter-a', kind: 'counter', x: 0.8, y: 3.4, w: 1.6, d: 0.6, color: '#7a6c52' }],
+  };
 }
 function readOnlyRender(render) {
   const before = snapshot(currentGame.exploration), entities = JSON.stringify(currentGame), state = JSON.stringify(ui);
@@ -496,25 +511,53 @@ test('MapCanvas pan/zoom/read-only rerenders neither discover cells nor move mar
   assert.equal(game.exploration.version, 1);
 });
 
-test('MapCanvas and MiniMap use the outdoor entrance for indoor position, centering and GPS distance', () => {
-  const game = fixture(), entrance = { x: 36.4, y: 26.9 };
-  game.interiors.active = { entrance, label: 'Test room' };
-  Object.assign(game.player, { x: 5.2, y: 6.8 });
+test('MapCanvas e MiniMap: a sala é uma planta à parte, e o GPS continua na calçada', () => {
+  const game = fixture(), room = roomShape();
+  game.interiors.active = room;
+  Object.assign(game.player, { x: 4.2, y: 3.6 });
   assert.equal(game.exploration.isExplored(36, 26), false);
   for (const detailed of [true, false]) {
-    const props = { ...canvasProps, detailed }, entries = readOnlyRender(() => MapCanvas(props));
-    const player = entries.find(({ node }) => node.type === 'Circle' && node.props.color === C.player);
-    assert.ok(player); pointNear(markerCenter(player.node), projectFor(props)(entrance.x, entrance.y)); unclipped(player);
+    const entries = readOnlyRender(() => MapCanvas({ ...canvasProps, detailed }));
+    const plan = entries.find(({ node }) => node.type === InteriorPlan);
+    assert.ok(plan && plan.node.props.room === room, 'a sala entra como planta própria');
+    assert.ok(!entries.some(({ node }) => node.type === 'Image'), 'a cidade não aparece recortada dentro da loja');
+    assert.ok(!entries.some(({ node }) => node.key && /^(n|cop|v|ammo|door)\d+$/.test(node.key)),
+      'nenhum marcador da cidade vaza para a planta');
   }
   for (const height of [390, 844]) {
     windowSize = { width: 390, height };
-    const entries = readOnlyRender(() => MiniMap());
-    const canvas = entries.find(({ node }) => node.type === MapCanvas); assert.ok(canvas);
-    const props = canvas.node.props;
-    pointNear(projectFor(props)(entrance.x, entrance.y), { x: props.mapW / 2, y: props.mapH / 2 });
-    const distance = remainingRouteDistance(ui.mapRoute, entrance.x, entrance.y).toFixed(0);
-    assert.ok(textOf(entries[0].node).includes(`GPS ${distance}m`), 'distance must start at exterior entrance');
+    const entries = readOnlyRender(() => MiniMap()), text = textOf(entries[0].node);
+    assert.ok(text.includes('PLANO'), 'o rótulo do radar diz que é uma planta');
+    const distance = remainingRouteDistance(ui.mapRoute, roomEntrance.x, roomEntrance.y).toFixed(0);
+    assert.ok(text.includes(`GPS ${distance}m`), 'a distância sai do pé da porta, não do plano da sala');
   }
+  // Sem nada para fazer na rua, o rodapé do radar apresenta a sala em que você está.
+  Object.assign(ui, { mapMarker: null, mapRoute: [] });
+  game.missions.state.phase = 'break';
+  const text = textOf(readOnlyRender(() => MiniMap())[0].node);
+  assert.ok(text.includes(room.label), 'sem destino o rodapé nomeia o interior');
+  assert.ok(!text.includes('% explorado'), 'a planta não se faz de cidade');
+});
+
+test('A planta projeta o próprio plano da sala, nunca o lote em que a porta fica', () => {
+  const game = fixture(), room = roomShape();
+  game.interiors.active = room;
+  Object.assign(game.player, { x: 4.2, y: 3.6, facingAngle: 0 });
+  const props = { room, mapW: 390, mapH: 844, zoom: 1, panX: 0, panY: 0, detailed: true };
+  const entries = readOnlyRender(() => InteriorPlan(props));
+  const plan = makeProjectors(props.mapW, props.mapH, 8, room.map.worldW, room.map.worldH, 1, 0, 0);
+  const arrow = entries.find(({ node }) => node.type === 'Group' && Array.isArray(node.props.transform)
+    && node.props.transform.some((t) => t.rotate !== undefined));
+  assert.ok(arrow, 'a seta do jogador é rotacionada no plano');
+  const at = { x: arrow.node.props.transform[0].translateX, y: arrow.node.props.transform[1].translateY };
+  pointNear(at, plan.worldToScreen(game.player.x, game.player.y), 'seta na coordenada da sala');
+  const service = entries.find(({ node }) => node.type === 'Circle' && node.props.color === C.route);
+  assert.ok(service, 'o balcão da sala está na planta');
+  pointNear({ x: service.node.props.cx, y: service.node.props.cy }, plan.worldToScreen(room.service.x, room.service.y));
+  // O defeito que esta planta corrige: desenhar a sala com as medidas da cidade. Os mesmos
+  // 4,2 × 3,6 cairiam em outro canto do canvas — se caírem, a sala voltou a morar no mapa.
+  const asCity = makeProjectors(props.mapW, props.mapH, 0, 64, 40, 1, 0, 0).worldToScreen(game.player.x, game.player.y);
+  assert.ok(Math.hypot(at.x - asCity.x, at.y - asCity.y) > 20, 'a planta projeta nas coordenadas da cidade');
 });
 
 for (const known of [true, false]) test(`FullMap destination label uses floored cells for ${known ? 'a known' : 'an unknown'} fractional GPS marker`, () => {
@@ -524,15 +567,18 @@ for (const known of [true, false]) test(`FullMap destination label uses floored 
   assert.ok(text.includes(known ? 'Área descoberta' : 'Área não explorada'), 'destination discovery label');
 });
 
-test('FullMap indoor biome and GPS distance come from the exterior entrance, not room-local coordinates', () => {
-  const game = fixture(), entrance = { x: 36.4, y: 26.9 };
-  game.interiors.active = { entrance, label: 'Test room' };
-  Object.assign(game.player, { x: 5.2, y: 6.8 });
+test('FullMap dentro de uma sala anuncia o plano, e o destino continua medido da calçada', () => {
+  const game = fixture(), room = roomShape();
+  game.interiors.active = room;
+  Object.assign(game.player, { x: 4.2, y: 3.6 });
   game.map.data.tiles[26 * 64 + 36].biome = 'beach';
-  game.map.data.tiles[6 * 64 + 5].biome = 'forest';
+  game.map.data.tiles[3 * 64 + 4].biome = 'forest';
   const entries = readOnlyRender(() => FullMap({ onClose() {} })), text = textOf(entries[0].node);
-  assert.ok(text.includes('Praia · Test room'), 'header describes outdoor entrance biome');
-  assert.ok(text.includes(`DESTINO MARCADO · ${Math.round(remainingRouteDistance(ui.mapRoute, entrance.x, entrance.y))}m`));
+  assert.ok(text.includes('ISO CITY / INTERIOR'), 'o cabeçalho diz que é interior');
+  assert.ok(text.includes(`${room.label} · 7×5 tiles`), 'o cabeçalho descreve a planta da sala');
+  assert.ok(!text.includes('Praia'), 'o bioma da rua não empresta o nome da sala');
+  assert.ok(text.includes(`DESTINO MARCADO · ${Math.round(remainingRouteDistance(ui.mapRoute, roomEntrance.x, roomEntrance.y))}m`),
+    'o destino continua medido do pé da porta');
 });
 
 test('new natural region labels are distinct and localized', () => {

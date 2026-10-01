@@ -11,6 +11,7 @@ import { sound } from '../audio/SoundManager';
 import { useUiInputKind, useUiSurface } from './useUiNav';
 import { remainingRouteDistance, type GpsPoint, buildGpsRoute } from '../world/Gps';
 import { MAP_COLORS as C, BIOME_LABEL, makeProjectors, mapPolygon, explorationPaths, radarPixels } from '../world/MapPresentation';
+import { InteriorPlan } from './InteriorPlan';
 import type { VisionCone } from '../systems/PoliceSystem';
 
 const ZOOM_MIN = 1;
@@ -83,9 +84,16 @@ function MapCanvas({ mapW, mapH, zoom, panX, panY, detailed }: {
     return lines.join(' ');
   }, [imgW, imgH]);
   const { player, vehicles, npcs } = game;
-  const position = game.interiors.active?.entrance ?? player;
+  const position = game.worldPosition;
   const p = project(position.x, position.y);
   const route = useMemo(() => routePath(mapRoute, project), [mapRoute, mapW, mapH, zoom, panX, panY, gameGen]);
+  // Porta aberta: nem o radar nem o mapa cheio desenham a cidade. A sala é um plano à
+  // parte, com mapa e coordenadas próprios, e é a planta dela que entra neste canvas.
+  const room = game.interiors.active;
+  if (room) {
+    return <InteriorPlan room={room} mapW={mapW} mapH={mapH} detailed={detailed}
+      zoom={detailed ? zoom : 1} panX={detailed ? panX : 0} panY={detailed ? panY : 0} />;
+  }
   const known = (x: number, y: number) => {
     const s = project(x, y);
     return game.exploration.isExplored(Math.floor(x), Math.floor(y)) && s.x > -12 && s.y > -12 && s.x < mapW + 12 && s.y < mapH + 12;
@@ -103,7 +111,6 @@ function MapCanvas({ mapW, mapH, zoom, panX, panY, detailed }: {
       </Group>
       <Group clip={mask.discovered}>
         {image && <Image image={image} x={0} y={0} width={imgW} height={imgH} fit="fill" sampling={{ filter: FilterMode.Linear }} />}
-        <Path path={mask.visited} color={C.visited} opacity={0.7} />
       </Group>
       <Path path={outline} color={C.border} style="stroke" strokeWidth={1 / scale} />
     </Group>
@@ -194,19 +201,23 @@ export function MiniMap() {
   }, [suspended]);
   const ms = game.missions.state;
   const dest = mapMarker ?? (ms.phase !== 'break' ? ms.target : null);
-  const position = game.interiors.active?.entrance ?? game.player;
+  const position = game.worldPosition;
   const project = makeProjectors(size, size, 0, game.map.data.tilesW, game.map.data.tilesH, 1, 0, 0);
   const p = project.worldToScreen(position.x, position.y);
   const radarZoom = 12;
   const rem = dest ? mapMarker && mapRoute.length >= 2 ? remainingRouteDistance(mapRoute, position.x, position.y)
     : Math.hypot(position.x - dest.x, position.y - dest.y) : null;
+  const room = game.interiors.active;
   return <View style={[styles.wrap, { top: insets.top + 52, left: Math.max(12, insets.left) }]} pointerEvents="none" testID="minimap">
     <View style={[styles.clip, { width: size, height: size }]}>
       <MapCanvas mapW={size} mapH={size} zoom={radarZoom} panX={(size / 2 - p.x) * radarZoom}
         panY={(size / 2 - p.y) * radarZoom} detailed={false} />
-      <Text style={styles.radarLabel}>RADAR</Text>
+      <Text style={styles.radarLabel}>{room ? 'PLANO' : 'RADAR'}</Text>
     </View>
-    <Text style={styles.markerHint}>{rem !== null && Number.isFinite(rem) ? `${mapMarker ? 'GPS' : 'Missão'} ${rem.toFixed(0)}m`
+    {/* O GPS manda: quem está dentro de uma sala ainda tem compromisso do lado de fora. */}
+    <Text style={styles.markerHint}>{rem !== null && Number.isFinite(rem)
+      ? `${mapMarker ? 'GPS' : 'Missão'} ${rem.toFixed(0)}m`
+      : room ? room.label
       : `${game.exploration.percent.toFixed(1)}% explorado`}</Text>
   </View>;
 }
@@ -226,20 +237,30 @@ export function FullMap({ onClose }: { onClose: () => void }) {
   const pinchBase = useRef({ zoom: 1, x: 0, y: 0 });
   const panBase = useRef({ x: 0, y: 0 });
   const W = game.map.data.tilesW, H = game.map.data.tilesH;
+  const inside = game.interiors.active;
+  // A planta é um mapa próprio, do tamanho de uma sala. Centralizar e limitar o arrasto
+  // com as medidas da cidade jogaria a planta para fora da tela: aqui o viewport é dela.
+  const { viewW, viewH, viewPad } = inside
+    ? { viewW: inside.map.worldW, viewH: inside.map.worldH, viewPad: 8 }
+    : { viewW: W, viewH: H, viewPad: 0 };
   const boundPan = useCallback((x: number, y: number, z: number) => {
-    const base = makeProjectors(mapW, mapH, 0, W, H, z, 0, 0);
+    const base = makeProjectors(mapW, mapH, viewPad, viewW, viewH, z, 0, 0);
     return { x: clamp(x, -base.imgW * base.scale / 2, base.imgW * base.scale / 2),
       y: clamp(y, -base.imgH * base.scale / 2, base.imgH * base.scale / 2) };
-  }, [mapW, mapH, W, H]);
+  }, [mapW, mapH, viewW, viewH, viewPad]);
   const changeView = useCallback((z: number, x: number, y: number) => {
     const next = boundPan(x, y, z);
     zoomRef.current = z; panRef.current = next; setZoom(z); setPan(next);
   }, [boundPan]);
   const centerPlayer = useCallback(() => {
-    const position = game.interiors.active?.entrance ?? game.player;
-    const p = makeProjectors(mapW, mapH, 0, W, H, 1, 0, 0).worldToScreen(position.x, position.y);
-    changeView(OPEN_ZOOM, (mapW / 2 - p.x) * OPEN_ZOOM, (mapH / 2 - p.y) * OPEN_ZOOM);
-  }, [game, mapW, mapH, W, H, changeView]);
+    // Na sala, o corpo que a planta desenha é o do plano dela; na rua é o que a cidade vê.
+    const position = game.interiors.active ? game.player : game.worldPosition;
+    // Uma planta de 7×5 já cabe inteira na tela no zoom 1: abrir o mapa dentro de casa
+    // mostra a sala toda, não um close no balcão.
+    const open = inside ? ZOOM_MIN : OPEN_ZOOM;
+    const p = makeProjectors(mapW, mapH, viewPad, viewW, viewH, 1, 0, 0).worldToScreen(position.x, position.y);
+    changeView(open, (mapW / 2 - p.x) * open, (mapH / 2 - p.y) * open);
+  }, [game, mapW, mapH, viewW, viewH, viewPad, inside, changeView]);
   useEffect(() => centerPlayer(), [centerPlayer]);
   const applyZoom = useCallback((next: number) => {
     const z = clamp(next, ZOOM_MIN, ZOOM_MAX), ratio = z / zoomRef.current;
@@ -247,6 +268,8 @@ export function FullMap({ onClose }: { onClose: () => void }) {
   }, [changeView]);
 
   const markAtScreen = useCallback((sx: number, sy: number) => {
+    // Dentro de uma sala não há cidade na tela: o destino espera do lado de fora da porta.
+    if (game.interiors.active) return;
     const world = makeProjectors(mapW, mapH, 0, W, H, zoomRef.current, panRef.current.x, panRef.current.y).screenToWorld(sx, sy);
     if (world.x < 0 || world.y < 0 || world.x >= W || world.y >= H) return;
     let x = clamp(world.x, 0.5, W - 0.5), y = clamp(world.y, 0.5, H - 0.5);
@@ -256,7 +279,7 @@ export function FullMap({ onClose }: { onClose: () => void }) {
       const index = driving || !game.map.sidewalkNodes.length ? game.map.nearestRoadNode(x, y) : game.map.nearestSidewalkNode(x, y);
       x = nodes[index].x; y = nodes[index].y;
     }
-    const origin = game.interiors.active?.entrance ?? game.player;
+    const origin = game.worldPosition;
     useGameStore.setMapDestination(x, y, buildGpsRoute(game.map, origin.x, origin.y, x, y, driving));
     sound.play('uiClick', 0.55);
   }, [game, mapW, mapH, W, H]);
@@ -316,7 +339,7 @@ export function FullMap({ onClose }: { onClose: () => void }) {
     if (success) markAtScreen(event.x, event.y);
   });
   const composed = Gesture.Race(Gesture.Simultaneous(fingerGesture, pinchGesture), tapGesture);
-  const position = game.interiors.active?.entrance ?? game.player;
+  const position = game.worldPosition;
   const tile = game.map.data.tiles[Math.floor(position.y) * W + Math.floor(position.x)];
   const rem = mapMarker ? mapRoute.length >= 2 ? remainingRouteDistance(mapRoute, position.x, position.y)
     : Math.hypot(position.x - mapMarker.x, position.y - mapMarker.y) : null;
@@ -337,14 +360,17 @@ export function FullMap({ onClose }: { onClose: () => void }) {
     {hardware && (
       <View style={[styles.crosshair, { left: mapW / 2, top: mapH / 2 }]} pointerEvents="none" testID="map-crosshair">
         <View style={styles.crossRing} />
-        <Text style={styles.crossLabel}>{kind === 'gamepad' ? 'A · marcar aqui' : 'Enter · marcar aqui'}</Text>
+        <Text style={styles.crossLabel}>{inside ? (kind === 'gamepad' ? 'Sem destino dentro de casa' : 'Sem GPS dentro de casa')
+          : kind === 'gamepad' ? 'A · marcar aqui' : 'Enter · marcar aqui'}</Text>
       </View>
     )}
     <View style={[styles.mapHeader, { top: safe.top + 12, left: safe.left + 16, right: safe.right + 16 }]} pointerEvents="box-none">
       <View style={styles.titleCard} pointerEvents="none">
-        <Text style={styles.eyebrow}>ISO CITY / NAVEGAÇÃO</Text>
-        <Text style={[styles.fullTitle, compact && styles.titleCompact]}>Mapa da cidade</Text>
-        <Text style={styles.subtle}>{BIOME_LABEL[tile?.biome] ?? 'Cidade'}{game.interiors.active ? ` · ${game.interiors.active.label}` : ''}</Text>
+        <Text style={styles.eyebrow}>ISO CITY / {inside ? 'INTERIOR' : 'NAVEGAÇÃO'}</Text>
+        <Text style={[styles.fullTitle, compact && styles.titleCompact]}>{inside ? 'Plano do interior' : 'Mapa da cidade'}</Text>
+        <Text style={styles.subtle}>{inside
+          ? `${inside.label} · ${inside.map.worldW}×${inside.map.worldH} tiles, fora do mapa da cidade`
+          : BIOME_LABEL[tile?.biome] ?? 'Cidade'}</Text>
       </View>
       <View style={styles.headerRight}>
         <View style={[styles.progressCard, compact && styles.progressCompact]} pointerEvents="none">
@@ -373,11 +399,17 @@ export function FullMap({ onClose }: { onClose: () => void }) {
       </View>}
       <View style={styles.legendCard} pointerEvents="none">
         <View style={styles.legendRow}>
-          <Legend color={C.visited} label="Percorrido" /><Legend color="#657e86" label="Descoberto" />
-          <Legend color={C.unknown} label="Não explorado" /><Legend color={C.mission} label="Missão / GPS" />
-          {!compact && <><Legend color={C.police} label="Polícia" /><Legend color={C.ammo} label="Munição" /></>}
+          {inside ? <>
+            <Legend color={C.player} label="Você" /><Legend color={C.route} label="Balcão" />
+            <Legend color={C.visited} label="Saída" /><Legend color="#c3b493" label="Gente" />
+          </> : <>
+            <Legend color="#657e86" label="Descoberto" />
+            <Legend color={C.unknown} label="Não explorado" /><Legend color={C.mission} label="Missão / GPS" />
+            {!compact && <><Legend color={C.police} label="Polícia" /><Legend color={C.ammo} label="Munição" /></>}
+          </>}
         </View>
-        <Text style={styles.help}>{hardware
+        <Text style={styles.help}>{inside ? (hardware ? 'Setas/D-pad mover · zoom · B fechar' : 'Arraste para mover · zoom para ler a planta')
+          : hardware
           ? (kind === 'gamepad' ? 'D-pad/LS mover · LT/RT zoom · A marcar no centro · B fechar'
             : 'Setas mover · +/− zoom · Enter marcar · PageUp centralizar · Esc fechar')
           : 'Toque/clique para marcar · Arraste para mover · Explore para revelar'}</Text>

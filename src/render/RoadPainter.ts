@@ -44,19 +44,26 @@ function roadPaints(): RoadPaints {
   return paints;
 }
 
-export function drawRoad(canvas: SkCanvas, data: CityMapData, tx: number, ty: number) {
+/**
+ * O asfalto pisa a mesma quad do chão: cada canto do tile sobe na cota do próprio
+ * vértice, senão a rua atravessaria a encosta como um papel esticado por cima dela.
+ */
+export function drawRoad(canvas: SkCanvas, data: CityMapData, tx: number, ty: number,
+  vA: number, vB: number, vC: number, vD: number) {
   const { asphalt, earth, earthEdge, deck, curb, marking, crossing } = roadPaints();
   const tileIndex = ty * data.tilesW + tx;
   const tile = data.tiles[tileIndex];
-  // A rua inclinada é a rua do relevo: o pavimento inteiro do tile sobe no mesmo
-  // `h` do chão, senão o asfalto ficaria plano atravessando o morro como um papel.
-  const h = data.heights[tileIndex] ?? 0;
+  const surf = (x: number, y: number) => {
+    const fx = x - tx;
+    const fy = y - ty;
+    return vA * (1 - fx) * (1 - fy) + vB * fx * (1 - fy) + vD * (1 - fx) * fy + vC * fx * fy;
+  };
   const road = (x: number, y: number) => x >= 0 && y >= 0 && x < data.tilesW && y < data.tilesH
     && data.tiles[y * data.tilesW + x].kind === 'road';
   const path = Skia.Path.Make();
   const corners = [[tx, ty], [tx + 1, ty], [tx + 1, ty + 1], [tx, ty + 1]];
   corners.forEach(([x, y], i) => {
-    const p = worldToScreen(x, y, h);
+    const p = worldToScreen(x, y, surf(x, y));
     if (i === 0) path.moveTo(p.x, p.y);
     else path.lineTo(p.x, p.y);
   });
@@ -65,8 +72,8 @@ export function drawRoad(canvas: SkCanvas, data: CityMapData, tx: number, ty: nu
   canvas.drawPath(path, tile.bridge ? deck : dirt ? earth : asphalt);
 
   const line = (x1: number, y1: number, x2: number, y2: number, paint = dirt ? earthEdge : curb) => {
-    const a = worldToScreen(x1, y1, h);
-    const b = worldToScreen(x2, y2, h);
+    const a = worldToScreen(x1, y1, surf(x1, y1));
+    const b = worldToScreen(x2, y2, surf(x2, y2));
     canvas.drawLine(a.x, a.y, b.x, b.y, paint);
   };
   if (!road(tx, ty - 1)) line(tx, ty, tx + 1, ty);

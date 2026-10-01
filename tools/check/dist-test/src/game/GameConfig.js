@@ -41,7 +41,7 @@ exports.GAME_CONFIG = {
     HELI_SINK_RATE: 2.2,
     /**
      * Teto do voo em tiles acima do nível 0 do mundo. O relevo sobe até
-     * TERRAIN_MAX_LEVEL * TERRAIN_LEVEL_TILES = 4; restam 4 de ar acima da crista mais alta.
+     * TERRAIN_MAX_ELEVATION = 4; restam 4 de ar acima da crista mais alta.
      */
     HELI_CEILING_ELEVATION: 8,
     /** Folga do casco: só passa sobre o ressalto à frente quem está claramente acima dele. */
@@ -190,8 +190,22 @@ exports.GAME_CONFIG = {
     TORNADO_FORCE: 4.6,
     TORNADO_PLAYER_DMG_S: 26,
     HURRICANE_LIFE_S: [70, 130],
-    /** Deslocamento (tiles/s) que o vento global empurra pedestres e carros. */
+    /**
+     * Raio do campo de vento, em tiles. O furacão é um olho que anda pelo mapa, não o
+     * mundo inteiro: quem está fora deste círculo não é empurrado, não treme e não apanha.
+     * A tela inteira cabe dentro dele, então o vento que machuca sempre tem nuvem na tela.
+     */
+    HURRICANE_REACH_TILES: 11,
+    /** Olho calmo: no centro do furacão o vento para, como no furacão de verdade. */
+    HURRICANE_EYE_TILES: 2.5,
+    /** Parede do olho: a faixa que arremessa e fere, logo depois do olho calmo. */
+    HURRICANE_WALL_TILES: 5.5,
+    /** Velocidade do olho cruzando o mapa: lento e enorme, como uma massa de tempestade. */
+    HURRICANE_TRACK_SPEED: 1.4,
+    /** Deslocamento (tiles/s) que a parede do olho empurra pedestres e carros. */
     HURRICANE_PUSH: 0.85,
+    /** Vida por segundo na parede do olho: atravessá-la custa, ficar nela mata. */
+    HURRICANE_PLAYER_DMG_S: 8,
     HURRICANE_WET: 0.35,
     TSUNAMI_LIFE_S: [34, 46],
     /** A onda avança até este número de tiles para dentro da costa. */
@@ -204,21 +218,25 @@ exports.GAME_CONFIG = {
     TSUNAMI_SPAN_TILES: 26,
     /** Só faz tsunami perto do mar: longe da costa o aviso não mostraria nada. */
     TSUNAMI_NEAR_TILES: 16,
-    /** ---- Relevo (2.5D: altura do chão, nunca uma terceira dimensão de câmera) ---- */
-    /** Um nível do campo de altura vale 1/4 de tile de elevação, ou 16px de tela. */
-    TERRAIN_LEVEL_TILES: 0.25,
-    /** Teto da montanha: 16 níveis = 4 tiles de paredes empilhadas, o máximo que se pinta. */
-    TERRAIN_MAX_LEVEL: 16,
-    /** A pé se sobe um degrau inteiro sem saltar; o meio impede a parede invisível de 1,25. */
-    TERRAIN_STEP_UP_FOOT: 1,
-    /** Roda só encara rampa: o gerador suaviza a malha viária exatamente a este teto. */
-    TERRAIN_STEP_UP_VEHICLE: 1,
-    /** Abaixo disto o cavalo do terraço é face pintada; acima, é pedra de montanha. */
-    TERRAIN_CLIFF_LEVELS: 4,
-    /** Queda livre: até aqui se despenca andando, mais que isso é parede que se contorna. */
-    TERRAIN_MAX_DROP: 3,
-    /** Quanto a subida come de velocidade por nível à frente, e o quanto a descida devolve. */
-    TERRAIN_SLOPE_SLOW: 0.3,
+    /** ---- Relevo (2.5D: altura do chão em tiles; campo contínuo, nunca degrau) ---- */
+    /** Teto da serra em tiles de elevação: 4 × ELEVATION_PX = 256px na tela. */
+    TERRAIN_MAX_ELEVATION: 4,
+    /** A pé se sobe meia encosta de um lance. Acima disso a face barra o passo. */
+    TERRAIN_STEP_UP_TILES: 0.6,
+    /** Queda com que se despenca andando, sem virar parede a contornar. */
+    TERRAIN_MAX_DROP_TILES: 1.6,
+    /** Roda só encara rampa: o gerador aplaina asfalto, trilha e cidade dentro disto. */
+    TERRAIN_STEP_UP_VEHICLE: 0.34,
+    /**
+     * Teto de declive da reserva funda, em tile de altura por tile de chão. Não é capricho
+     * de arte: na projeção isométrica um tile de altura vale 64px de tela e um tile de
+     * profundidade vale 32px, então declive 0,5 já fecha o losango em pé e acima disso a
+     * encosta inverte e vira beiral. É por isto que o relevo se desenha como encosta
+     * sombreada de mapa, e nunca como parede de bloco.
+     */
+    TERRAIN_MAX_SLOPE_TILES: 0.3,
+    /** Quanto a subida come de velocidade por tile de desnível à frente. */
+    TERRAIN_SLOPE_SLOW: 0.5,
     /** ---- Destruição de veículos ---- */
     VEHICLE_EXPLOSION_RADIUS: 2.6,
     VEHICLE_EXPLOSION_DMG: 38,

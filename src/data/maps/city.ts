@@ -52,11 +52,31 @@ export interface CityMapData {
   tilesH: number;
   tiles: MapTile[];
   /**
-   * Altura do chão em tiles (0 a TERRAIN_MAX_LEVEL/4), indexada igual a `tiles`.
-   * Só move o eixo Y da projeção iso, nunca o X: é profundidade 2.5D, não uma
-   * terceira dimensão de câmera. Água é sempre 0 — o leito é o fundo do vale.
+   * Altura do chão em tiles (0 a TERRAIN_MAX_ELEVATION), indexada igual a `tiles`.
+   * Campo contínuo, sem degrau: cidade e água são sempre 0 — a planície urbana é o
+   * zero do mundo e o leito é o fundo do vale. Só move o eixo Y da projeção iso,
+   * nunca o X: é profundidade 2.5D, não uma terceira dimensão de câmera.
    */
   heights: Float32Array;
+  /**
+   * Relevo sombreado do mesmo tile, de -1 (encosta na sombra) a +1 (lombo iluminado),
+   * com a luz vindo de cima da tela. É tinta pura: o GroundLayer usa para pintar por
+   * cima do losango e a serra aparecer sem escada de terraço.
+   */
+  shades?: Float32Array;
+  /**
+   * Onde existe morro: o maior declive num raio de 9 tiles, de 0 a 1, e zero no chão plano
+   * — asfalto, rio e interior. A tinta do GroundLayer usa só isto para decidir se pinta o
+   * losango; quão forte pintar vem do `shades` do próprio tile.
+   */
+  relevo?: Float32Array;
+  /**
+   * Quanto de copa faz sombra naquele tile, de 0 (chão nu) a 1 (mata fechada). Carimbado
+   * pelo gerador a partir das árvores reais, deslocado para baixo na tela — a direção para
+   * onde a luz de cima projeta. É tinta pura, como `shades`: o GroundLayer só lê o número.
+   * Cidade e água são sempre zero, porque ali não há morro nem mata a sombrear.
+   */
+  copa?: Float32Array;
   buildings: PlacedBuilding[];
   props: PlacedProp[];
   vehicles: PlacedVehicle[];
@@ -91,10 +111,33 @@ const RURAL_BLOCK_EVERY_SMALL_RESERVE = 3;
 const MAX_RURAL_BUILDINGS = 90;
 // Hard partitions total 720: urban infill can never spend the forest's trees.
 // The reserve grew to 20 quadras, so its quota moved up to keep the canopy readable.
-const PROP_BUDGET = { urban: 150, fences: 72, forestTrees: 200, forestDetails: 16,
-  countryside: 64, beach: 40, pinewood: 56, savanna: 36, desert: 96 } as const;
+//
+// Os tetos abaixo nasceram de medida, não de gosto. O que pesa no mobile não é o total
+// de props do mapa — é o que a janela de neblina deixa passar por quadro. Medido na
+// janela de um celular (844x390, zoom padrão) varrendo o mundo inteiro, com estas cotas:
+// mediana 7, p99 ~35, pior quadro na casa dos 50 sprites estáticos (prédio + prop juntos),
+// e o teto que o check-map cobra é 72. Ou seja: ainda há janela para encher antes de o
+// quadro pesar — é essa folga que a mata e a serra estão usando aqui.
+//
+// A mata fecha a 2.300 árvores sobre ~9.000 tiles (uma a cada ~16 tiles², contra as
+// ~41 tiles² da cota velha) e a serra sobe a 1.300: sem isso o alto do morro continuava
+// meia-clareira, e o "pode lotar de árvore" do pedido morria no orçamento, não no mapa.
+const PROP_BUDGET = { urban: 150, fences: 72, forestTrees: 2300, forestDetails: 60,
+  countryside: 110, beach: 40, pinewood: 900, savanna: 48, desert: 110, serra: 1300 } as const;
 type PropBudget = keyof typeof PROP_BUDGET;
-const MAX_PROPS = 756;
+const MAX_PROPS = 4400;
+/**
+ * Raio da copa em tiles, medido no PNG do sprite (128px de largura = 1 tile de chão),
+ * com a pinheira um passo mais estreita que a frondosa do mesmo tamanho. É o que decide
+ * o tamanho do borro de sombra, então o número é o da silhueta desenhada — não um raio
+ * de gosto.
+ */
+const PROP_CANOPY: Record<string, number> = {
+  prop_tree_common_large: 0.44, prop_tree_common_medium: 0.34,
+  prop_tree_pine_tall: 0.34, prop_tree_pine_medium: 0.3, prop_tree_pine_small: 0.26,
+};
+/** Curva de saturação do campo de copa: ganho antes do `1 - e^-x`. Calibrado na medida. */
+const COPA_GANHO = 2.2;
 const MAX_VEHICLES = 120;
 const MAX_SPAWNS = 700;
 const FENCE_THICKNESS = 0.12;
@@ -111,41 +154,50 @@ function mulberry32(seed: number) {
 }
 
 /**
- * Ruído de valor em grade, 3 oitavas (FBM), determinístico pela semente do mundo.
- * Não usa Math.random: `seed 42` tem de gerar o mesmo relevo tile a tile, senão o
- * snapshot dos checadores quebra. As grades 34/15/6.5 tiles produzem a montanha
- * grande, o morro e a pedra — e nenhuma delas repete dentro dos 240 tiles do mapa.
+ * Ruído de valor em grade, determinístico pela semente do mundo. Não usa Math.random:
+ * `seed 42` tem de gerar o mesmo relevo tile a tile, senão o snapshot dos checadores quebra.
  */
 function reliefNoise(seed: number): (x: number, y: number) => number {
-  const lattice = (size: number, rng: () => number) => {
-    // Grade 64x64 com envelopamento: 240/6.5 = 37 células, então nenhuma oitava
-    // volta sobre si mesma dentro do mapa.
+  const lattice = (sx: number, sy: number, rng: () => number) => {
+    // Grade 64x64 com envelopamento: a célula mais miúda daqui é 5 tiles, então nenhuma
+    // oitava volta sobre si mesma dentro dos 240 tiles do mapa.
     const table = new Float64Array(64 * 64);
     for (let i = 0; i < table.length; i++) table[i] = rng();
     // O valor no canto é bilinear com smoothstep: sem ele a montanha teria facetas
     // quadradas alinhadas ao grid, que é justamente o look que se quer evitar.
     return (x: number, y: number) => {
-      const gx = x / size;
-      const gy = y / size;
+      const gx = x / sx;
+      const gy = y / sy;
       const x0 = Math.floor(gx);
       const y0 = Math.floor(gy);
       const fx = gx - x0;
       const fy = gy - y0;
-      const sx = fx * fx * (3 - 2 * fx);
-      const sy = fy * fy * (3 - 2 * fy);
+      const ax = fx * fx * (3 - 2 * fx);
+      const ay = fy * fy * (3 - 2 * fy);
       const at = (dx: number, dy: number) => table[((y0 + dy) & 63) * 64 + ((x0 + dx) & 63)];
-      const top = at(0, 0) + (at(1, 0) - at(0, 0)) * sx;
-      const bottom = at(0, 1) + (at(1, 1) - at(0, 1)) * sx;
-      return top + (bottom - top) * sy;
+      const top = at(0, 0) + (at(1, 0) - at(0, 0)) * ax;
+      const bottom = at(0, 1) + (at(1, 1) - at(0, 1)) * ax;
+      return top + (bottom - top) * ay;
     };
   };
   const rng = mulberry32(seed);
+  // Ruído isótropo nunca faz serra: toda máxima de um campo isótropo é um domo, e domo de
+  // 8 tiles lado a lado é favo. Crista de mapa é LINEAR, então a estrutura do meio vem de
+  // duas grades esticadas em sentidos opostos: lombo comprido em x e lombo comprido em y.
+  // Cruzadas, elas produzem parede com topo e vale entre as paredes.
+  //
+  // A escala é ditada pelo quadro, não pelo gosto: no zoom padrão a câmera mostra ~7 tiles
+  // de lado. Uma onda de 34 tiles nunca cabe inteira ali, então o olho vê só um pedaço de
+  // flanco — e flanco visto de perto é piso inclinado, não montanha. As duas esticadas
+  // vêm com célula curta de 5 tiles para que a travessia crista-vale-crista caiba no quadro,
+  // e a onda grande perde peso: ela só decide ONDE a serra existe, nunca o desenho.
   const octaves = [
-    { fn: lattice(34, rng), w: 1 },
-    { fn: lattice(15, rng), w: 0.5 },
-    { fn: lattice(6.5, rng), w: 0.25 },
+    { fn: lattice(34, 34, rng), w: 0.45 },
+    { fn: lattice(19, 5, rng), w: 1 },
+    { fn: lattice(5, 19, rng), w: 1 },
+    { fn: lattice(5, 5, rng), w: 0.3 },
   ];
-  const total = 1.75;
+  const total = 2.75;
   return (x, y) => octaves.reduce((sum, o) => sum + o.w * o.fn(x, y), 0) / total;
 }
 
@@ -196,6 +248,35 @@ function isNatural(biome: Biome): boolean {
   return biome === 'forest' || biome === 'countryside' || biome === 'beach'
     || biome === 'pinewood' || biome === 'savanna' || biome === 'desert';
 }
+
+/**
+ * A espécie pelo nível — nunca pelo desenho da encosta. É a leitura do §8 no mapa: o pé do
+ * morro continua a mata de folha larga do vale, o meio-talude divide a frondosa com o
+ * pinho, e o alto frio e batido de vento é só conífera. Vale para o plantio da serra e
+ * para a cena de fundo da mata inteira, porque espécie escolhida só no morro deixa o vale
+ * com a mesma floresta do topo — e aí a altitude não se lê em nada.
+ *
+ * Pinhal que recebe folha larga perde a silhueta própria, e tipologia por bioma é contrato
+ * do projeto; savana é aberta de propósito; e árvore na duna ou na rocha do deserto é o
+ * mapa mentindo — lá o que existe é pedra, mato seco e sombra nua.
+ */
+function especieDoNivel(biome: Biome, nivel: number): string[] | null {
+  if (biome === 'pinewood') {
+    return nivel >= 2 ? ['prop_tree_pine_tall', 'prop_tree_pine_medium']
+      : ['prop_tree_pine_small', 'prop_tree_pine_medium'];
+  }
+  if (biome === 'forest') {
+    return nivel >= 2.6 ? ['prop_tree_pine_tall', 'prop_tree_pine_medium']
+      : nivel >= 1.6 ? ['prop_tree_pine_small', 'prop_tree_pine_medium', 'prop_tree_common_medium']
+        : ['prop_tree_common_large', 'prop_tree_common_medium', 'prop_tree_pine_small'];
+  }
+  if (biome === 'countryside') return ['prop_tree_common_medium', 'prop_tree_common_large'];
+  if (biome === 'savanna') return ['prop_tree_common_medium'];
+  return null;
+}
+
+/** Quanto do talude de cada reserva vira árvore. Mata e pinhal fecham; campo e savana ralam. */
+const SERRA_ABERTURA: Partial<Record<Biome, number>> = { countryside: 0.45, savanna: 0.3 };
 
 /**
  * Chão pisado da reserva: terra batida na mata, areia clara na praia e no deserto.
@@ -510,23 +591,56 @@ export function generateCity(seed = 20260909): CityMapData {
         : { ...ground(biome), biome };
     }
   }
-  // Broad forest clearings, field strips and dunes, rather than per-tile noise.
+  /**
+   * O mesmo ruído que levanta a serra, lido um pouco mais aberto. Ele também decide
+   * onde o chão troca de cor, então o mosaico de albedo acompanha o maciço — terra
+   * exposta na crista, mato fechado no vale — em vez de brigar com a tinta do GroundLayer.
+   */
+  const relief = reliefNoise(seed ^ 0x7a656c69);
+  const mosaico = (x: number, y: number) => relief(x * 0.7, y * 0.7);
+
+  // Manchas, não retângulos. O corte é o percentil do próprio campo dentro do bioma,
+  // então cada bioma pinta a mesma fração do seu chão em qualquer semente. O grid de
+  // módulo que havia aqui desenhava blocos alinhados ao losango — pontilhado que se lia
+  // como degrau e engolia a sombra do morro, que é o único sinal de relevo na tela.
+  const FRACAO_PATCH: Partial<Record<Biome, number>> = {
+    forest: 0.18, pinewood: 0.18, countryside: 0.18, savanna: 0.22, beach: 0.22, desert: 0.22,
+  };
+  const campos = new Map<Biome, number[]>();
+  const entraNoMosaico = (biome: Biome, x: number, y: number) =>
+    FRACAO_PATCH[biome] !== undefined && tiles[y * W + x].kind !== 'water'
+    // Na praia só seca o que está para dentro: a areia molhada da margem é da beira do rio.
+    && (biome !== 'beach' || y < riverTop - 2);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const biome = tiles[y * W + x].biome;
+      if (!entraNoMosaico(biome, x, y)) continue;
+      let campo = campos.get(biome);
+      if (!campo) campos.set(biome, campo = []);
+      campo.push(mosaico(x, y));
+    }
+  }
+  const corte = new Map<Biome, number>();
+  for (const [biome, valores] of campos) {
+    valores.sort((a, b) => a - b);
+    const i = Math.min(valores.length - 1, Math.floor(valores.length * (1 - (FRACAO_PATCH[biome] ?? 0))));
+    corte.set(biome, valores[i]);
+  }
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const t = tiles[y * W + x];
-      if (t.kind === 'water') continue;
-      if (t.biome === 'forest' && (Math.floor(x / 6) + Math.floor(y / 5)) % 4 === 0) {
+      const limiar = corte.get(t.biome);
+      if (limiar === undefined || !entraNoMosaico(t.biome, x, y)) continue;
+      if (mosaico(x, y) < limiar) continue;
+      if (t.biome === 'forest' || t.biome === 'pinewood') {
         Object.assign(t, { kind: 'dirt', key: 'tile_ground_dirt_grasspatch' });
-      } else if (t.biome === 'countryside' && Math.floor(y / 3) % 4 === 0) {
+      } else if (t.biome === 'countryside') {
         Object.assign(t, { kind: 'dirt', key: 'tile_ground_dirt_drypatch' });
-      } else if (t.biome === 'pinewood' && (Math.floor(x / 5) + Math.floor(y / 8)) % 3 === 0) {
-        Object.assign(t, { kind: 'dirt', key: 'tile_ground_dirt_grasspatch' });
-      } else if (t.biome === 'savanna' && (Math.floor(x / 7) + Math.floor(y / 4)) % 3 === 0) {
+      } else if (t.biome === 'savanna') {
         Object.assign(t, { kind: 'grass', key: GRASS });
-      } else if (t.biome === 'beach' && y < riverTop - 2 && Math.floor(x / 5) % 5 === 0) {
-        // Faixa seca para dentro da restinga: a areia molhada da margem fica perto do rio.
+      } else if (t.biome === 'beach') {
         t.key = DUST;
-      } else if (t.biome === 'desert' && (Math.floor(x / 9) + Math.floor(y / 6)) % 3 === 0) {
+      } else if (t.biome === 'desert') {
         t.key = DUNE;
       }
     }
@@ -617,20 +731,33 @@ export function generateCity(seed = 20260909): CityMapData {
   reservePath({ x0: W - 5, x1: W - 3, y0: southQuay + 2, y1: H - 3 }, true);
   reservePath({ x0: beachWest, x1: W - 3, y0: riverTop - 2, y1: riverTop }, true);
 
-  // ---- Relevo ------------------------------------------------------------
-  // Cidade em platô e reserva com montanha: é o contraste que vende a
-  // profundidade. Deixar o ruído subir também debaixo do asfalto daria um degrau
-  // no meio de cada quarteirão, e a cidade acordaria um tabuleiro quebrado.
-  const relief = reliefNoise(seed ^ 0x7a656c69);
-  // Altitude de cada bioma, em níveis. Só mata e pinhal têm montanha de verdade:
-  // o resto são morros e dunas, para a reserva continuar lendo o que ela é.
-  const RESERVE_RELIEF: Partial<Record<Biome, number>> = {
-    forest: 8, pinewood: 11, desert: 5, savanna: 4, countryside: 5, beach: 2,
+  // ---- Relevo: serra do lado de fora da cidade ----------------------------
+  // Cidade é planície: asfalto, passeio, lote, prédio e porta de interior pisam todos
+  // no nível zero. Relevo é o que existe do lado de fora do perímetro urbano, e é um
+  // campo contínuo de altura em tiles (com casa decimal), não degrau empilhado: a
+  // encosta se lê pela sombra que o GroundLayer pinta por cima do losango, como em
+  // mapa topográfico. Para a montanha nunca acordar um paredão encostado na rua, cada
+  // tile tem um teto de declive sobre o vizinho mais baixo — apertado perto do asfalto
+  // e da água, largo só no coração da reserva.
+  // `relief` e o teto de cada reserva vêm declarados lá em cima, onde o mesmo campo
+  // decidiu as manchas de albedo: cor do chão e altura do chão são a mesma montanha.
+  const MAX_ELEV = GAME_CONFIG.TERRAIN_MAX_ELEVATION;
+  const MAX_SLOPE = GAME_CONFIG.TERRAIN_MAX_SLOPE_TILES;
+  /** Crista provável por bioma, em tiles. Mata e pinhal são serra; o resto é morro. */
+  const RESERVE_PEAK: Partial<Record<Biome, number>> = {
+    pinewood: MAX_ELEV, forest: 2.6, desert: 1.9, countryside: 1.5, savanna: 1.1, beach: 0.5,
   };
-  const levels = new Uint8Array(W * H);
-  // Distância de Manhattan (2 varreduras, exata e barata) até a reserva mais
-  // próxima: é a rampa que desce do platô urbano para o mato, em vez de um corte
-  // seco na avenida que faz o subúrbio terminar num penhasco.
+  const naturalTile = (i: number) => isNatural(tiles[i].biome);
+  /** Chão que se pisa e leito: a cota deles é o zero do mundo, sempre. */
+  const flatTile = (i: number) => !naturalTile(i) || tiles[i].kind === 'water';
+  const DIRS4: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const DIAS4: [number, number][] = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+  const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  const suave = (v: number) => v * v * (3 - 2 * v);
+  /**
+   * Distância de Manhattan (duas varreduras, exata e barata) até a semente: é a
+   * medida da rampa, porque montanha que começa no tile vizinho ao asfalto é muro.
+   */
   const manhattan = (isSource: (i: number) => boolean) => {
     const far = W + H;
     const d = new Uint16Array(W * H).fill(far);
@@ -651,100 +778,116 @@ export function generateCity(seed = 20260909): CityMapData {
     }
     return d;
   };
-  const toReserve = manhattan((i) => isNatural(tiles[i].biome));
-  const toRiver = manhattan((i) => tiles[i].kind === 'water');
-  // Quão fundo este tile está dentro do mato: distância à cidade ou à borda do mapa.
-  // Uma faixa de reserva de um tile não pode mirar a crista de uma cordilheira —
-  // montanha precisa de chão para subir, senão vira muro no fim do mundo.
-  const toOutside = manhattan((i) => !isNatural(tiles[i].biome));
-  // Quão fundo este tile está dentro do mato: distância à cidade ou à borda do mapa.
-  // Uma faixa de reserva de um tile não pode mirar a crista de uma cordilheira —
-  // montanha precisa de chão para subir, senão vira muro no fim do mundo.
-  const massifAt = (i: number) => {
+  const toCity = manhattan((i) => !naturalTile(i));
+  const toWater = manhattan((i) => tiles[i].kind === 'water');
+  /** Distância à borda do mapa: o maciço tem de morrer antes do fim do mundo. */
+  const edgeAt = (i: number) => {
     const x = i % W;
     const y = (i - x) / W;
-    return Math.min(toOutside[i], Math.min(x, y, W - 1 - x, H - 1 - y) + 1);
+    return Math.min(x, y, W - 1 - x, H - 1 - y) + 1;
   };
+  const heights = new Float32Array(W * H);
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const i = y * W + x;
       const t = tiles[i];
-      if (t.kind === 'water') continue; // O leito é o fundo do vale: o nível 0 dele.
-      // Espessura do maciço em níveis: um tile de mato colado na cidade ou na borda
-      // do mapa tem direito a um morro, não a uma cordilheira.
-      const espessura = Math.max(2, Math.round(massifAt(i) * 1.6));
-      const base = Math.min(RESERVE_RELIEF[t.biome] ?? 0, espessura);
-      // longe: 0 encostado na reserva, 1 dentro da cidade.
-      const longe = Math.min(1, toReserve[i] / 10);
-      // No pé do morro o chão abre até a beira da água: sem isso a praia ficava
-      // com um degrau de um tile correndo paralela ao rio.
-      const vale = Math.min(1, Math.max(0, (toRiver[i] - 2) / 7));
-      const amp = Math.max(base, 2) * (1 - longe) * vale;
-      // Crista, não bolota: o dobro do valor, saturado, é o que faz o pinhal ter
-      // pico e encosta em vez de uma colina redonda de papel.
+      if (flatTile(i)) continue;
+      // Espessura do maciço: mato colado na cidade ou na borda do mapa tem direito a um
+      // morro, não a uma cordilheira. As duas janelas são a mesma pergunta (quanto mato
+      // tem atrás), então é o mínimo delas, não o produto — multiplicar envelope derruba
+      // a crista para 60% do teto e serra de 256px vira colina de 150.
+      const corpo = Math.min(
+        clamp01(edgeAt(i) / 6),
+        // Rampa de aproximação: zero no passeio, amplitude cheia ~7 tiles dentro do
+        // mato. Curta de propósito, e o que ela aperta é o declive: a encosta íngreme é
+        // o que faz a montanha se ler como montanha.
+        suave(clamp01((toCity[i] - 2) / 5)),
+      );
+      // No pé do morro o chão abre até a beira da água, mas abre em rampa e nunca a zero:
+      // a 2 tiles da margem ainda sobra morro, e é o que impede o rio de correr dentro de
+      // um degrau.
+      const vale = 0.4 + 0.6 * suave(clamp01((toWater[i] - 2) / 6));
       const n = t.biome === 'pinewood' || t.biome === 'forest'
-        ? Math.min(1, Math.max(0, relief(x, y) * 1.7 - 0.35))
-        : Math.min(1, Math.max(0, relief(x, y) * 1.35 - 0.18));
-      // Platô, não ladeira: no coração da reserva, quem passa da meia-altura é
-      // achatado num patamar do bioma. É a borda desse patamar que vira parede — o
-      // talude que barra o passo e a face que o render pinta. Dois patamares (cume e
-      // mesa intermediária) para a serra ter degrau interno, não uma mesa única. Perto
-      // da cidade e no pé do morro o degrau continua sendo rampa, porque ali o chão
-      // tem que se subir.
-      const cume = n > 0.55 ? base : n > 0.25 ? base - 4 : 0;
-      const topo = base >= 5 && massifAt(i) >= 9 && cume > 0 ? cume : amp * n;
-      levels[i] = Math.round(Math.min(GAME_CONFIG.TERRAIN_MAX_LEVEL, topo));
+        ? clamp01(relief(x, y) * 2.1 - 0.55)
+        : clamp01(relief(x, y) * 1.35 - 0.18);
+      // Crista comprida e vale largo: a curva em S achata os dois extremos e concentra a
+      // descida no meio da encosta — é o perfil de serra de mapa, topo plano, flanco
+      // contínuo, pé aberto. A raiz quadrada fazia o contrário: levantava o vale até
+      // quase o topo e sobrava uma parede estreita entre um buraco e outro, que é favo,
+      // não montanha.
+      const crista = suave(n);
+      heights[i] = Math.min(RESERVE_PEAK[t.biome] ?? 0, MAX_ELEV) * corpo * vale * crista;
     }
   }
-  // ---- O que se pisa vira rampa ------------------------------------------
-  // Toda via, calçada, trilha, lote e quintal do lado de fora da reserva é chão
-  // contínuo: o morro existe, mas a cidade nunca acorda com um muro invisível no
-  // meio do passeio. Dentro da mata é onde o talude fica bruto de propósito, e é
-  // isso que faz montanha barrear em vez de escorregar.
-  const ramp = new Uint8Array(W * H);
-  const markRamp = (x0: number, x1: number, y0: number, y1: number) => {
-    for (let y = Math.max(0, Math.floor(y0)); y <= Math.min(H - 1, Math.ceil(y1)); y++) {
-      for (let x = Math.max(0, Math.floor(x0)); x <= Math.min(W - 1, Math.ceil(x1)); x++) {
-        const i = y * W + x;
-        if (tiles[i].kind !== 'water') ramp[i] = 1;
+  /**
+   * Média binomial 3x3. O FBM já é contínuo, mas o encontro das três oitavas deixa
+   * dente de um tile, e dente de um tile é o que ainda se leria como bloco. Cidade e
+   * água entram na média como zero, então o maciço sempre amolece ao encostar no
+   * asfalto — a planície urbana é causa do relevo, não consequência dele.
+   */
+  const borrar = (passos: number) => {
+    const tmp = new Float32Array(W * H);
+    for (let p = 0; p < passos; p++) {
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x;
+          if (pin[i]) continue;
+          let soma = heights[i] * 4;
+          let peso = 4;
+          for (const [dx, dy] of DIRS4) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+            soma += heights[ny * W + nx] * 2;
+            peso += 2;
+          }
+          for (const [dx, dy] of DIAS4) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+            soma += heights[ny * W + nx];
+            peso += 1;
+          }
+          tmp[i] = soma / peso;
+        }
       }
+      heights.set(tmp);
     }
   };
-  const besideRoad = (x: number, y: number) => {
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (road(x + dx, y + dy)) return true;
-    return false;
-  };
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const i = y * W + x;
-      if (tiles[i].kind === 'water') continue;
-      if (!isNatural(tiles[i].biome) || tiles[i].kind === 'road' || walkway[i] || besideRoad(x, y)) {
-        ramp[i] = 1;
+  /**
+   * Teto de declive por tile: quanto ele pode subir em relação ao vizinho mais baixo.
+   * Encosta de montar perto da cidade, da água e do que o pé e a roda pisam (rua,
+   * trilha, clareira de prédio); no fundo da reserva o teto é o que a projeção ainda
+   * desenha como encosta (TERRAIN_MAX_SLOPE_TILES) — passar disso não faz montanha mais
+   * alta, faz losango invertido, que é a cara de pilha de bloco. A regra só rebaixa,
+   * então a crista fica onde está e o que sai é o paredão solto.
+   */
+  const macio = new Uint8Array(W * H); // via, trilha e clareira: o chão que se pisa
+  const pin = new Uint8Array(W * H);   // cota travada: cidade, água e base de prédio
+  for (let i = 0; i < W * H; i++) {
+    if (tiles[i].kind === 'road' || walkway[i]) macio[i] = 1;
+    if (flatTile(i)) pin[i] = 1;
+  }
+  const budget = new Float32Array(W * H);
+  const montarTeto = () => {
+    const toMacio = manhattan((i) => macio[i] === 1 || pin[i] === 1);
+    for (let i = 0; i < W * H; i++) {
+      if (pin[i]) {
+        budget[i] = 0;
+        continue;
       }
+      const perto = Math.min(toCity[i], toWater[i]);
+      const solta = perto <= 2 ? 0.07 : perto <= 6 ? 0.16 : perto <= 10 ? 0.24 : MAX_SLOPE;
+      // Perto da via o teto é o que a roda ainda sobe (TERRAIN_STEP_UP_VEHICLE), não o que
+      // o olho aceita: a faixa de 0,14 antiga era tão mansa que a reserva inteira, costurada
+      // de trilhas, ficava sem encosta nenhuma. Estrada inclinada é pedido do §1.
+      const d = toMacio[i];
+      const via = d <= 1 ? 0.2 : d <= 2 ? 0.26 : MAX_SLOPE;
+      budget[i] = Math.min(solta, via);
     }
-  }
-  // A malha de corredores que as linhas seguintes ainda vão abrir: marcar agora é
-  // o que impede a trilha do meio da quadra de nascer atravessando um terraço.
-  for (const b of blocks) {
-    const cx = (b.x0 + b.x1) / 2;
-    const cy = (b.y0 + b.y1) / 2;
-    markRamp(cx - 1.5, cx + 1.5, b.y0 - 1, b.y1);
-    if (isNatural(b.biome)) markRamp(b.x0 - 1, b.x1, cy - 1.5, cy + 1.5);
-  }
-  // Terraços nivelados: o `owner` de um lote inteiro é um tile só, então a casa não
-  // pisa meio morro/meio vale e a porta abre para a calçada no mesmo degrau. Sem
-  // dono o tile é a sua própria célula — é o que permite relaxar a cidade toda.
-  const owner = new Int32Array(W * H);
-  for (let i = 0; i < W * H; i++) owner[i] = i;
-
-  // Suavização em onda: nenhum chão contíguo fica a mais de um degrau do vizinho.
-  const DIRS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-  const stepLimit = GAME_CONFIG.TERRAIN_STEP_UP_FOOT;
-  const smoothWalkable = () => {
-    // Varredura dupla: no sentido do laço o degrau escorre a ladeira abaixo de uma só
-    // vez; no sentido contrário ele andava um tile por passada e uma avenida comprida
-    // nunca fechava — era assim que nascia um talude no meio do asfalto.
-    for (let pass = 0; pass < 24; pass++) {
+  };
+  const aparar = () => {
+    for (let round = 0; round < 16; round++) {
       let moved = false;
       for (let sweep = 0; sweep < 2; sweep++) {
         for (let yy = 0; yy < H; yy++) {
@@ -752,28 +895,20 @@ export function generateCity(seed = 20260909): CityMapData {
             const y = sweep ? H - 1 - yy : yy;
             const x = sweep ? W - 1 - xx : xx;
             const i = y * W + x;
-            if (!ramp[i]) continue;
+            const teto = budget[i];
+            if (teto <= 0) continue;
+            let baixo = heights[i];
             for (const [dx, dy] of DIRS4) {
               const nx = x + dx;
               const ny = y + dy;
               if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-              const j = ny * W + nx;
-              if (!ramp[j]) continue;
-              const a = owner[i];
-              const b = owner[j];
-              if (a === b) continue;
-              const gap = levels[a] - levels[b];
-              // O degrau a mais sempre recai sobre o lado ALTO, subindo o baixo até
-              // ele: ao contrário, um único passeio no nível 0 derrubava o morro inteiro
-              // para baixo de si (`nivelBaixo - 1`) e a cidade acordava um tábua corrida
-              // com ilhas de mata boiando no nível zero.
-              if (gap > stepLimit) {
-                levels[a] = Math.min(GAME_CONFIG.TERRAIN_MAX_LEVEL, levels[b] + stepLimit);
-                moved = true;
-              } else if (gap < -stepLimit) {
-                levels[b] = Math.min(GAME_CONFIG.TERRAIN_MAX_LEVEL, levels[a] + stepLimit);
-                moved = true;
-              }
+              const v = heights[ny * W + nx];
+              if (v < baixo) baixo = v;
+            }
+            const alvo = baixo + teto;
+            if (alvo < heights[i] - 1e-6) {
+              heights[i] = alvo;
+              moved = true;
             }
           }
         }
@@ -781,7 +916,137 @@ export function generateCity(seed = 20260909): CityMapData {
       if (!moved) break;
     }
   };
-  smoothWalkable();
+  /**
+   * O asfalto é nivelado ATRAVÉS da própria largura.
+   *
+   * Uma rua que sobe a serra no sentido do tráfego é estrada de montanha: é pedido do §1
+   * e é o que faz o relevo entrar no mapa sem brigar com ele. Uma rua que sobe de uma
+   * faixa para a outra não é nada — é rua torta. O carro troca de faixa e encara um
+   * ressalto, o NPC na calçada vê o passeio em rampa, e o jogador lê exatamente
+   * "o relevo está atrapalhando o mapa". Medido antes desta regra: dos ressaltos que o
+   * relevo punha no asfalto da reserva, metade corria através das faixas (p90 0,20).
+   *
+   * Então cada corte perpendicular ao eixo da via vira uma tira de nível: a tira inteira
+   * desce ao nível do seu tile mais baixo. O declive ao longo do eixo fica inteiro, e a
+   * estrada continua subindo o morro — só sobe deitada sobre a própria largura, como
+   * qualquer estrada de verdade.
+   */
+  const nivelarFaixa = () => {
+    const eixoDaVia = (i: number): 'x' | 'y' | null => {
+      const lane = tiles[i].lane;
+      // Na projeção iso, andar em +x desce para a direita na tela: SE/NW é tráfego em x,
+      // SW/NE é tráfego em y. A tira de nível é o corte do outro lado.
+      if (!lane) return null;
+      return lane === 'SE' || lane === 'NW' ? 'x' : 'y';
+    };
+    const asfalto = (x: number, y: number) =>
+      x >= 0 && y >= 0 && x < W && y < H && tiles[y * W + x].kind === 'road';
+    /**
+     * Em cruzamento e na ponta da rua o tile não tem `lane`. O eixo vem então da própria
+     * topologia do asfalto: por onde ele continua é o sentido do tráfego, e o outro lado é
+     * a largura da pista. Empate é nó — não se corta um nó, e errar aqui é pior que deixar
+     * o tile de fora: foi exatamente um tile de eixo chutado que deixou 1,36 tiles de muro
+     * no meio da via na primeira versão desta regra.
+     */
+    const eixoEm = (x: number, y: number): 'x' | 'y' | null => {
+      const proprio = eixoDaVia(y * W + x);
+      if (proprio) return proprio;
+      const emX = (asfalto(x - 1, y) ? 1 : 0) + (asfalto(x + 1, y) ? 1 : 0);
+      const emY = (asfalto(x, y - 1) ? 1 : 0) + (asfalto(x, y + 1) ? 1 : 0);
+      if (emX === emY) return null;
+      return emX > emY ? 'x' : 'y';
+    };
+    // Faixa = a seção transversal completa. A varredura não para em tile já visitado:
+    // parar ali cria buraco na tira, e buraco na tira é trecho de rua sem dono.
+    const dono = new Int32Array(W * H).fill(-1);
+    const bandas: number[][] = [];
+    const registradas = new Set<number>();
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (!asfalto(x, y)) continue;
+        const i = y * W + x;
+        if (dono[i] >= 0) continue;
+        const eixo = eixoEm(x, y);
+        // Nó sem eixo: faixa de um tile só. Continua sob teto de declive, só não nivela.
+        const faixa = [i];
+        if (eixo) {
+          const [dx, dy] = eixo === 'x' ? [0, 1] : [1, 0];
+          for (const sentido of [-1, 1]) {
+            let nx = x + dx * sentido;
+            let ny = y + dy * sentido;
+            while (asfalto(nx, ny) && eixoEm(nx, ny) === eixo) {
+              faixa.push(ny * W + nx);
+              nx += dx * sentido;
+              ny += dy * sentido;
+            }
+          }
+          const chave = Math.min(...faixa);
+          if (registradas.has(chave)) continue;
+          registradas.add(chave);
+        }
+        const id = bandas.push(faixa) - 1;
+        for (const j of faixa) dono[j] = id;
+      }
+    }
+    // Teto de declive ao longo da pista. É o mesmo 0,2 que o teto geral já dava à via:
+    // margem sobre os 0,34 da roda, e suficiente para a estrada subir a serra de verdade.
+    const TETO_FAIXA = 0.2;
+    for (let rodada = 0; rodada < 400; rodada++) {
+      let mexeu = false;
+      // (1) Nivelar: a faixa inteira desce ao seu próprio mínimo. Nunca sobe — subir uma
+      // tira é o que empurrou o degrau entre faixas a 0,40 quando se tentou pela média.
+      for (const faixa of bandas) {
+        let m = Infinity;
+        for (const i of faixa) if (heights[i] < m) m = heights[i];
+        for (const i of faixa) {
+          if (heights[i] > m + 1e-6) { heights[i] = m; mexeu = true; }
+        }
+      }
+      // (2) Aparar: a faixa é um nó na rede do `aparar` — se um tile da tira encara chão
+      // mais baixo, a tira inteira des junto, e o nivelar de cima continua valendo.
+      for (let f = 0; f < bandas.length; f++) {
+        const faixa = bandas[f];
+        const nivel = heights[faixa[0]];
+        let piso = Infinity;
+        for (const i of faixa) {
+          const x = i % W;
+          const y = (i - x) / W;
+          for (const [dx, dy] of DIRS4) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+            const j = ny * W + nx;
+            if (dono[j] === f) continue;
+            if (heights[j] < piso) piso = heights[j];
+          }
+        }
+        if (piso === Infinity) continue;
+        const alvo = piso + TETO_FAIXA;
+        if (nivel > alvo + 1e-6) {
+          for (const i of faixa) heights[i] = alvo;
+          mexeu = true;
+        }
+      }
+      if (!mexeu) break;
+    }
+    // Travado: o que vem depois (borrar, aparar) ajusta o mato ao asfalto, nunca o
+    // contrário. Sem isto a próxima passada de sombra desfaz a tira no primeiro flanco.
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        if (tiles[i].kind !== 'road') continue;
+        pin[i] = 1;
+        macio[i] = 1;
+        budget[i] = 0;
+      }
+    }
+  };
+  montarTeto();
+  // Uma passada só. Cada `borrar` é um 3x3 binomial (σ ≈ 0,7 tile), e a serra que cabe no
+  // quadro da câmera tem crista e vale a cada ~5 tiles: cinco passadas somadas apagavam
+  // justamente essa escala e sobrava um piso ondulado, com meio tile de salto por ladeira.
+  borrar(1);
+  aparar();
 
   // Deterministic civic reservations guarantee services in their mapped districts.
   for (const [name, biome, targetX, targetY] of [
@@ -810,7 +1075,7 @@ export function generateCity(seed = 20260909): CityMapData {
     return true;
   };
   const propCounts: Record<PropBudget, number> = { urban: 0, fences: 0, forestTrees: 0, forestDetails: 0,
-    countryside: 0, beach: 0, pinewood: 0, savanna: 0, desert: 0 };
+    countryside: 0, beach: 0, pinewood: 0, savanna: 0, desert: 0, serra: 0 };
   const addProp = (key: string, x: number, y: number, budget: PropBudget = 'urban') => {
     const r = { x0: x - 0.3, y0: y - 0.3, x1: x + 0.3, y1: y + 0.3 };
     if (props.length >= MAX_PROPS || propCounts[budget] >= PROP_BUDGET[budget] || !clearRect(r)) return;
@@ -1011,18 +1276,29 @@ export function generateCity(seed = 20260909): CityMapData {
     // vende o vazio, não um matagal. Mesmo assim a região é grande demais para uma
     // amostragem grossa — a cota não fecharia. Praia e campo são faixas estreitas
     // sob o grid de ruas, então precisam de amostragem mais fina que a mata.
-    const spacing = biome === 'forest' || biome === 'pinewood' ? 2.5 : biome === 'savanna' ? 3.5
+    //
+    // Mata e pinhal descem a 1,6 tile: a copa dos sprites grandes mede 1,2 tile de
+    // largura, então é nesse passo que a floresta fecha e passa a ser lida como mancha
+    // contínua — com sombra própria, que é o que o morro nu não tinha.
+    const spacing = biome === 'forest' || biome === 'pinewood' ? 1.6 : biome === 'savanna' ? 3.5
       : biome === 'desert' ? 4.5 : 4;
-    const keys = {
-      forest: ['prop_tree_common_large', 'prop_tree_common_medium', 'prop_tree_pine_medium', 'prop_tree_pine_small'],
+    // Lista base de cada bioma. A mata não tem uma: ali a espécie é da cota do sitio, e
+    // quem decide é `lista` logo abaixo.
+    const keys: Partial<Record<Biome, string[]>> = {
       countryside: ['prop_flowers_yellow', 'prop_flowers_red', 'prop_weed_medium', 'prop_tree_common_medium', 'prop_flowers_pink'],
       beach: ['prop_rocks_brown_a', 'prop_rocks_gray_b', 'prop_weed_small_dry', 'prop_trunk_b', 'prop_weed_medium_dry'],
       pinewood: ['prop_tree_pine_tall', 'prop_tree_pine_tall', 'prop_tree_pine_medium', 'prop_tree_pine_small'],
       savanna: ['prop_weed_small_dry', 'prop_weed_small_dry', 'prop_rocks_brown_a', 'prop_tree_common_medium', 'prop_trunk_b'],
       desert: ['prop_rocks_gray_a', 'prop_weed_medium_dry', 'prop_rocks_brown_b', 'prop_weed_large_b_dry',
         'prop_trunk_c', 'prop_tire_buried_a', 'prop_rocks_gray_c'],
-    }[biome];
+    };
     const sites: Point[] = [];
+    // §8: na mata, a espécie é da cota do sitio, não do bioma inteiro. A lista fixa dava
+    // a mesma metade de conifera no vale e na crista, e aí a altitude não se lia em nada
+    // — o pinho fica no alto, a frondosa no pé, e o meio-talude divide os dois.
+    const lista = (p: Point): string[] => biome === 'forest'
+      ? especieDoNivel('forest', heights[Math.floor(p.y) * W + Math.floor(p.x)])!
+      : keys[biome]!;
     for (let y = 1.5; y < H - 1; y += spacing) {
       for (let x = 1.5; x < W - 1; x += spacing) {
         if (at(Math.floor(x), Math.floor(y))?.biome !== biome) continue;
@@ -1038,14 +1314,15 @@ export function generateCity(seed = 20260909): CityMapData {
         for (const p of orderedSites) {
           if (p.x <= block.x0 || p.x >= block.x1 || p.y <= block.y0 || p.y >= block.y1) continue;
           const before = propCounts[budget];
-          addProp(keys[Math.floor(sceneryRng() * keys.length)], p.x, p.y, budget);
+          const ks = lista(p);
+          addProp(ks[Math.floor(sceneryRng() * ks.length)], p.x, p.y, budget);
           if (propCounts[budget] > before && ++planted === 5) break;
         }
       }
     }
     for (const p of orderedSites) {
       const details = biome === 'forest' && propCounts.forestTrees >= PROP_BUDGET.forestTrees;
-      const choices = details ? ['prop_trunk_a', 'prop_rocks_gray_b', 'prop_weed_medium'] : keys;
+      const choices = details ? ['prop_trunk_a', 'prop_rocks_gray_b', 'prop_weed_medium'] : lista(p);
       const budget = biome === 'forest' ? (details ? 'forestDetails' : 'forestTrees') : biome;
       if (propCounts[budget] >= PROP_BUDGET[budget]) break;
       addProp(choices[Math.floor(sceneryRng() * choices.length)], p.x, p.y, budget);
@@ -1081,141 +1358,251 @@ export function generateCity(seed = 20260909): CityMapData {
   const playerSpawn = central[0];
   const npcSpawns = shuffle(candidates.filter((p) => Math.hypot(p.x - playerSpawn.x, p.y - playerSpawn.y) > 1), rng).slice(0, MAX_SPAWNS);
 
-  // ---- Relevo: nivelar os lotes e erguer as mesas -------------------------
-  // Os prédios só existem a partir daqui, então é aqui que cada lote vira terraço
-  // e que a suavização é refeita com eles no chão. Uma casa a meio morro não é
-  // "topografia": é um sprite enterrado até a metade.
-  // `lotCells` lembra as células de cada rep, porque base de prédio que se encosta
-  // une os lotes: dois vizinhos no mesmo terraço, senão a emenda entre eles vira um
-  // degrau de um tile atravessando a própria base.
-  const lotCells = new Map<number, number[]>();
+  // ---- Relevo: plataforma de obra, não mesa cortada no morro ----------------
+  // A porta fica na fachada, um palmo FORA da parede (fileira sul ou coluna leste).
+  // Travando só o pé-direito, a casa do campo ficava com o degrau exatamente onde quem
+  // sai pisa: entrava-se e não se saía mais, porque acima de TERRAIN_STEP_UP_TILES é
+  // parede. Então o lote inteiro, com duas fileiras de apronto, é travado num só nível.
+  // Mas travar ao zero do mundo era outra mentira cartográfica: um platô riscado no
+  // meio da encosta, com borda em zigue-zague, é justamente o degrau de bloco que se
+  // quer evitar. A plataforma agora fica no nível médio do próprio chão que ela ocupa
+  // — como se move terra para a obra — e o morro em volta é borrado e reaparado depois,
+  // então o que se vê é a encosta abraçando a casa em rampa, não um corte seco.
+  const plataformas: { cells: number[]; nivel: number; cx: number; cy: number }[] = [];
   for (const b of buildings) {
     const cells: number[] = [];
-    const reps = new Set<number>();
-    eachCell({ x0: b.x - b.footprintW, y0: b.y - b.footprintW, x1: b.x, y1: b.y }, (x, y) => {
+    eachCell({ x0: b.x - b.footprintW - 2, y0: b.y - b.footprintW - 2, x1: b.x + 2, y1: b.y + 2 }, (x, y) => {
+      if (x < 0 || y < 0 || x >= W || y >= H) return;
       const i = y * W + x;
-      if (tiles[i].kind === 'water') return;
+      if (flatTile(i)) return;
       cells.push(i);
-      reps.add(owner[i]);
     });
-    if (!cells.length) continue;
-    // Nível do lote é a mediana do chão dele, não o teto: um único tile de ruído no
-    // canto da base erguia a casa inteira num platô solto no meio do mato, e a casa
-    // ficava numa mesa de três degraus que ninguém sobra.
-    const chao = cells.map((i) => levels[owner[i]]).sort((a, b) => a - b);
-    let top = chao[Math.floor((chao.length - 1) / 2)];
-    let rep = -1;
-    for (const r of reps) {
-      // Terraço que já existe manda: dois prédios encostados têm de dividir o mesmo
-      // degrau, senão a emenda entre as duas bases vira parede dentro da sala.
-      if (lotCells.has(r)) top = Math.max(top, levels[r]);
-      if (rep < 0 || r < rep) rep = r;
-    }
-    for (const r of reps) {
-      if (r === rep) continue;
-      for (const i of lotCells.get(r) ?? []) owner[i] = rep;
-      lotCells.delete(r);
-    }
-    levels[rep] = top;
-    for (const i of cells) {
-      owner[i] = rep;
-      ramp[i] = 1;
-    }
-    lotCells.set(rep, Array.from(new Set([...(lotCells.get(rep) ?? []), ...cells])));
+    if (cells.length < 3) continue;
+    let soma = 0;
+    for (const i of cells) soma += heights[i];
+    plataformas.push({
+      cells,
+      nivel: soma / cells.length,
+      cx: b.x - b.footprintW * 0.5,
+      cy: b.y - b.footprintW * 0.5,
+    });
   }
-  smoothWalkable();
-
-  // Uma costura, não três: cada tile do mato adota o topo dos vizinhos do mesmo
-  // bioma, o que fecha o dente de um tile que o ruído puro deixaria. Passada única
-  // de propósito — repeti-la dilata o maciço sem fim e ajeita o talude junto, e o
-  // talude é justamente a parede que barra o passo e que o render pinta como face.
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const i = y * W + x;
-      if (ramp[i] || !isNatural(tiles[i].biome)) continue;
-      let top = levels[i];
-      for (const [dx, dy] of DIRS4) {
-        const nx = x + dx;
-        const ny = y + dy;
-        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-        const j = ny * W + nx;
-        if (ramp[j] || !isNatural(tiles[j].biome)) continue;
-        top = Math.max(top, levels[j]);
+  // Vizinhança de nível: duas plataformas coladas no mesmo morro não podem virar mesa e
+  // buraco separados por parede. Cada uma cede um pouco à outra até o conjunto concordar.
+  for (let it = 0; it < 8; it++) {
+    const alvo = plataformas.map((p) => {
+      let soma = p.nivel * 2;
+      let peso = 2;
+      for (const q of plataformas) {
+        if (q === p) continue;
+        const d = Math.hypot(q.cx - p.cx, q.cy - p.cy);
+        if (d >= 12) continue;
+        const w = 1 - d / 12;
+        soma += q.nivel * w;
+        peso += w;
       }
-      if (top > levels[i]) levels[i] = Math.min(GAME_CONFIG.TERRAIN_MAX_LEVEL, top);
+      return soma / peso;
+    });
+    for (let k = 0; k < plataformas.length; k++) plataformas[k].nivel = alvo[k];
+  }
+  for (const p of plataformas) {
+    for (const i of p.cells) {
+      heights[i] = p.nivel;
+      pin[i] = 1;
+      macio[i] = 1;
+      budget[i] = 0;
     }
   }
+  borrar(1);
+  montarTeto();
+  aparar();
 
-  // Maciço precisa de tamanho mínimo: a mesa fecha para cima e sozinha deixa de pé um
-  // pico de um tile no meio do mato. O tile que se destaca acima do vizinho mais alto
-  // desce até um degrau dele — a crista passa a correr em platô, e a face pintada lê
-  // parede de montanha em vez de estouro. Fica de fora só o talude de verdade, onde o
-  // próprio vizinho mais alto já é o platô: esse é o paredão que barra o passo.
-  for (let k = 0; k < 4; k++) {
-    let moved = false;
+  // Poeira: média e aparar deixam resto de 1e-8 onde o chão é planície. Um tile assim
+  // desloca o losango uma fração de pixel e faz o depth sort comparar float; zerar o
+  // que não chega a um pixel de altura devolve à planície o valor exato zero.
+  for (let i = 0; i < W * H; i++) if (heights[i] < 0.015) heights[i] = 0;
+
+  // Por último, e depois de qualquer poeira: o asfalto é travado em tiras de nível. É a
+  // regra mais rígida do relevo e por um bom motivo — abaixo dela não existe caso em que
+  // o morro tenha direito de mandar na rua.
+  nivelarFaixa();
+  // A faixa só desce, então sobra ao mato o trabalho de se ajustar à rua pronta. O asfalto
+  // já está travado (budget 0), portanto esta passada final nivela o entorno sem jamais
+  // desfazer o corte de nível — e é ela que impede o morro de encostar na guia como muro.
+  montarTeto();
+  aparar();
+
+  // ---- Serra arborizada ----------------------------------------------------
+  // O morro era o lugar mais visível do mapa e o mais nu: mata e pinhal param dentro do
+  // próprio bioma, e a crista alta — justamente onde a sombra de telão mora — não recebia
+  // árvore nenhuma. Esta passada vem DEPOIS do relevo fechado porque a régua é a altura
+  // final: planta na encosta e no topo de qualquer reserva seca.
+  const serraRng = mulberry32(seed ^ 0x73657272);
+  const taludes: { x: number; y: number; biome: Biome; nivel: number }[] = [];
+  for (let y = 2; y < H - 2; y++) {
+    for (let x = 2; x < W - 2; x++) {
+      const i = y * W + x;
+      if (flatTile(i)) continue;
+      const h = heights[i];
+      const declive = Math.max(Math.abs(h - heights[i + 1]), Math.abs(h - heights[i - 1]),
+        Math.abs(h - heights[i + W]), Math.abs(h - heights[i - W]));
+      // Lombada de quintal não é serra: só entra o que tem caimento declarado ou topo.
+      if (h < 1.2 && declive < 0.07) continue;
+      taludes.push({ x, y, biome: tiles[i].biome, nivel: h });
+    }
+  }
+  for (const p of shuffle(taludes, serraRng)) {
+    if (propCounts.serra >= PROP_BUDGET.serra) break;
+    const especies = especieDoNivel(p.biome, p.nivel);
+    if (!especies) continue;
+    if (serraRng() > (SERRA_ABERTURA[p.biome] ?? 1)) continue;
+    addProp(especies[Math.floor(serraRng() * especies.length)],
+      p.x + 0.5 + (serraRng() - 0.5) * 0.7, p.y + 0.5 + (serraRng() - 0.5) * 0.7, 'serra');
+  }
+
+  // ---- Sombra de copa ------------------------------------------------------
+  // É isto que separa "morro" de "mata" na tela. A tinta de forma do GroundLayer diz em
+  // que direção a encosta olha; o escuro de verdade tem de vir de alguma coisa que está
+  // em cima do chão, e a única coisa assim no relevo é a árvore. Cada copa carimba um
+  // borro deslocado para baixo na tela — em iso, descer na tela é andar para (+x,+y), e
+  // é para lá que a luz vinda de cima projeta — colado no tronco, porque sombra que
+  // descola do pé vira mancha solta no mapa.
+  //
+  // Fica num campo do próprio tile, igual a `shades` e `relevo`: o render só lê número,
+  // nada de percorrer árvore por árvore por quadro, e é isso que permite lotar a serra
+  // sem custar um draw call a mais.
+  const copa = new Float32Array(W * H);
+  // Pena de queda do borro, em tiles. É o que faz duas copas vizinhas encostarem uma
+  // sombra na outra em vez de deixarem um vão de sol no meio da mata.
+  const COPA_PENA = 0.6;
+  for (const p of props) {
+    if (!p.key.includes('tree')) continue;
+    // Raio da copa em tiles, medido no sprite: 128px de largura é um tile de chão.
+    const raio = PROP_CANOPY[p.key] ?? 0.5;
+    const sx = p.x + 0.42, sy = p.y + 0.42;
+    const alcance = raio + COPA_PENA;
+    for (let y = Math.max(0, Math.floor(sy - alcance)); y <= Math.min(H - 1, Math.floor(sy + alcance)); y++) {
+      for (let x = Math.max(0, Math.floor(sx - alcance)); x <= Math.min(W - 1, Math.floor(sx + alcance)); x++) {
+        const i = y * W + x;
+        // Cidade e água não recebem tinta nenhuma — contrato que já existe no relevo.
+        if (flatTile(i)) continue;
+        const d = Math.hypot(x + 0.5 - sx, y + 0.5 - sy);
+        if (d >= alcance) continue;
+        // Cheio sob a copa, linear até zero no fim da pena.
+        copa[i] += d <= raio ? 1 : 1 - (d - raio) / COPA_PENA;
+      }
+    }
+  }
+  // O carimbo é por tile, e tile a tile a mata viraria tabuleiro. Duas passadas do mesmo
+  // binomial que alisa a cota — é o que transforma mil copas soltas numa mancha só, que
+  // é como a sombra de uma floresta se vê de cima. Tile plano e água ficam de fora da
+  // média: a sombra da encosta não sangra para o asfalto do lado.
+  const borrarCopa = new Float32Array(W * H);
+  for (let passo = 0; passo < 2; passo++) {
+    borrarCopa.set(copa);
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         const i = y * W + x;
-        if (ramp[i] || !isNatural(tiles[i].biome)) continue;
-        let topo = -1;
+        if (flatTile(i)) { copa[i] = 0; continue; }
+        let soma = borrarCopa[i] * 4;
+        let peso = 4;
         for (const [dx, dy] of DIRS4) {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-          const j = ny * W + nx;
-          if (!isNatural(tiles[j].biome)) continue;
-          const vizinho = ramp[j] ? levels[owner[j]] : levels[j];
-          if (vizinho > topo) topo = vizinho;
+          const j = (y + dy) * W + x + dx;
+          if (x + dx < 0 || y + dy < 0 || x + dx >= W || y + dy >= H || flatTile(j)) continue;
+          soma += borrarCopa[j] * 2;
+          peso += 2;
         }
-        if (topo < 0 || levels[i] - topo < 2) continue;
-        levels[i] = topo + 1;
-        moved = true;
+        for (const [dx, dy] of DIAS4) {
+          const j = (y + dy) * W + x + dx;
+          if (x + dx < 0 || y + dy < 0 || x + dx >= W || y + dy >= H || flatTile(j)) continue;
+          soma += borrarCopa[j] * 2;
+          peso += 2;
+        }
+        copa[i] = soma / peso;
       }
     }
-    if (!moved) break;
   }
+  // Ganho calibrado na medida, não no gosto. A curva é exponencial de propósito: dentro
+  // da mata fechada dez copas carimbam o mesmo losango, e o que se quer é que ele encoste
+  // no escuro sem virar uma placa de valor 1 igual à placa ao lado — o moteado é o que
+  // ainda se lê como folha, não como tinta. Uma árvore só no campo, que é o caso claro,
+  // fica no meio do caminho e não no preto.
+  for (let i = 0; i < W * H; i++) copa[i] = 1 - Math.exp(-COPA_GANHO * copa[i]);
 
-
-  // O platô fecha para cima, mas o morro tem de descer até a rua. Aparar só a célula
-  // encostada no asfalto deixaria o quarteirão de mata uma mesa cortada a pique: o
-  // muro ficaria a um tile da calçada e ninguém subiria. Aqui o teto é o degrau da
-  // via mais próxima contado pela distância, então a encosta desce em ladeira até o
-  // passeio — e o que sobra de talude bruto é o coração da reserva, longe do asfalto.
-  const INF = 1 << 20;
-  const cap = new Int32Array(W * H);
-  for (let i = 0; i < W * H; i++) cap[i] = ramp[i] && tiles[i].kind !== 'water' ? levels[owner[i]] : INF;
-  // Transformada de distância de Manhattan sobre a semente: varredura direta e reversa
-  // até nada mudar. Duas já fecham o essencial; o laço para sozinho quando estabiliza.
-  for (let round = 0; round < 4; round++) {
-    let moved = false;
-    for (let sweep = 0; sweep < 2; sweep++) {
-      for (let yy = 0; yy < H; yy++) {
-        for (let xx = 0; xx < W; xx++) {
-          const y = sweep ? H - 1 - yy : yy;
-          const x = sweep ? W - 1 - xx : xx;
-          const i = y * W + x;
-          for (const [dx, dy] of DIRS4) {
-            const nx = x + dx;
-            const ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-            const alvo = cap[ny * W + nx] + stepLimit;
-            if (alvo < cap[i]) { cap[i] = alvo; moved = true; }
-          }
-        }
-      }
+  // ---- Relevo sombreado ---------------------------------------------------
+  // A luz vem de cima da tela, como em qualquer mapa topográfico: o desnível vira
+  // tinta, não geometria. É isto que faz a serra aparecer sem escada de terraço — a
+  // encosta que olha para a câmera escurece, o lombo que olha para o fundo clareia —
+  // e como a cidade é toda plano, ali a sombra simplesmente não existe.
+  const shades = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      if (flatTile(i)) continue;
+      // Declive medido em dois tiles, não um: a diferença vizinha-a-vizinha troca de
+      // sinal a cada dente do ruído, e sombra que pisca entre losango claro e losango
+      // escuro é tabuleiro, não encosta. Em dois tiles o dente se cancela e sobra a
+      // inclinação real do morro.
+      const leste = heights[y * W + Math.min(W - 1, x + 2)];
+      const oeste = heights[y * W + Math.max(0, x - 2)];
+      const sul = heights[Math.min(H - 1, y + 2) * W + x];
+      const norte = heights[Math.max(0, y - 2) * W + x];
+      // Na projeção iso, descer na tela é andar para (+x,+y). Luz vinda de cima, como
+      // em qualquer mapa: o lombo que sobe conforme desce na tela pega a luz e clareia;
+      // a encosta que despenca na sua direção é a sombra. O sinal é isso — e o centro
+      // tem que ser o zero, porque chão de platô não se pinta.
+      // O ganho calibra o quanto de encosta satura a tinta. Com teto de declive de 0,3
+      // tile/tile, um ganho linear forte pinta metade da serra inteira no mesmo preto
+      // saturado — e mancha chapada de losango é exatamente a camada que se quer evitar.
+      // A curva abaixo é suave e nunca encosta no teto: encosta mais forte sempre é mais
+      // escura, só que sem platô de tinta.
+      const g = (((leste - oeste) + (sul - norte)) / 4) * 4.2;
+      shades[i] = g >= 0 ? 1 - Math.exp(-g) : Math.exp(g) - 1;
     }
-    if (!moved) break;
-  }
-  for (let i = 0; i < W * H; i++) {
-    if (ramp[i] || !isNatural(tiles[i].biome)) continue;
-    levels[i] = Math.min(levels[i], cap[i]);
-  }
-  for (let i = 0; i < W * H; i++) levels[i] = levels[owner[i]];
-
-  const heights = new Float32Array(W * H);
-  for (let i = 0; i < W * H; i++) {
-    heights[i] = tiles[i].kind === 'water' ? 0 : levels[i] * GAME_CONFIG.TERRAIN_LEVEL_TILES;
   }
 
-  return { tilesW: W, tilesH: H, tiles, heights, buildings, props, vehicles, npcSpawns, playerSpawn, worldW: W, worldH: H };
+  // ---- Régua do relevo ----------------------------------------------------
+  // Declive de 0,1 tile/tile num morro largo e declive de 0,1 numa lombada de nada não
+  // significam a mesma coisa para o olho: o primeiro é serra, o segundo é chão. Sem uma
+  // régua local, a tinta teria que escolher entre apagar a serra inteira ou pintar a
+  // lombada como penhasco. `relevo` é o maior declive num entorno largo — a escala com
+  // que aquele pedaço do mundo é medido. É filtro máximo separável (uma linha por vez),
+  // então custa 2 varreduras e não 19×19 por tile.
+  const RAIO = 9;
+  const forca = new Float32Array(W * H);
+  const relevo = new Float32Array(W * H);
+  const varrido = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) forca[i] = flatTile(i) ? 0 : Math.abs(shades[i]);
+  for (let y = 0; y < H; y++) {
+    const base = y * W;
+    for (let x = 0; x < W; x++) {
+      let m = 0;
+      for (let k = -RAIO; k <= RAIO; k++) {
+        const nx = x + k;
+        if (nx < 0 || nx >= W) continue;
+        const v = forca[base + nx];
+        if (v > m) m = v;
+      }
+      relevo[base + x] = m;
+    }
+  }
+  // As duas varreduras escrevem em arrays separados: filtro máximo no lugar contaminaria
+  // a linha de baixo com o resultado já ampliado da linha de cima.
+  for (let x = 0; x < W; x++) {
+    for (let y = 0; y < H; y++) {
+      let m = 0;
+      for (let k = -RAIO; k <= RAIO; k++) {
+        const ny = y + k;
+        if (ny < 0 || ny >= H) continue;
+        const v = relevo[ny * W + x];
+        if (v > m) m = v;
+      }
+      varrido[y * W + x] = m;
+    }
+  }
+  // Cidade e água ficam fora da régua: onde o chão é asfalto não há morro a medir, e a
+  // tinta da serra não pode subir na rua nem contornar o quarteirão.
+  for (let i = 0; i < W * H; i++) relevo[i] = flatTile(i) ? 0 : varrido[i];
+
+  return { tilesW: W, tilesH: H, tiles, heights, shades, relevo, copa, buildings, props, vehicles, npcSpawns, playerSpawn, worldW: W, worldH: H };
 }

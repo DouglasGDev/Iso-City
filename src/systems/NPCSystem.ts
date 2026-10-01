@@ -224,11 +224,19 @@ export class NPCSystem {
       this.goIdle(npc);
       return;
     }
-    npc.dir = velocityToDir(dx, dy);
-    const speed = Math.min(GAME_CONFIG.NPC_SWIM_SPEED, dist / dt);
+    // O node de passeio mais próximo pode estar alagado ele mesmo (tsunami, enxurrada), e
+    // aí dist é 0: dividir por ele espalha NaN pela posição do pedestre, e um único NaN
+    // derruba o update de todos os NPCs para sempre. Sem destino, nada na direção que já
+    // tinha e continua nadando até achar terra.
+    const cego = dist < 1e-6;
+    const ang = cego ? (npc.x + npc.y) : Math.atan2(dy, dx);
+    const ux = Math.cos(ang);
+    const uy = Math.sin(ang);
+    npc.dir = velocityToDir(ux, uy);
+    const speed = cego ? GAME_CONFIG.NPC_SWIM_SPEED : Math.min(GAME_CONFIG.NPC_SWIM_SPEED, dist / dt);
     const circle = {
-      x: npc.x + (dx / dist) * speed * dt,
-      y: npc.y + (dy / dist) * speed * dt,
+      x: npc.x + ux * speed * dt,
+      y: npc.y + uy * speed * dt,
       radius: GAME_CONFIG.NPC_RADIUS,
     };
     this.collision.resolveCircle(circle, map.queryNearby(circle.x, circle.y, 1.5));

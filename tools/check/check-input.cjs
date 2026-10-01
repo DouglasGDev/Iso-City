@@ -76,7 +76,7 @@ function fixture() {
   // Chão plano: o stub também responde o contrato de relevo que o movimento consulta.
   const map = { worldW: 1000, worldH: 1000, isWaterWorld: () => false, queryNearby: () => [],
     canClimb: () => true, canDriveOver: () => true, slopeAlong: () => 0,
-    heightAt: () => 0, levelAt: () => 0 };
+    heightAt: () => 0, heightSmoothAt: () => 0 };
   const movement = new MovementSystem({ resolveCircle() {} });
   return { player, map, movement };
 }
@@ -842,7 +842,7 @@ test('cash bundles share cached 3D paths; simulation clock rotates and floats wi
   const { MarkerLayer } = source('render/MarkerLayer.tsx');
   const clock = { value: 0 };
   const game = { fog: { view: () => ({}), intersects: () => true },
-    map: { heightAt: () => 0 },
+    map: { heightAt: () => 0, heightSmoothAt: () => 0 },
     pickups: { items: [{ id: 0, active: true, kind: 'cash', x: 1, y: 1 }] },
     missions: { state: { phase: 'break' } }, destruction: { wrecks: [] } };
   function render(node) {

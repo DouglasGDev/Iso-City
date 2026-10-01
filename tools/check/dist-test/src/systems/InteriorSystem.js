@@ -126,6 +126,13 @@ class InteriorSystem {
     constructor(map) {
         this.entrances = [];
         this.active = null;
+        /**
+         * O lugar da cidade onde o jogador está, do ponto de vista de quem ficou na rua.
+         * Enquanto `active` existe, `player.x/y` são do plano da sala e não significam nada
+         * no mapa — este é o ponto que a rua enxerga, que o save grava e para onde a porta
+         * devolve. Null só quando não há sala aberta.
+         */
+        this.street = null;
         this.message = '';
         /**
          * Gancho da cadeia (injetado pelo GameState): a cela e o painel são interação de
@@ -289,6 +296,9 @@ class InteriorSystem {
                 room = makeRoom(entrance);
                 this.rooms.set(entrance.id, room);
             }
+            // Entra pelo pé da porta: é de lá que a rua continua vendo o jogador, e é para lá
+            // que a saída devolve — não para o centro do lote ao lado.
+            this.street = { x: player.x, y: player.y, facing: player.facingAngle };
             this.active = room;
             this.place(player, room.map.data.playerSpawn);
             ctx.onTransition();
@@ -383,6 +393,8 @@ class InteriorSystem {
             room = makeRoom(entrance);
             this.rooms.set(entrance.id, room);
         }
+        // Quem é algemado na rua não volta para o beco onde caiu: sai pela porta de quem o prendeu.
+        this.street = { x: entrance.x, y: entrance.y, facing: entrance.facing };
         this.active = room;
         this.place(player, room.map.data.playerSpawn);
         return room;
@@ -390,10 +402,11 @@ class InteriorSystem {
     leave(player) {
         if (!this.active)
             return;
-        const entrance = this.active.entrance;
+        const back = this.street ?? this.active.entrance;
         this.active = null;
-        this.place(player, entrance);
-        player.facingAngle = entrance.facing;
+        this.street = null;
+        this.place(player, back);
+        player.facingAngle = back.facing;
         player.direction = (0, IsoUtils_1.angleToWorldDir)(player.facingAngle);
     }
     place(player, point) {

@@ -15,7 +15,7 @@ export function WitnessLayer({ game }: { game: GameState }) {
     if (!npc || npc.dead || call.radio || !npc.callingPolice) return null;
     // O aviso sai da boca de quem grita: num morro, o boneco de chamada tem que subir com
     // o chão do tile, senão fica pregado no nível da rua enquanto o NPC está no platô.
-    const p = worldToScreen(npc.x, npc.y, game.map.heightAt(npc.x, npc.y));
+    const p = worldToScreen(npc.x, npc.y, game.map.heightSmoothAt(npc.x, npc.y));
     if (!game.fog.intersects(view, p.x - 14, p.y - 65, 28, 65)) return null;
     const progress = Math.min(1, (call.elapsed - 0.7) / (call.duration - 0.7));
     return <Group key={call.npcId}>

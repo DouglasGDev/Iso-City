@@ -37,6 +37,8 @@ async function launch() {
   await send('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 1, mobile: true });
   await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   await send('Page.navigate', { url: 'http://localhost:8082/?hazard-qa=1' });
+  // Navegar reaplica o override da aba: reafirmar, senão o desktop herda o toque e perde o teclado.
+  await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   await until(`!!document.querySelector('[data-testid="menu-new"],[data-testid="menu-play"]')
     ||!!document.body?.innerText.match(/JOGAR|NOVO JOGO/)`, 'menu', 180000);
   // O menu troca "JOGAR" por "CONTINUAR / NOVO JOGO" quando o save é lido: no mesmo pixel, um
@@ -64,6 +66,8 @@ const read = () => evaluate(`(()=>{const g=qa.g,h=g.hazard,s=g.fog.snapshot,
   return {kind:h.kind,phase:h.phase,strength:+h.strength.toFixed(3),alert:h.alert,bed:h.bed,
     bedVolume:+h.bedVolume.toFixed(3),wet:+h.wet.toFixed(3),dark:+h.dark.toFixed(3),slant:+h.slant.toFixed(3),
     vortex:{x:+h.vortex.x.toFixed(2),y:+h.vortex.y.toFixed(2),r:+h.vortex.radius.toFixed(2)},
+    storm:{x:+h.storm.x.toFixed(2),y:+h.storm.y.toFixed(2),r:+h.storm.radius.toFixed(2),
+      spin:+h.storm.spin.toFixed(2)},
     reach:+h.wave.reach.toFixed(2),from:+h.wave.from.toFixed(2),edge:+h.wave.edge.toFixed(2),
     dir:h.wave.dir,axis:h.wave.axis,u0:+h.wave.u0.toFixed(2),u1:+h.wave.u1.toFixed(2),
     player:{x:+g.player.x.toFixed(2),y:+g.player.y.toFixed(2)},
@@ -98,6 +102,19 @@ async function screenOf(x, y) {
       y:(((${x})+(${y}))*32-(c.x+c.y)*32)*c.zoom+195}})()`);
 }
 const away = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+/** O que a regra de vento faz num ponto do mundo, lido do próprio sistema em execução. */
+const windAt = (where) => evaluate(`(()=>{const g=qa.g,f={fx:0,fy:0,core:false,near:false};
+  const p=${where === 'player' ? 'g.player' : `{x:${where.x},y:${where.y}}`};
+  g.hazard.forceAt(p.x,p.y,f);
+  return {near:f.near,core:f.core,forca:+Math.hypot(f.fx,f.fy).toFixed(4),
+    d:+Math.hypot(p.x-g.hazard.storm.x,p.y-g.hazard.storm.y).toFixed(2),
+    campo:+g.hazard.storm.radius.toFixed(2)}})()`);
+/** Manda o olho para uma distância certa do player, sempre para dentro do mapa. */
+const moveEye = (dist) => evaluate(`(()=>{const g=qa.g,W=g.map.worldW,H=g.map.worldH,s=${dist};
+  const p=g.player.x+s<W-2?1:(g.player.x-s>=2?-1:1);
+  g.hazard.storm.x=Math.min(W-2,Math.max(2,g.player.x+p*s));
+  g.hazard.storm.y=Math.min(H-2,Math.max(2,g.player.y));
+  return {x:g.hazard.storm.x,y:g.hazard.storm.y}})()`);
 let passed = 0, failed = 0;
 async function test(name, fn) {
   try { await fn(); passed++; console.log('OK ' + name); }
@@ -186,6 +203,74 @@ async function test(name, fn) {
     assert.equal(dry.kind, null);
     assert.equal(dry.slant, 0, 'a chuva continuou torta sem o furacão');
     assert.equal(dry.sentRain, 0, 'a cena não secou depois do perigo');
+  });
+
+  await test('o furacão puxa só onde ele aparece: longe do olho é tempo normal', async () => {
+    // Olho a 8 tiles do player: dentro do campo, fora da parede do olho — vento que empurra
+    // e se vê, sem depender do rng do jogo para saber onde o olho foi nascer.
+    await evaluate('qa.g.hazard.cooldown=1e9;qa.g.hazard.force("hurricane",90)');
+    await delay(600);
+    await moveEye(8);
+    await delay(900);
+    const perto = await read();
+    assert.equal(perto.kind, 'hurricane');
+    assert.ok(perto.storm.r > 1, `campo de vento ${perto.storm.r}`);
+    assert.ok(away(perto.storm, perto.player) <= perto.storm.r + 1,
+      `o olho nasceu a ${away(perto.storm, perto.player).toFixed(1)} tiles, fora do campo ${perto.storm.r}`);
+    const sentindo = await windAt('player');
+    assert.equal(sentindo.near, true, `o player a ${sentindo.d} tiles do olho não sente o vento (campo ${sentindo.campo})`);
+    assert.equal(sentindo.core, false, 'a 8 tiles o player já está na parede do olho');
+    // A nuvem desenhada no mesmo raio do vento: se empurra, tem de estar na tela.
+    const olho = await screenOf(perto.storm.x, perto.storm.y);
+    const disco = perto.storm.r * 64 * Math.SQRT2 * (await evaluate('qa.g.camera.zoom'));
+    assert.ok(olho.x + disco > 0 && olho.x - disco < 844 && olho.y + disco * 0.5 > 0 && olho.y - disco * 0.5 < 390,
+      `a massa do furacão não toca a tela (${Math.round(olho.x)}, ${Math.round(olho.y)}, r ${Math.round(disco)})`);
+    await screenshot('qa-hurricane-olho');
+
+    const antes = perto.player;
+    await delay(3000);
+    const arrastado = await read();
+    assert.ok(away(arrastado.player, antes) > 0.4,
+      `o vento não arrastou o player (${away(arrastado.player, antes).toFixed(2)} tiles)`);
+
+    // Olho sobre a câmera: a parede do olho passa por cima da tela e o centro é calmaria.
+    await evaluate('const g=qa.g;g.hazard.storm.x=g.camera.x;g.hazard.storm.y=g.camera.y');
+    await delay(1100);
+    const naCalmaria = await windAt('player');
+    assert.equal(naCalmaria.near, false, `dentro do olho calmo ainda bate vento (${naCalmaria.d} tiles)`);
+    assert.equal(naCalmaria.forca, 0, 'o olho não é calmo');
+    await screenshot('qa-hurricane-centro');
+
+    // O MESMO furacão, com o olho do outro lado do mapa: nada de vento, nada de céu fechado.
+    const longe = await moveEye(120);
+    await delay(1500);
+    const seco = await read();
+    assert.equal(seco.kind, 'hurricane', 'mandar o olho embora cancelou o perigo');
+    assert.equal(seco.wet, 0, `umidade ${seco.wet} com o olho a ${away(longe, seco.player)} tiles`);
+    assert.equal(seco.dark, 0, `céu escuro ${seco.dark} com o olho longe`);
+    assert.equal(Math.abs(seco.slant), 0, `chuva torta ${seco.slant} com o olho longe`);
+    const fora = await windAt('player');
+    assert.equal(fora.near, false, `o vento alcança a ${fora.d} tiles, campo ${fora.campo}`);
+    assert.equal(fora.forca, 0, `força ${fora.forca} fora do campo`);
+    const parado = await read();
+    await delay(3000);
+    const depois = await read();
+    assert.ok(away(depois.player, parado.player) < 0.2,
+      `o player foi puxado do além: ${away(depois.player, parado.player).toFixed(2)} tiles sem vento`);
+
+    // E de volta para perto: o céu fecha e o arrasto recomeça, sem renascer o evento.
+    await moveEye(9);
+    await delay(900);
+    const deVolta = await read();
+    assert.equal(deVolta.kind, 'hurricane');
+    assert.ok(deVolta.wet > 0.05, 'o olho voltou e o céu continua aberto');
+    assert.ok(Math.abs(deVolta.slant) > 0.02, 'o olho voltou e a chuva continua em pé');
+    assert.equal((await windAt('player')).near, true, 'o olho voltou e ninguém sente o vento');
+    await evaluate('qa.g.hazard.left=0.4');
+    await delay(9000);
+    const calmo = await read();
+    assert.equal(calmo.kind, null);
+    assert.equal(calmo.storm.r, 0, 'o campo de vento ficou no mapa depois do furacão');
   });
 
   await test('o tsunami sobe da costa na frente do player e volta sozinho', async () => {

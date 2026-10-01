@@ -1141,7 +1141,7 @@ async function checkMeleeRender() {
   }
   function mount() {
     game = { player: createPlayer(0, 0), npcs: [], vehicles: [], time: 0,
-      map: { heightAt: () => 0 },
+      map: { heightAt: () => 0, heightSmoothAt: () => 0 },
       weapons: { equipped: 'unarmed', aimAngle: 0, fireFlash: 0 } };
     const owner = { cursor: 0, slots: [], effects: [], cleanups: [] };
     const render = () => {

@@ -420,7 +420,7 @@ export function EntranceMarkers({ game }: { game: GameState }) {
   const view = game.fog.view(game);
   return <Group>
     {game.interiors.entrances.map((door) => {
-      const p = worldToScreen(door.x, door.y, game.map.heightAt(door.x, door.y));
+      const p = worldToScreen(door.x, door.y, game.map.heightSmoothAt(door.x, door.y));
       if (!game.fog.intersects(view, p.x - 10, p.y - 10, 20, 20)) return null;
       return <Group key={door.id}>
         <Circle cx={p.x} cy={p.y} r={10} color="#86d4c2" opacity={0.35} />

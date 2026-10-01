@@ -71,7 +71,7 @@ export function EntitySprite({ id }: Props) {
   const entity = entityForSprite(id, index);
   const sv = useSharedValue({
     x: entity?.x ?? 0, y: entity?.y ?? 0,
-    h: entity ? game.map.heightAt(entity.x, entity.y) : 0,
+    h: entity ? game.map.heightSmoothAt(entity.x, entity.y) : 0,
   });
   const swimSV = useSharedValue(0);
   const swimAngleSV = useSharedValue(0);

@@ -315,6 +315,30 @@ async function test(name, fn) { await fn(); passed++; console.log('OK ' + name);
     for (let i = 0; i < 200; i++) system.update(0.1, wet);
     assert.equal(weather.length, before, 'weather spam');
   });
+  await test('a névoa não tem água nenhuma: pede o vento, entra devagar e abafa a região', () => {
+    const beds = [], weather = [];
+    const system = new AmbientSystem({ ambient: (key, volume) => beds.push({ key, volume }),
+      weather: (volume, bed) => weather.push([volume, bed]) });
+    const foggy = { outdoors: true, biome: 'forest', timeOfDay: 0.5, rain: 0, mist: 1 };
+    for (let i = 0; i < 60; i++) system.update(0.1, foggy);
+    assert.equal(beds.at(-1).key, 'forestDay', 'a névoa trocou a região do ambiente');
+    assert.ok(beds.at(-1).volume < 0.48 - 0.08, `a mata enevoada continua alta ${beds.at(-1).volume}`);
+    assert.deepEqual(weather.at(-1), [0.22, 'wind'], 'a névoa não pediu o sopro de vento');
+    // Entra devagar de propósito: o som que fecha a visão não pode bater de uma vez.
+    const slow = new AmbientSystem({ ambient: () => {}, weather: (volume, bed) => weather.push([volume, bed]) });
+    weather.length = 0;
+    for (let i = 0; i < 3; i++) slow.update(0.1, foggy);
+    assert.ok(weather.at(-1)[0] < 0.08, `a névoa chegou cheia demais ${weather.at(-1)[0]}`);
+    // Chuva de verdade manda no canal: a névoa não toma o lugar de quem está molhando.
+    for (let i = 0; i < 60; i++) system.update(0.1, { ...foggy, rain: 0.6 });
+    assert.equal(weather.at(-1)[1], 'rain', 'a névoa abafou o leito da chuva');
+    assert.ok(weather.at(-1)[0] > 0.3, `a chuva perdeu volume ${weather.at(-1)[0]}`);
+    for (let i = 0; i < 60; i++) system.update(0.1, { ...foggy, mist: 0 });
+    assert.deepEqual(weather.at(-1), [0, 'rain'], 'a névoa sumiu e o canal ficou preso no vento');
+    const before = weather.length;
+    for (let i = 0; i < 200; i++) system.update(0.1, { ...foggy, mist: 0 });
+    assert.equal(weather.length, before, 'weather spam depois da névoa');
+  });
   await test('a hazard bed takes the weather channel from the rain and gives it back when it ends', () => {
     const beds = [], weather = [];
     const system = new AmbientSystem({ ambient: (key, volume) => beds.push({ key, volume }),

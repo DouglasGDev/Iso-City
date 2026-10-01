@@ -212,6 +212,7 @@ class GameState {
         this.viewW = w;
         this.viewH = h;
         this.clampCamera();
+        this.snapCameraHeight();
     }
     clampCamera() {
         const room = this.interiors.active;
@@ -219,9 +220,22 @@ class GameState {
             (0, Camera_1.clampToRoom)(this.camera, room.map.worldW, room.map.worldH, this.viewW, this.viewH);
         else
             (0, Camera_1.clampToMap)(this.camera, this.map.worldW, this.map.worldH, this.viewW, this.viewH);
-        // A câmera sobe junto com o chão que ela mira. É uma translação da tela no mesmo
-        // eixo Y da projeção: o losango continua 2:1 e a câmera continua isométrica.
-        this.camera.h = (room?.map ?? this.map).heightAt(this.camera.x, this.camera.y);
+    }
+    /**
+     * A câmera sobe junto com o chão que ela mira. É uma translação da tela no mesmo eixo Y
+     * da projeção: o losango continua 2:1 e a câmera continua isométrica.
+     */
+    snapCameraHeight() {
+        this.camera.h = this.activeMap.heightSmoothAt(this.camera.x, this.camera.y);
+    }
+    /**
+     * A cota da câmera persegue a do chão com o mesmo alívio dos eixos x/y. Ler a cota crua
+     * a cada quadro faria a tela inteira pular um degrau na borda de cada tile — o solavanco
+     * que parece bug, ainda mais em carro.
+     */
+    easeCameraHeight(dt) {
+        const alvo = this.activeMap.heightSmoothAt(this.camera.x, this.camera.y);
+        this.camera.h += (alvo - this.camera.h) * (1 - Math.exp(-GameConfig_1.GAME_CONFIG.CAMERA_LERP * dt));
     }
     /**
      * Instantâneo do save. Só estado persistente faz sentido: jogador, arsenal, relógio e o
@@ -229,15 +243,18 @@ class GameState {
      */
     snapshot() {
         const p = this.player;
+        // Salvar dentro de uma sala não pode gravar o plano do interior como se fosse a rua:
+        // a posição persistida é a âncora na porta, e o load devolve o jogador para fora.
+        const where = this.worldPosition;
         return {
             version: SaveGame_1.SAVE_VERSION,
             time: this.time,
             dayT: this.dayNight.t,
             player: {
-                x: p.x,
-                y: p.y,
+                x: where.x,
+                y: where.y,
                 direction: p.direction,
-                facingAngle: p.facingAngle,
+                facingAngle: this.interiors.street?.facing ?? p.facingAngle,
                 health: p.health,
                 money: p.money,
                 wantedLevel: p.wantedLevel,
@@ -368,11 +385,14 @@ class GameState {
         }
         this.updateEnvironment(dt);
         const room = this.interiors.active;
-        const outdoorPlayer = room ? { ...this.player, x: room.entrance.x, y: room.entrance.y,
-            vx: 0, vy: 0, speed: 0, invulnUntil: Infinity } : this.player;
+        // Dentro de uma sala o jogador não existe no mapa da cidade: as coordenadas dele são
+        // do plano do interior. A rua lida com a âncora — o pé da porta por onde ele entrou.
+        const outdoorPlayer = room
+            ? { ...this.player, x: this.worldPosition.x, y: this.worldPosition.y, vx: 0, vy: 0, speed: 0, invulnUntil: Infinity }
+            : this.player;
         this.trafficSystem.update(this.map, this.npcs, this.vehicles, dt, outdoorPlayer);
         this.updateNpcs(dt, outdoorPlayer);
-        this.witnesses.update(dt, this.witnessContext());
+        this.witnesses.update(dt, this.witnessContext(outdoorPlayer));
         outdoorPlayer.wantedLevel = this.player.wantedLevel;
         this.police.update(dt, this.policeContext(outdoorPlayer));
         this.missions.update(dt, outdoorPlayer, (money) => {
@@ -433,7 +453,7 @@ class GameState {
                     SoundManager_1.sound.play('animalCall', Math.max(0.08, 0.4 - Math.hypot(animal.x - this.player.x, animal.y - this.player.y) * 0.02));
             },
             isVisible: (x, y) => {
-                const p = (0, IsoUtils_1.worldToScreen)(x, y, this.map.heightAt(x, y));
+                const p = (0, IsoUtils_1.worldToScreen)(x, y, this.map.heightSmoothAt(x, y));
                 return this.fog.intersects(view, p.x - 45, p.y - 65, 90, 90);
             },
             onStructChange: () => this.notifyEntityChange(),
@@ -442,7 +462,7 @@ class GameState {
             player: outdoorPlayer, npcs: this.npcs, map: this.map, vehicles: this.vehicles,
             collision: this.collision, rng: this.rnd,
             isPointVisible: (x, y) => {
-                const p = (0, IsoUtils_1.worldToScreen)(x, y, this.map.heightAt(x, y));
+                const p = (0, IsoUtils_1.worldToScreen)(x, y, this.map.heightSmoothAt(x, y));
                 return this.fog.intersects(view, p.x - 40, p.y - 40, 80, 80);
             },
             onStructChange: () => this.notifyEntityChange(),
@@ -455,7 +475,7 @@ class GameState {
             this.separate(this.player);
         if (this.jump.update(this.player, this.activeMap, this.collision, dt) === 'landed')
             SoundManager_1.sound.play('land', 0.4);
-        this.exploration.update({ position: this.player, outdoors: !this.interiors.active });
+        this.exploration.update({ position: this.worldPosition, outdoors: !this.interiors.active });
         this.updateAnimations(dt);
         this.updateSceneryVehicles(dt);
         this.updateCamera(dt);
@@ -479,6 +499,21 @@ class GameState {
     // ---------------------------------------------------------------- inputs
     get activeMap() {
         return this.interiors.active?.map ?? this.map;
+    }
+    /**
+     * Onde a cidade enxerga o jogador. Na rua é o próprio corpo; dentro de uma sala são as
+     * coordenadas do pé da porta — o plano do interior não é um lugar do mapa, então nem o
+     * trânsito, nem a polícia, nem o radar, nem o save podem ler `player.x/y` nesse momento.
+     */
+    get worldPosition() {
+        const room = this.interiors.active;
+        if (!room)
+            return this.player;
+        return this.interiors.street ?? room.entrance;
+    }
+    /** O chão que o jogador pisa: o piso plano da sala, ou o relevo da cidade. */
+    playerGround() {
+        return this.activeMap.heightSmoothAt(this.player.x, this.player.y);
     }
     useInterior() {
         return this.interiors.interact(this.interiorContext());
@@ -525,7 +560,7 @@ class GameState {
         useGameStore_1.useGameStore.closeShop();
         this.jump.cancel(this.player);
         this.exploration.breakTrail();
-        this.exploration.update({ position: this.interiors.active?.entrance ?? this.player, outdoors: true });
+        this.exploration.update({ position: this.worldPosition, outdoors: true });
         (0, InputState_1.resetActionInput)();
         (0, InputState_1.resetJoystickInput)();
         (0, InputState_1.setRunHeld)(false);
@@ -537,6 +572,9 @@ class GameState {
             ? (0, Camera_1.indoorZoom)(room.map.worldW, room.map.worldH, this.viewW, this.viewH)
             : GameConfig_1.GAME_CONFIG.ZOOM_DEFAULT;
         this.clampCamera();
+        // Trocar de cenário é corte, não travessia: a cota nova vale na hora, senão a sala
+        // abriria descendo a rampa do morro que ficou do lado de fora da porta.
+        this.snapCameraHeight();
         // A cadeia só existe enquanto a sala dela está aberta.
         if (room?.kind === 'jail')
             this.jail.enter();
@@ -707,11 +745,15 @@ class GameState {
      * posição do jogador: o cone pertence ao policial, então a HUD não vira raio-x.
      */
     policeVisionCones() {
+        // O cone pertence à rua. Dentro de uma sala o radar mostra o plano do interior, e a
+        // posição real do jogador não existe no mapa — nada aqui pode desenhá-la.
+        if (this.interiors.active)
+            return [];
         return this.police.visionCones(this.policeContext());
     }
-    witnessContext() {
+    witnessContext(player = this.player) {
         return {
-            map: this.map, player: this.player, npcs: this.npcs, vehicles: this.vehicles,
+            map: this.map, player, npcs: this.npcs, vehicles: this.vehicles,
             onReport: (incident) => {
                 this.wanted.raise(this.player, Math.max(0.5, incident.severity - this.player.wantedLevel));
                 this.police.report(incident);
@@ -812,7 +854,7 @@ class GameState {
         SoundManager_1.sound.stopLoops();
     }
     updateEnvironment(dt) {
-        const position = this.interiors.active?.entrance ?? this.player;
+        const position = this.worldPosition;
         const biome = this.map.data.tiles[Math.floor(position.y) * this.map.data.tilesW + Math.floor(position.x)]?.biome ?? 'residential';
         this.biomeAtCamera = biome;
         const environment = { timeOfDay: this.dayNight.t, rain: this.weather.intensity + this.hazard.wet,
@@ -898,6 +940,7 @@ class GameState {
         }
         (0, Camera_1.cameraFollow)(this.camera, followX, followY, lookX, lookY, dt, this.activeMap.worldW, this.activeMap.worldH);
         this.clampCamera();
+        this.easeCameraHeight(dt);
     }
     updateShake(dt) {
         if (this.shakeAmp <= 0.005) {

@@ -27,8 +27,10 @@ async function screenshot(name) {
 async function launch(mobile) {
   await send('Page.navigate', { url: 'about:blank' });
   await send('Emulation.setDeviceMetricsOverride', { width: mobile ? 844 : 1000, height: mobile ? 390 : 640, deviceScaleFactor: 1, mobile });
-  await send('Emulation.setTouchEmulationEnabled', { enabled: mobile, maxTouchPoints: 5 });
+  await send('Emulation.setTouchEmulationEnabled', mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
   await send('Page.navigate', { url: 'http://localhost:8082/?weather-qa=' + Number(mobile) });
+  // Navegar reaplica o override da aba: reafirmar, senão o desktop herda o toque e perde o teclado.
+  await send('Emulation.setTouchEmulationEnabled', mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
   await until('!!document.body?.innerText.match(/JOGAR|NOVO JOGO/)', 'menu', 90000);
   const p = await evaluate(`(()=>{const e=[...document.querySelectorAll('div')].find(e=>e.childElementCount===0&&(e.textContent==='JOGAR'||e.textContent==='NOVO JOGO'));const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
   if (mobile) {
@@ -54,6 +56,7 @@ async function launch(mobile) {
 /** Estado atual do clima + o que a névoa fez com a cena. */
 const read = () => evaluate(`(()=>{const g=qa.g,w=g.weather,s=g.fog.snapshot;
   return {season:w.season,kind:w.kind,intensity:w.intensity,cover:w.cover,wind:w.wind,snow:w.snowing,
+    mist:w.mist,bed:g.ambient.sentBed,
     bolt:w.bolt,label:w.label,color:s.color,clarity:s.clarity,
     view:[Math.round(g.fog.view({camera:g.camera,viewW:g.viewW,viewH:g.viewH}).radiusX),
       Math.round(g.fog.view({camera:g.camera,viewW:g.viewW,viewH:g.viewH}).radiusY)].join('x')}})()`);
@@ -91,7 +94,8 @@ async function test(name, fn) {
   await test('o HUD diz em português a estação e o tempo de agora', async () => {
     const state = await read();
     assert.ok(['primavera', 'verao', 'outono', 'inverno'].includes(state.season));
-    assert.match(state.label, /^(Primavera|Verão|Outono|Inverno) · (limpo|nublado|chuva|tempestade|neve)$/);
+    assert.match(state.label,
+      /^(Primavera|Verão|Outono|Inverno) · (limpo|névoa|nublado|garoa|chuva|tempestade|neve)$/);
     assert.ok(await evaluate(`document.body.innerText.includes(${JSON.stringify(state.label)})`),
       `HUD sem a etiqueta "${state.label}"`);
   });
@@ -151,7 +155,65 @@ async function test(name, fn) {
     const seen = await evaluate('({flashes:qa.flashes,thunder:qa.thunder})');
     assert.equal(seen.flashes, 0, 'chuva comum relampejando');
     assert.equal(seen.thunder, 0);
+    assert.equal(rain.bed, 'rain', 'a chuva perdeu o canal do clima');
     await screenshot('qa-weather-rain');
+  });
+
+  await test('garoa é um molhado leve: chão meio molhado, céu coberto e nenhum trovão', async () => {
+    await teleport('downtown');
+    await evaluate('qa.flashes=0;qa.thunder=0;qa.lit=false');
+    await evaluate('qa.g.weather.force("drizzle",3600);qa.g.dayNight.t=.5');
+    await delay(9000);
+    const drizzle = await read();
+    assert.equal(drizzle.kind, 'drizzle');
+    assert.match(drizzle.label, /· garoa$/, `etiqueta errada para garoa: ${drizzle.label}`);
+    assert.ok(await evaluate(`document.body.innerText.includes(${JSON.stringify(drizzle.label)})`),
+      `HUD sem a etiqueta "${drizzle.label}"`);
+    assert.ok(drizzle.intensity > 0.1 && drizzle.intensity < 0.4, `umidade da garoa ${drizzle.intensity}`);
+    assert.ok(drizzle.cover > 0.4, 'garoa com céu aberto');
+    assert.equal(drizzle.snow, false);
+    assert.equal(drizzle.bed, 'rain', 'a garoa não molhada pede o leito de chuva');
+    await delay(12000);
+    const vistos = await evaluate('({flashes:qa.flashes,thunder:qa.thunder})');
+    assert.equal(vistos.flashes, 0, 'garoa relampejando');
+    assert.equal(vistos.thunder, 0);
+    await screenshot('qa-weather-drizzle');
+  });
+
+  await test('névoa fecha a visão sem molhar o chão e pede o vento no lugar da chuva', async () => {
+    await teleport('countryside');
+    await evaluate('qa.g.weather.force("clear",1);qa.g.dayNight.t=.5');
+    await delay(9000);
+    const dry = await read();
+    assert.equal(dry.kind, 'clear');
+    assert.equal(dry.intensity, 0, 'a garoa não secou antes da névoa');
+    assert.equal(dry.mist, 0, 'o céu limpo ainda está enevoado');
+    await evaluate('qa.g.weather.force("mist",3600)');
+    await delay(11000);
+    const mist = await read();
+    assert.equal(mist.kind, 'mist');
+    assert.match(mist.label, /· névoa$/, `etiqueta errada para névoa: ${mist.label}`);
+    assert.ok(await evaluate(`document.body.innerText.includes(${JSON.stringify(mist.label)})`),
+      `HUD sem a etiqueta "${mist.label}"`);
+    assert.equal(mist.intensity, 0, `a névoa molhou a cena ${mist.intensity}`);
+    assert.equal(mist.snow, false);
+    assert.ok(mist.mist > 0.5, `névoa fraca ${mist.mist}`);
+    assert.ok(mist.clarity < dry.clarity - 0.12,
+      `a névoa não fechou a visibilidade (${dry.clarity} → ${mist.clarity})`);
+    assert.ok(mist.clarity > 0.3, `a névoa tapou o mundo inteiro (${mist.clarity})`);
+    assert.equal(mist.view, dry.view, 'a névoa mudou o footprint do bake');
+    // Pálida e clara: névoa é leite, não chuva escura.
+    const sum = (hex) => parseInt(hex.slice(1, 3), 16) + parseInt(hex.slice(3, 5), 16) + parseInt(hex.slice(5, 7), 16);
+    assert.ok(sum(mist.color) > sum(dry.color), `a névoa escureceu a borda (${dry.color} → ${mist.color})`);
+    assert.equal(mist.bed, 'wind', 'a névoa não pediu o sopro de vento');
+    await screenshot('qa-weather-mist');
+    await evaluate('qa.g.weather.force("clear",1)');
+    await delay(11000);
+    const cleared = await read();
+    assert.equal(cleared.mist, 0, 'a névoa não dissipou');
+    assert.equal(cleared.bed, 'rain', 'o canal do clima ficou preso no vento');
+    assert.ok(cleared.clarity > dry.clarity - 0.02,
+      `a visibilidade não voltou com o céu limpo (${dry.clarity} → ${cleared.clarity})`);
   });
 
   await test('a frente expira sozinha e a cena volta a secar', async () => {

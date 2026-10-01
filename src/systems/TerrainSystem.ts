@@ -13,9 +13,10 @@ export interface Steppable {
  */
 export class TerrainSystem {
   /**
-   * Reverte o eixo que o pedestre não alcança: acima de `TERRAIN_STEP_UP_FOOT` é
-   * parede, abaixo de `TERRAIN_MAX_DROP` é borda. Chamar depois de integrar e depois
-   * de resolver colisão — um empurrão de carro também jogaria alguém morro acima.
+   * Reverte o eixo que o pedestre não alcança: acima de `TERRAIN_STEP_UP_TILES` é
+   * parede, abaixo de `-TERRAIN_MAX_DROP_TILES` é borda. Chamar depois de integrar e
+   * depois de resolver colisão — um empurrão de carro também jogaria alguém morro
+   * acima.
    */
   blockWalk(map: Map, body: Steppable, prevX: number, prevY: number) {
     if (body.x !== prevX && !map.canClimb(prevX, prevY, body.x, prevY)) body.x = prevX;
@@ -38,16 +39,18 @@ export class TerrainSystem {
     const teto = elevation + GAME_CONFIG.HELI_WALL_TOLERANCE;
     const x = body.x;
     const y = body.y;
-    if (body.x !== prevX && map.heightAt(body.x, body.y) > teto) body.x = prevX;
-    if (body.y !== prevY && map.heightAt(body.x, body.y) > teto) body.y = prevY;
+    // A face barrada é a mesma face desenhada: o talude do morro é contínuo na tela, e
+    // bater no tile quantizado liberaria o casco no meio da encosta.
+    if (body.x !== prevX && map.heightSmoothAt(body.x, body.y) > teto) body.x = prevX;
+    if (body.y !== prevY && map.heightSmoothAt(body.x, body.y) > teto) body.y = prevY;
     return body.x !== x || body.y !== y;
   }
 
   /**
    * Ladeira com peso: subir custa, descer empurra. É um multiplicador de propósito —
-   * física de suspensão quebraria o trânsito em grade e o isométrico com ela.
-   * A sonda anda um tile inteiro na direção do passo, senão o `floor` do nível nunca
-   * veria o degrau à frente.
+   * física de suspensão quebraria o trânsito em grade e o isométrico com ela. A sonda
+   * anda um tile inteiro e lê a superfície contínua: é o declive médio daquele trecho,
+   * não o degrau do tile, que é o que fazia a velocidade piscar a cada losango cruzado.
    */
   speedFactor(map: Map, x: number, y: number, dx: number, dy: number): number {
     const len = Math.hypot(dx, dy);

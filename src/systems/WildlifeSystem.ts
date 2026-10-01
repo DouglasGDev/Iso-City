@@ -33,6 +33,15 @@ const MAX_LIVE_DT = 0.2;
 const STEERING = [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2];
 /** Fração do raio de alerta que não precisa ser vista: encostou por trás, é susto em 360°. */
 const WILDLIFE_STARTLE_RATIO = 0.5;
+/**
+ * Raio de voz, em tiles. É maior que a janela da neblina de propósito: quem decide se o
+ * som chega ao ouvido é o `GameState`, pela visibilidade e pela distância. Aqui só se
+ * declara até onde um bicho pode ter aberto a boca — e 14 tiles já é o outro lado da tela.
+ */
+export const WILDLIFE_CALL_RADIUS = 14;
+/** Janela de silêncio do grupo, por tipo de chamada. Alarme não pode virar metralhadora. */
+const VOZ_CALMA_S = 6;
+const VOZ_ALARME_S = 3;
 /** Acima disso, quem está no arco apenas para e observa em vez de gastar fôlego correndo. */
 const WILDLIFE_WATCH_RATIO = 0.62;
 /** Presa não esquece rápido: depois de tanto tempo sem ver nem ouvir, volta a pastar. */
@@ -163,6 +172,13 @@ export class WildlifeSystem {
   private restockTimer = 0;
   /** Uma voz por vez no grupo: sem isso a mata vira chiado de rádio. */
   private voiceCooldown = 0;
+  /**
+   * O alarme tinha janela própria porque o susto é notícia, não conversa — mas ele não
+   * tinha teto nenhum contra o próprio alarme: um veículo atravessando a reserva assustava
+   * bicho atrás de bicho e cada um gritava no mesmo segundo. É o "uhu" sem bicho por perto
+   * que o pedido apontou, e ele morre aqui.
+   */
+  private alarmCooldown = 0;
 
   /** One scan at init, stratified by habitat/cell/trail rather than world-wide random tiles. */
   init(map: WildlifeMap, seed = 20260909): Animal[] {
@@ -173,6 +189,7 @@ export class WildlifeSystem {
     this.respawnCursor = 0;
     this.restockTimer = 0;
     this.voiceCooldown = 0;
+    this.alarmCooldown = 0;
     const cells = new Map<string, HabitatBucket>();
     for (let y = 0; y < map.data.tilesH; y++) {
       for (let x = 0; x < map.data.tilesW; x++) {
@@ -226,6 +243,7 @@ export class WildlifeSystem {
     const validPlayer = Number.isFinite(player.x) && Number.isFinite(player.y);
     const liveDt = Math.min(dt, MAX_LIVE_DT); // Bounded movement work after long suspensions.
     this.voiceCooldown = Math.max(0, this.voiceCooldown - liveDt);
+    this.alarmCooldown = Math.max(0, this.alarmCooldown - liveDt);
     let changed = false;
     let callsLeft = 1;
     let localCount = 0;
@@ -323,12 +341,17 @@ export class WildlifeSystem {
         }
       }
       const alarm = !wasFleeing && animal.state === 'fleeing';
-      // Alarme fura a janela de silêncio; a conversa ociosa espera o grupo silenciar.
-      if (context.onCall && callsLeft > 0 && animal.callTimer <= 0
-        && (alarm || (this.voiceCooldown <= 0 && animal.state === 'idle'))
-        && Math.hypot(animal.x - player.x, animal.y - player.y) <= 14) {
+      // Bicho do outro lado da tela não canta no ouvido de ninguém: a conversa ociosa
+      // acontece na frente de quem ouve. O alarme é o único que fura a beirada, porque o
+      // susto que o produziu veio justamente de algo que estava chegando por trás.
+      const naTela = !context.isVisible
+        || context.isVisible(animal.x, animal.y, animal.radius + 2);
+      const perto = Math.hypot(animal.x - player.x, animal.y - player.y) <= WILDLIFE_CALL_RADIUS;
+      if (context.onCall && callsLeft > 0 && perto && animal.callTimer <= 0
+        && (naTela || alarm) && (alarm ? this.alarmCooldown <= 0
+          : this.voiceCooldown <= 0 && animal.state === 'idle')) {
         animal.callTimer = (alarm ? 14 : 20) + random(animal) * 14;
-        this.voiceCooldown = alarm ? 3 : 6;
+        if (alarm) this.alarmCooldown = VOZ_ALARME_S; else this.voiceCooldown = VOZ_CALMA_S;
         callsLeft--;
         context.onCall(animal, alarm ? 'alarm' : 'idle');
       }

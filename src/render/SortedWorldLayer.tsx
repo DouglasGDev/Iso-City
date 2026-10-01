@@ -34,23 +34,23 @@ function buildStaticNodes(game: GameState): StaticNode[] {
     if (!img) continue;
     // O prédio pisa o próprio terraço: o `h` é o do lote, nivelado no gerador, e o
     // sprite sobe junto com o chão em vez de ficar enterrado na encosta.
-    const p = worldToScreen(b.x, b.y, game.map.heightAt(b.x, b.y));
+    const p = worldToScreen(b.x, b.y, game.map.heightSmoothAt(b.x, b.y));
     const geometry = BUILDING_GEOMETRY[b.key];
     const scale = b.footprintW * 64 / geometry.span;
     const w = img.width() * scale, h = img.height() * scale;
     nodes.push({ id: `building:${i}`, img,
       sx: p.x + w / 2 - geometry.anchorX * scale, sy: p.y + h - geometry.anchorY * scale,
-      w, h, depth: depthOf(b.x, b.y, game.map.heightAt(b.x, b.y)) });
+      w, h, depth: depthOf(b.x, b.y, game.map.heightSmoothAt(b.x, b.y)) });
   }
   for (const [i, pr] of game.map.data.props.entries()) {
     const img = spriteStore[propKey(pr.key)];
     if (!img) continue;
-    const p = worldToScreen(pr.x, pr.y, game.map.heightAt(pr.x, pr.y));
+    const p = worldToScreen(pr.x, pr.y, game.map.heightSmoothAt(pr.x, pr.y));
     const scale = pr.renderScale ?? 1;
     const w = img.width() * scale, h = img.height() * scale;
     const anchor = pr.renderAnchor ?? { x: 0.5, y: 1 };
     nodes.push({ id: `prop:${i}`, img, sx: p.x + w * (0.5 - anchor.x), sy: p.y + h * (1 - anchor.y),
-      w, h, depth: depthOf(pr.x, pr.y, game.map.heightAt(pr.x, pr.y)) });
+      w, h, depth: depthOf(pr.x, pr.y, game.map.heightSmoothAt(pr.x, pr.y)) });
   }
   return nodes;
 }
@@ -94,7 +94,7 @@ function WildlifeSprite({ animal, game, clock }: {
   animal: Animal; game: GameState; clock: SharedValue<number>;
 }) {
   const position = useSharedValue({
-    x: animal.x, y: animal.y, h: game.map.heightAt(animal.x, animal.y),
+    x: animal.x, y: animal.y, h: game.map.heightSmoothAt(animal.x, animal.y),
   });
   const visual = useSharedValue(animalVisualState(animal, clock.value));
   useEffect(() => {
@@ -109,7 +109,7 @@ type DrawItem = { id: string; depth: number; node?: StaticNode; animal?: Animal;
 function entityVisible(game: GameState, view: FogView, id: string, x: number, y: number, lift = 0) {
   const image = resolveEntityImage(id);
   if (!image) return false;
-  const p = worldToScreen(x, y, game.map.heightAt(x, y));
+  const p = worldToScreen(x, y, game.map.heightSmoothAt(x, y));
   const w = Math.max(40, image.width()), h = Math.max(32, image.height());
   return game.fog.intersects(view, p.x - w / 2 - 32, p.y - h - lift - 16, w + 64, h + lift + 32);
 }
@@ -118,7 +118,7 @@ function visibleItems(game: GameState, statics: StaticNode[]): DrawItem[] {
   const view = game.fog.view(game);
   // Profundidade com relevo: o tile elevado do morro da frente passa na frente de
   // quem está embaixo, exatamente como o losango dele aparece na tela.
-  const depth = (x: number, y: number) => depthOf(x, y, game.map.heightAt(x, y));
+  const depth = (x: number, y: number) => depthOf(x, y, game.map.heightSmoothAt(x, y));
   const items: DrawItem[] = statics.filter((n) => game.fog.intersects(view, n.sx - n.w / 2, n.sy - n.h, n.w, n.h))
     .map((node) => ({ id: node.id, depth: node.depth, node }));
   if (game.player.currentVehicleId === null) {
@@ -136,13 +136,13 @@ function visibleItems(game: GameState, statics: StaticNode[]): DrawItem[] {
     }
   }
   for (const animal of game.wildlife.animals) {
-    const p = worldToScreen(animal.x, animal.y, game.map.heightAt(animal.x, animal.y));
+    const p = worldToScreen(animal.x, animal.y, game.map.heightSmoothAt(animal.x, animal.y));
     if (isAnimalVisible(animal) && game.fog.intersects(view, p.x - 40, p.y - 65, 80, 90)) {
       items.push({ id: `animal:${animal.id}`, depth: depth(animal.x, animal.y), animal });
     }
   }
   for (const [i, wreck] of game.destruction.wrecks.entries()) {
-    const p = worldToScreen(wreck.x, wreck.y, game.map.heightAt(wreck.x, wreck.y));
+    const p = worldToScreen(wreck.x, wreck.y, game.map.heightSmoothAt(wreck.x, wreck.y));
     if (game.fog.intersects(view, p.x - 46, p.y - 46, 92, 66)) {
       items.push({ id: `wreck:${i}`, depth: depth(wreck.x, wreck.y), wreck });
     }
@@ -173,7 +173,7 @@ export function SortedWorldLayer({ game, focus, clock }: {
         ? <StaticSprite key={item.id} node={item.node} focus={focus} />
         : item.animal ? <WildlifeSprite key={item.id} animal={item.animal} game={game} clock={clock} />
           : item.wreck ? <WreckSprite key={item.id} wreck={item.wreck} clock={clock}
-            h={game.map.heightAt(item.wreck.x, item.wreck.y)}
+            h={game.map.heightSmoothAt(item.wreck.x, item.wreck.y)}
             smoking={game.time - item.wreck.explodedAt < SMOLDER_S} />
           : <EntitySprite key={item.id} id={item.id} />)}
     </Group>

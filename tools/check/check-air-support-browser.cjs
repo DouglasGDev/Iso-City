@@ -51,6 +51,8 @@ async function test(name, fn) {
   await until('location.href==="about:blank"', 'clean context');
   await send('Emulation.setDeviceMetricsOverride', { width: 1000, height: 600, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: 'http://localhost:8082/?air-support-qa=0' });
+  // Navegar reaplica o override da aba: reafirmar, senão o desktop herda o toque e perde o teclado.
+  await send('Emulation.setTouchEmulationEnabled', { enabled: false });
   await until('!!document.body?.innerText.match(/JOGAR|NOVO JOGO/)', 'menu', 90000);
   const p = await evaluate(`(()=>{const e=[...document.querySelectorAll('div')].find(e=>e.childElementCount===0&&(e.textContent==='JOGAR'||e.textContent==='NOVO JOGO'));const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...p, button: 'left', clickCount: 1 });
@@ -140,12 +142,17 @@ async function test(name, fn) {
     await until('qa.g.player.currentVehicleId===qa.heliId', 'entrou no helicóptero');
     await hold('KeyW', 87, 2600);
     const air = await evaluate(`(()=>{const g=qa.g,v=g.vehicles.find(v=>v.id===qa.heliId);
-      return{alt:v.altitude,elev:v.elevation,chao:g.map.heightAt(v.x,v.y),speed:v.speed,
-        cruise:qa.cfg().HELI_CRUISE_ALTITUDE};})()`);
+      return{alt:v.altitude,elev:v.elevation,chao:g.map.heightSmoothAt(v.x,v.y),
+        regra:g.map.heightAt(v.x,v.y),speed:v.speed,cruise:qa.cfg().HELI_CRUISE_ALTITUDE};})()`);
     assert.ok(Math.abs(air.alt - air.cruise) < 0.05, `folga ${air.alt} vs cruzeiro ${air.cruise}`);
-    // A cota é o estado mandão; a folga é ela menos o chão de agora.
+    // A cota é o estado mandão; a folga é ela menos o chão que está DESENHADO embaixo da
+    // máquina — a malha contínua, que é a superfície que o casco raspa.
     assert.ok(Math.abs(air.elev - (air.chao + air.alt)) < 1e-6,
       `cota ${air.elev} não bate com o chão ${air.chao} + folga ${air.alt}`);
+    // E o cruzeiro persegue a cota da REGRA (o platô onde a máquina está), não a rampa
+    // misturada à frente: se perseguisse a frente, a montanha içaria o helicóptero sozinha.
+    assert.ok(Math.abs(air.elev - (air.regra + air.cruise)) < 0.05,
+      `cota ${air.elev} não é o platô ${air.regra} + cruzeiro ${air.cruise}`);
     assert.ok(air.speed > 0.5, 'o aparelho anda quando se acelera');
     assert.equal(air.cruise > 1.25, true, 'tem que subir mais do que antes');
   });

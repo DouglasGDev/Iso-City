@@ -1,5 +1,6 @@
 import { Group, Path, Skia, type SkPath } from '@shopify/react-native-skia';
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
+import { GAME_CONFIG } from '../game/GameConfig';
 import type { HazardKind } from '../systems/HazardSystem';
 
 /** Estado por quadro, igual ao das armas: os caminhos são montados fora do React. */
@@ -10,12 +11,19 @@ export interface HazardVisualState {
   spin: number;
   time: number;
   vortex: { x: number; y: number; radius: number };
+  /**
+   * Olho do furacão e o raio do campo de vento, exatamente como `HazardSystem` o usa para
+   * empurrar. A nuvem é desenhada neste raio: o que se vê é literalmente o que puxa.
+   */
+  storm: { x: number; y: number; radius: number; spin: number };
   wave: { u0: number; u1: number; from: number; edge: number; dir: number; axis: 'x' | 'y' };
 }
 
 export const HAZARD_VISUAL_IDLE: HazardVisualState = {
   kind: null, strength: 0, spin: 0, time: 0,
-  vortex: { x: 0, y: 0, radius: 0 }, wave: { u0: 0, u1: 0, from: 0, edge: 0, dir: 1, axis: 'y' },
+  vortex: { x: 0, y: 0, radius: 0 },
+  storm: { x: 0, y: 0, radius: 0, spin: 0 },
+  wave: { u0: 0, u1: 0, from: 0, edge: 0, dir: 1, axis: 'y' },
 };
 
 const px = (x: number, y: number) => (x - y) * 64;
@@ -23,6 +31,12 @@ const py = (x: number, y: number) => (x + y) * 32;
 const FUNNEL_HEIGHT = 250;
 /** O raio do funil é o alcance do vento; a nuvem visível é bem mais estreita que ele. */
 const FUNNEL_VISUAL = 0.42;
+/**
+ * Um círculo de `r` tiles no chão iso vira uma elipse de meia-largura r·64·√2 e meia-altura
+ * metade disso: é a projeção de (cos, sen) em (x−y)·64, (x+y)·32. Sem esse fator o anel do
+ * furacão não bateria com o raio que empurra.
+ */
+const RING_X = 64 * Math.SQRT2;
 
 /** Largura (px) da coluna a `t` do chão: pé estreito, ombro largo. */
 const funnelHalf = (r: number, t: number) => r * (0.28 + t * 0.7);
@@ -97,6 +111,56 @@ function wavePoint(axis: 'x' | 'y', u: number, a: number) {
   return axis === 'y' ? { x: u, y: a } : { x: a, y: u };
 }
 
+/** Elipse do chão iso: um círculo de `r` tiles em torno do ponto (x, y) do mundo. */
+function stormRing(path: SkPath, x: number, y: number, r: number) {
+  const cx = px(x, y);
+  const cy = py(x, y);
+  const rx = Math.max(1, r) * RING_X;
+  path.moveTo(cx - rx, cy);
+  path.conicTo(cx, cy - rx * 0.5, cx + rx, cy, 1);
+  path.conicTo(cx, cy + rx * 0.5, cx - rx, cy, 1);
+  path.close();
+}
+
+/**
+ * O campo inteiro de vento como mancha, com o olho recortado no meio: dois anéis no mesmo
+ * caminho + `evenOdd` e o buraco vira o buraco — é ele que diz de onde a tempestade vem.
+ */
+function stormCover(path: SkPath, s: HazardVisualState) {
+  stormRing(path, s.storm.x, s.storm.y, s.storm.radius);
+  stormRing(path, s.storm.x, s.storm.y, Math.min(GAME_CONFIG.HURRICANE_EYE_TILES, s.storm.radius));
+}
+
+/** Olho calmo: o céu claro dentro do recorte, onde o vento para. */
+function stormEye(path: SkPath, s: HazardVisualState) {
+  stormRing(path, s.storm.x, s.storm.y, Math.min(GAME_CONFIG.HURRICANE_EYE_TILES, s.storm.radius));
+}
+
+/** Braços espiralados: é o giro que se lê como furacão, e ele enrola para dentro do olho. */
+function stormArms(path: SkPath, s: HazardVisualState) {
+  const r = Math.max(1, s.storm.radius);
+  // O traço é largo e tem ponta redonda, então cada extremidade sai meio traço além do
+  // ponto final: o braço começa na borda do olho e termina no limite do campo de vento.
+  const ponta = 0.9;
+  const dentro = Math.min(0.9, (GAME_CONFIG.HURRICANE_EYE_TILES + ponta) / r);
+  const fora = Math.max(dentro + 0.05, 1 - ponta / r);
+  const steps = 20;
+  for (let arm = 0; arm < 3; arm++) {
+    for (let i = 0; i <= steps; i++) {
+      // t = fração do raio; o ângulo folga com a distância, então o braço vem de fora e
+      // se enrola no olho, igual à força que `windForce` aplica.
+      const t = dentro + (i / steps) * (fora - dentro);
+      const a = s.storm.spin * 0.8 + arm * (Math.PI * 2 / 3) + (1 - t) * 2.7;
+      const d = r * t;
+      const wx = s.storm.x + Math.cos(a) * d;
+      const wy = s.storm.y + Math.sin(a) * d;
+      const at = { x: px(wx, wy), y: py(wx, wy) };
+      if (i === 0) path.moveTo(at.x, at.y);
+      else path.lineTo(at.x, at.y);
+    }
+  }
+}
+
 /** Área coberta pela água: do mar (atrás da origem) até a crista. */
 function floodPath(path: SkPath, s: HazardVisualState) {
   const { u0, u1, from, edge, dir, axis } = s.wave;
@@ -139,6 +203,24 @@ const shown = (s: HazardVisualState) => s.strength > 0.02;
 export function HazardLayer({ state }: { state: SharedValue<HazardVisualState> }) {
   const tornado = useDerivedValue(() => (state.value.kind === 'tornado' && shown(state.value) ? 1 : 0), [state]);
   const tsunami = useDerivedValue(() => (state.value.kind === 'tsunami' && shown(state.value) ? 1 : 0), [state]);
+  const hurricane = useDerivedValue(() => (state.value.kind === 'hurricane' && shown(state.value) ? 1 : 0), [state]);
+
+  /** Massa de nuvem do furacão: o disco de vento, o olho calmo no meio e os braços em giro. */
+  const mass = useDerivedValue(() => {
+    const path = Skia.Path.Make();
+    if (state.value.kind === 'hurricane' && shown(state.value)) stormCover(path, state.value);
+    return path;
+  }, [state]);
+  const eye = useDerivedValue(() => {
+    const path = Skia.Path.Make();
+    if (state.value.kind === 'hurricane' && shown(state.value)) stormEye(path, state.value);
+    return path;
+  }, [state]);
+  const spiral = useDerivedValue(() => {
+    const path = Skia.Path.Make();
+    if (state.value.kind === 'hurricane' && shown(state.value)) stormArms(path, state.value);
+    return path;
+  }, [state]);
 
   const funnel = useDerivedValue(() => {
     const path = Skia.Path.Make();
@@ -175,6 +257,27 @@ export function HazardLayer({ state }: { state: SharedValue<HazardVisualState> }
 
   return (
     <Group>
+      {/*
+        A mancha do furacão vem antes das outras: ela é a sombra da tempestade sobre a
+        cidade, não um objeto na rua. Os alpha são baixos de propósito — a tela tem de
+        continuar legível para se pilotar dentro do vento.
+      */}
+      <Group opacity={hurricane}>
+        {/*
+          `evenOdd` é o que fura o olho: o disco grande e o disco do olho estão no mesmo
+          caminho, então o centro fica vazio e a cidade aparece onde o vento para.
+        */}
+        <Path path={mass} fillType="evenOdd" color="rgba(52,60,76,0.24)" />
+        {/* Braços largos: o disco tem ~1.000px de largura, e traço fino some nele.
+            Junta redonda: com 20 segmentos por braço, o canto vivo da polilinha aparece. */}
+        <Path path={spiral} color="rgba(206,214,226,0.2)" style="stroke" strokeWidth={150}
+          strokeJoin="round" strokeCap="round" />
+        <Path path={spiral} color="rgba(238,244,252,0.34)" style="stroke" strokeWidth={52}
+          strokeJoin="round" strokeCap="round" />
+        {/* Parede do olho: o anel claro é a fronteira entre a calmaria e o vento que arremessa. */}
+        <Path path={eye} color="rgba(240,246,254,0.4)" style="stroke" strokeWidth={26} />
+        <Path path={eye} color="rgba(150,168,190,0.22)" />
+      </Group>
       <Group opacity={tsunami}>
         <Path path={cover} color="rgba(24,76,94,0.6)" />
         <Path path={foam} color="rgba(226,244,250,0.88)" />
