@@ -22,6 +22,15 @@ const PAN_STEP = 46;
 /** Velocidade do analógico esquerdo: px/s de pan e fator de zoom por segundo. */
 const PAN_SPEED = 460;
 const ZOOM_SPEED = 0.9;
+/** Quão presente fica a terra ainda não descoberta no radar: apagada, nunca escondida. */
+const FOG_DIM = 0.42;
+/**
+ * Ritmo do radar. A janela se move com o jogador, então este é o relógio de rolagem do
+ * mapa: a 220ms o terreno dava saltos de ~6px a velocidade de carro, e com a névoa
+ * apagando dois terços da janela o salto nem aparecia. Agora que a volta inteira é
+ * legível, 120ms é o mínimo para o mapa deslizar em vez de tremer.
+ */
+const RADAR_TICK = 120;
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 
 // Uma única imagem da cidade por partida: radar e mapa cheio compartilham o raster de ~1,8 MB.
@@ -109,6 +118,15 @@ function MapCanvas({ mapW, mapH, zoom, panX, panY, detailed }: {
       <Group clip={outline}>
         <Path path={grid} color={C.grid} style="stroke" strokeWidth={0.5 / scale} />
       </Group>
+      {/* O radar é o instrumento do "onde estou agora", e a janela dele alcança ~20 tiles para
+          todo lado enquanto a descoberta revela só 8: dois terços do painel ficavam no cinza de
+          nunca-visitado, incluindo a rua onde o jogador está pisando e o caminho à frente. A
+          terra desconhecida continua apagada — só não some. No mapa cheio a névoa fecha por
+          inteiro, porque lá ela é a recompensa de explorar, não o chão debaixo do pé. */}
+      {image && !detailed && (
+        <Image image={image} x={0} y={0} width={imgW} height={imgH} fit="fill" opacity={FOG_DIM}
+          sampling={{ filter: FilterMode.Linear }} />
+      )}
       <Group clip={mask.discovered}>
         {image && <Image image={image} x={0} y={0} width={imgW} height={imgH} fit="fill" sampling={{ filter: FilterMode.Linear }} />}
       </Group>
@@ -196,7 +214,7 @@ export function MiniMap() {
   const [, setTick] = useState(0);
   useEffect(() => {
     if (suspended) return;
-    const iv = setInterval(() => setTick((t) => t + 1), 220);
+    const iv = setInterval(() => setTick((t) => t + 1), RADAR_TICK);
     return () => clearInterval(iv);
   }, [suspended]);
   const ms = game.missions.state;
