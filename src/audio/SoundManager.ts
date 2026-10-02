@@ -68,6 +68,7 @@ const weatherChannel = loopState<WeatherBed>({
 const loopChannels: Record<LoopChannel, LoopState<LoopKey>> = {
   engine: loopState<LoopKey>(LOOPS),
   siren: loopState<LoopKey>(LOOPS),
+  cascade: loopState<LoopKey>(LOOPS),
 };
 
 function clampVolume(volume: number) {
@@ -198,6 +199,7 @@ function refreshLoops() {
     reconcileLoop(weatherChannel),
     reconcileLoop(loopChannels.engine),
     reconcileLoop(loopChannels.siren),
+    reconcileLoop(loopChannels.cascade),
   ]);
 }
 
@@ -326,7 +328,7 @@ export const sound = {
   },
 
   stopLoops() {
-    for (const ch of ['engine', 'siren'] as const) {
+    for (const ch of ['engine', 'siren', 'cascade'] as const) {
       void requestLoop(loopChannels[ch], null, 0);
     }
   },

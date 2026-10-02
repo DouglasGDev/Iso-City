@@ -7,6 +7,7 @@ import { GameLoop } from '../game/GameLoop';
 import { registerCameraSV, entitySVs, animalSVs } from './SharedValues';
 import { animalVisualState } from '../entities/Animal';
 import { GroundLayer } from './GroundLayer';
+import { CascadeLayer } from './CascadeLayer';
 import { SortedWorldLayer, type OcclusionFocus } from './SortedWorldLayer';
 import { effectiveAim, inputState } from '../game/InputState';
 import { GAME_CONFIG } from '../game/GameConfig';
@@ -258,6 +259,7 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
             <WeaponEffects state={weapons} />
           </> : <>
             <GroundLayer game={game} />
+            <CascadeLayer game={game} clock={clock} />
             <MarkerLayer game={game} clock={clock} />
             <TrafficSignalLayer game={game} />
             <EntranceMarkers game={game} />

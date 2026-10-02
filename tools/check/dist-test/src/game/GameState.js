@@ -39,6 +39,7 @@ const DayNightSystem_1 = require("../systems/DayNightSystem");
 const WeatherSystem_1 = require("../systems/WeatherSystem");
 const SnowSystem_1 = require("../systems/SnowSystem");
 const HazardSystem_1 = require("../systems/HazardSystem");
+const CascadeSystem_1 = require("../systems/CascadeSystem");
 const DestructionSystem_1 = require("../systems/DestructionSystem");
 const FogSystem_1 = require("../systems/FogSystem");
 const AmbientSystem_1 = require("../systems/AmbientSystem");
@@ -140,6 +141,7 @@ class GameState {
         this.hornNoise = 0;
         this.gpsRefresh = 0;
         this.engineRefresh = 0;
+        this.cascadeRefresh = 0;
         /** Bioma sob a câmera, lido no tick de ambiente: é o clima que ele escolhe. */
         this.biomeAtCamera = 'residential';
         this.nextVehicleId = 0;
@@ -154,6 +156,7 @@ class GameState {
             onEmpty: () => SoundManager_1.sound.play('weaponEmpty', 0.4),
         };
         this.map = new Map_1.Map((0, city_1.generateCity)());
+        this.cascade = new CascadeSystem_1.CascadeSystem(this.map.data);
         this.wildlife.init(this.map);
         this.interiors = new InteriorSystem_1.InteriorSystem(this.map);
         // A cadeia fala pela sala, mas quem decide é o JailSystem — laço de função, não de import.
@@ -482,6 +485,8 @@ class GameState {
         this.health.update(dt, this.player, this.time);
         // Depois de todo mundo se mover: o perigo empurra, arremessa e machuca o que cruzar.
         this.hazard.sweep(dt, this.hazardSweepContext(!!room));
+        // A queda é um lugar fixo: a mesma varredura leva para a bacia quem encostar no lençol.
+        this.cascade.sweep(dt, this.cascadeSweepContext(!!room));
         this.wanted.update(dt, this.player, !room && this.police.playerVisible);
         if (!room)
             this.separate(this.player);
@@ -492,6 +497,7 @@ class GameState {
         this.updateSceneryVehicles(dt);
         this.updateCamera(dt);
         this.updateEngineAudio(dt);
+        this.updateCascadeAudio(dt);
         if (!room)
             this.updateGpsArrival();
         if (this.player.health <= 0) {
@@ -905,6 +911,44 @@ class GameState {
             shake: (amount) => this.shake(amount),
             onStructChange: () => this.notifyEntityChange(),
         };
+    }
+    /**
+     * O que a correnteza alcança agora. É a mesma varredura do perigo, só que de um lugar
+     * parado: sem `shake` nem alerta, porque a queda não anda pelo mapa — ela está onde foi
+     * desenhada, e quem entra nela é que se move.
+     */
+    cascadeSweepContext(indoors) {
+        return {
+            time: this.time,
+            indoors,
+            player: this.player,
+            npcs: this.npcs,
+            vehicles: this.vehicles,
+            animals: this.wildlife.animals,
+            health: this.health,
+            clamp: (body) => {
+                this.collision.resolveCircle(body, this.map.queryNearby(body.x, body.y, 2));
+            },
+            shake: (amount) => this.shake(amount),
+        };
+    }
+    /**
+     * Volume do rugido ouvido onde o jogador está, no mesmo ritmo de 0,25s do motor: um
+     * pedido por quadro ao canal nativo afogaria a ponte assíncrona por uma diferença
+     * inaudível. Dentro de casa a queda fica do lado de fora do plano da sala.
+     */
+    updateCascadeAudio(dt) {
+        this.cascadeRefresh -= dt;
+        if (this.cascadeRefresh > 0)
+            return;
+        this.cascadeRefresh = 0.25;
+        if (this.interiors.active || !this.cascade.count) {
+            SoundManager_1.sound.setLoop('cascade', null);
+            return;
+        }
+        const position = this.worldPosition;
+        const volume = this.cascade.volumeEm(position.x, position.y);
+        SoundManager_1.sound.setLoop('cascade', volume > 0.02 ? 'cascade' : null, volume);
     }
     updateEngineAudio(dt) {
         this.engineRefresh -= dt;

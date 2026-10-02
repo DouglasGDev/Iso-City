@@ -95,6 +95,12 @@ export class Map {
   private nodeGridRows = 0;
   /** Cantos da malha já promedidos: (tilesW+1)·(tilesH+1) cotas, calculadas uma vez. */
   private cornerH: Float32Array = new Float32Array(0);
+  /**
+   * Tiles da bacia de cada cachoeira, que são água para o movimento sem reescrever o tile:
+   * um `kind:'water'` no meio da encosta afundaria o morro no gerador, e a rede pisável
+   * colapsaria (bug #115). Aqui a água é uma camada à parte, desenhada pela CascadeLayer.
+   */
+  private cascadeWater: Uint8Array | null = null;
 
   constructor(data: CityMapData, extraColliders: Collider[] = []) {
     // O relevo é dado do mapa, não suposição: um chão sem malha de altura é plano, e é
@@ -103,6 +109,7 @@ export class Map {
     if (!data.shades) data.shades = new Float32Array(data.tilesW * data.tilesH);
     this.data = data;
     this.buildCorners();
+    this.buildCascadeWater();
     const colliders: Collider[] = [...extraColliders];
     const buildingColliders: Collider[] = [];
     for (const b of data.buildings) {
@@ -316,8 +323,12 @@ export class Map {
       isRoad(tx, ty) && !!tiles[ty * W + tx].bridge;
     const isSidewalk = (tx: number, ty: number) => {
       if (tx < 0 || ty < 0 || tx >= W || ty >= H) return false;
+      // Água de movimento, não só de tile: a bacia da cachoeira é `isWaterWorld` sem ser
+      // `kind:'water'`. Um node de passeio ali dentro é um pedestre nadando parado em cima do
+      // próprio destino, porque o destino é ele — e a faixa inteira para atrás dele. O passeio
+      // dá volta na poça como dá volta no rio.
+      if (this.isWaterWorld(tx + 0.5, ty + 0.5)) return false;
       const t = tiles[ty * W + tx];
-      if (t.kind === 'water') return false;
       if (t.kind === 'road') {
         // Bridge decks and their dry approaches connect the two sidewalk banks.
         return isBridge(tx, ty) || isBridge(tx + 1, ty) || isBridge(tx - 1, ty)
@@ -557,7 +568,10 @@ export class Map {
     const tx = Math.floor(x);
     const ty = Math.floor(y);
     if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH) return false;
-    return this.data.tiles[ty * this.data.tilesW + tx].kind === 'water';
+    const i = ty * this.data.tilesW + tx;
+    // A bacia da cachoeira é água de verdade para o movimento, sem ser tile de água no mapa.
+    if (this.cascadeWater && this.cascadeWater[i]) return true;
+    return this.data.tiles[i].kind === 'water';
   }
 
   tileKindAt(x: number, y: number) {
@@ -596,6 +610,41 @@ export class Map {
       for (let x = 0; x <= W; x++) c[y * (W + 1) + x] = vertexHeight(this.data, x, y);
     }
     this.cornerH = c;
+  }
+
+  /**
+   * Marca os tiles cobertos pela bacia de cada queda. Uma varredura por tile do disco, no
+   * construtor, uma vez por mapa: `isWaterWorld` é caminho quente (movimento, NPCs, trânsito,
+   * polícia) e só paga um leitura de array.
+   */
+  private buildCascadeWater() {
+    const list = this.data.cascatas;
+    if (!list || !list.length) return;
+    const W = this.data.tilesW;
+    const H = this.data.tilesH;
+    const mask = new Uint8Array(W * H);
+    let algum = 0;
+    for (const c of list) {
+      const r = Math.max(0.5, c.bacia.raio);
+      const x0 = Math.max(0, Math.floor(c.bacia.x - r));
+      const x1 = Math.min(W - 1, Math.ceil(c.bacia.x + r));
+      const y0 = Math.max(0, Math.floor(c.bacia.y - r));
+      const y1 = Math.min(H - 1, Math.ceil(c.bacia.y + r));
+      for (let ty = y0; ty <= y1; ty++) {
+        for (let tx = x0; tx <= x1; tx++) {
+          // Distância do disco ao tile inteiro, não ao centro dele: medindo pelo centro,
+          // um disco de um tile e um pouco perde as quatro diagonais e a bacia desenhada
+          // — elipse cheia — vira uma cruz de tiles pisáveis. O corpo parava num canto
+          // molhado do desenho e continuava andando sobre a relva.
+          const dx = Math.max(tx - c.bacia.x, c.bacia.x - (tx + 1), 0);
+          const dy = Math.max(ty - c.bacia.y, c.bacia.y - (ty + 1), 0);
+          if (Math.hypot(dx, dy) > r) continue;
+          mask[ty * W + tx] = 1;
+          algum = 1;
+        }
+      }
+    }
+    if (algum) this.cascadeWater = mask;
   }
 
   /**

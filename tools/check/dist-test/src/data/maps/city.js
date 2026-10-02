@@ -1342,7 +1342,10 @@ function generateCity(seed = 20260909) {
     if (!central.length)
         throw new Error('No clear commercial sidewalk for player');
     const playerSpawn = central[0];
-    const npcSpawns = shuffle(candidates.filter((p) => Math.hypot(p.x - playerSpawn.x, p.y - playerSpawn.y) > 1), rng).slice(0, MAX_SPAWNS);
+    // O baralho inteiro fica guardado: a cachoeira, que nasce depois, aparda spawns dentro do
+    // próprio corredor e repõe a cidade com as sobras desta mesma lista.
+    const spawnPool = shuffle(candidates.filter((p) => Math.hypot(p.x - playerSpawn.x, p.y - playerSpawn.y) > 1), rng);
+    const npcSpawns = spawnPool.slice(0, MAX_SPAWNS);
     // ---- Relevo: plataforma de obra, não mesa cortada no morro ----------------
     // A porta fica na fachada, um palmo FORA da parede (fileira sul ou coluna leste).
     // Travando só o pé-direito, a casa do campo ficava com o degrau exatamente onde quem
@@ -1423,6 +1426,396 @@ function generateCity(seed = 20260909) {
     // desfazer o corte de nível — e é ela que impede o morro de encostar na guia como muro.
     montarTeto();
     aparar();
+    // ---- Cachoeiras ----------------------------------------------------------
+    // O relevo não tem parede, e é de propósito: o teto de declive é justamente o que
+    // impede o morro de acordar um degrau de bloco (#115, #118). Então a queda não nasce
+    // de um corte — nasce do LANCE mais íngreme da linha de escoamento, o trecho onde a
+    // cota mais cai por tile andado. E há um motivo geométrico para isso virar cachoeira na
+    // tela: em `worldToScreen`, cada tile de (x+y) ganho desce o ponto 32px e cada tile de
+    // cota perdido desce mais 64. Um talude a 0,3 tile/tile, que é o máximo que o teto
+    // permite, desce em tela 1,6 vez mais rápido do que chão plano — e se o caimento vem
+    // para a câmera (x e y crescendo juntos) o X não anda um pixel: o traçado sai uma
+    // coluna vertical. É essa coluna que o render vestirá de água, ponto a ponto, com a
+    // cota lida do próprio chão, e não uma faixa plana colada na parede. Daí a régua abaixo
+    // ser medida em pixels de tela, não em gosto: 0,8 tile de desnível são 51px de queda, e
+    // o lance ainda precisa descer pelo menos 112px na tela para não ser riacho.
+    const CASCATA_MAX = 4;
+    const CASCATA_QUEDA_MIN = 0.8;
+    /** Pixels de descida na tela. Abaixo disto não é queda, é riacho. */
+    const CASCATA_DESCIDA_MIN = 112;
+    /** Janela do lance: curto demais não dá folha de água, comprido demais é rampa. */
+    const CASCATA_LANCE_MIN = 3;
+    const CASCATA_LANCE_MAX = 8;
+    /** Travessia máxima, em fração da descida: faz a folha cair reta em vez de escorregar de lado. */
+    const CASCATA_LATERAL = 0.6;
+    /** Duas quedas coladas no mesmo talude se leriam como uma malhada só. */
+    const CASCATA_ESPACO = 22;
+    /** Quantos lances do mesmo tile a varredura guarda, do melhor para o pior. */
+    const CASCATA_CANDIDATAS = 4;
+    /** Queda que se paga por tile de travessia na tela: faz a coluna bater o declive torto. */
+    const CASCATA_TORTO = 0.04;
+    /** Curvatura máxima do lance, em fração da descida: acima disso a folha não vestiu o talude. */
+    const CASCATA_CURVA = 0.3;
+    /** Os oito vizinhos: a diagonal é o único passo que desce a prumo na tela. */
+    const VIZINHOS = [
+        [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1],
+    ];
+    /** Amostra do eixo: miúdo porque a folha tem de vestir o losango, não cortá-lo. */
+    const CASCATA_PASSO = 0.3;
+    /**
+     * O que uma queda deste porte jorra: a calha da folha e o raio da poça no pé. O canal
+     * estreita no lábio e alarga na bacia — é o guarda-chuva clássico, e vem do próprio fluxo,
+     * porque a água que cai precisa de mais chão para sair.
+     *
+     * A régua é a tela, não o gosto: uma folha de 1,3 tile numa queda de 326px de tela deu
+     * 110px de largura por 326 de altura, e o olho leu rampa de concreto. Meio tile de calha
+     * para um lance de um tile de cota é o ponto em que a cortina fica mais alta que larga e
+     * ainda cabe um corpo nela. E a poça gira em volta do jato sem ser lago: o diâmetro que a
+     * folha desenhada pede é o dobro da sua largura no pé — em 1,27 tile o caldo tinha o triplo
+     * da calha e virava poça de chuva na frente da queda, que era o que se via.
+     */
+    const medidaQueda = (queda) => {
+        const largura = Math.min(1.35, 0.55 + queda * 0.28);
+        return { largura, raio: Math.min(1.4, 0.4 + largura * 0.75) };
+    };
+    /** O mundo morre antes da borda: nada despenca do fim do mapa. */
+    const CASCATA_BORDA = 5;
+    const cascatas = [];
+    const naCatar = new Uint8Array(W * H);
+    {
+        // Onde a água não pode passar: prédio, asfalto, trilha, rio e borda. O mato não entra
+        // aqui de propósito — a mata inteira estaria a duas tiles de um prop, e a única
+        // encosta sobra seria o deserto. Prop no corredor é tirado depois, não filtrado antes.
+        const catar = new Uint8Array(W * H);
+        for (const b of buildings) {
+            const s = b.footprintW;
+            for (let y = Math.floor(b.y - s); y <= Math.ceil(b.y); y++) {
+                for (let x = Math.floor(b.x - s); x <= Math.ceil(b.x); x++) {
+                    if (x >= 0 && y >= 0 && x < W && y < H)
+                        catar[y * W + x] = 1;
+                }
+            }
+        }
+        const àObstáculo = manhattan((i) => catar[i] === 1
+            || tiles[i].kind === 'road' || tiles[i].kind === 'water' || walkway[i] === 1);
+        // A régua da NASCENTE é de limpeza visual: longe de asfalto, rio e prédio, para a queda
+        // brotar na encosta e não em cima de um lote. O TRAJECTO não obedece a ela — descer um
+        // morro é exatamente ir para o vale, onde a água mora. Filhar o escoamento pela mesma
+        // régua matava o passo a duas tiles da fonte: medido, 966 de cada 1.001 fontes morriam
+        // por caminho curto e o mapa inteiro ficava sem cachoeira.
+        const pisável = (x, y) => {
+            if (x < CASCATA_BORDA || y < CASCATA_BORDA || x >= W - CASCATA_BORDA || y >= H - CASCATA_BORDA)
+                return false;
+            const i = y * W + x;
+            return !flatTile(i) && àObstáculo[i] >= 2 && toWater[i] >= 3;
+        };
+        /** Chão natural dentro do mapa: o que a corrente pode atravessar. */
+        const escoável = (x, y) => x >= 0 && y >= 0 && x < W && y < H && !flatTile(y * W + x);
+        // O escoamento guloso desce pelo vizinho mais baixo — mas na tela "mais baixo" não é
+        // só a cota: o passo +x desce para a direita e o +y para a esquerda, e o único passo
+        // que desce A PIUMO é a diagonal (+x,+y), porque nela o (x−y) não anda. Sem essa
+        // conta, a linha de maior declive de um talude que olha para o +x andava um eixo
+        // inteiro e depois corria para o outro: um L no mundo, um V na tela, e a folha de
+        // água fechando por dentro da curva como uma laje de concreto. Paga-se um pouco de
+        // queda por tile de travessia e o morro devolve uma coluna.
+        const desce = (x0, y0) => {
+            const nós = [{ x: x0, y: y0 }];
+            let x = x0;
+            let y = y0;
+            for (let k = 0; k < 16; k++) {
+                let melhor = 0.05;
+                let dir = null;
+                for (const [dx, dy] of VIZINHOS) {
+                    if (!escoável(x + dx, y + dy))
+                        continue;
+                    const d = heights[y * W + x] - heights[(y + dy) * W + x + dx];
+                    const v = d - Math.abs(dx - dy) * CASCATA_TORTO;
+                    if (v > melhor) {
+                        melhor = v;
+                        dir = [dx, dy];
+                    }
+                }
+                if (!dir)
+                    break;
+                x += dir[0];
+                y += dir[1];
+                nós.push({ x, y });
+            }
+            return nós;
+        };
+        // Chaikin: o escoamento guloso é um degrau de escada, e escada desenhada é zigue-
+        // zague. Três rodadas trocam cada canto por dois pontos a 1/4 e 3/4 e o traçado
+        // assenta na diagonal — que é a direção que desce reta na tela.
+        const alisa = (nós) => {
+            let pts = nós.map((p) => ({ x: p.x + 0.5, y: p.y + 0.5 }));
+            for (let it = 0; it < 3; it++) {
+                const out = [pts[0]];
+                for (let i = 0; i < pts.length - 1; i++) {
+                    const a = pts[i];
+                    const b = pts[i + 1];
+                    out.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25 });
+                    out.push({ x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75 });
+                }
+                out.push(pts[pts.length - 1]);
+                pts = out;
+            }
+            return pts;
+        };
+        const reamostra = (pts) => {
+            const acum = [0];
+            for (let i = 1; i < pts.length; i++) {
+                acum.push(acum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+            }
+            const total = acum[acum.length - 1];
+            const out = [];
+            let k = 1;
+            for (let s = 0; s <= total + 1e-6; s += CASCATA_PASSO) {
+                while (k < pts.length - 1 && acum[k] < s)
+                    k++;
+                const t = acum[k] === acum[k - 1] ? 0 : (s - acum[k - 1]) / (acum[k] - acum[k - 1]);
+                out.push({
+                    x: pts[k - 1].x + (pts[k].x - pts[k - 1].x) * t,
+                    y: pts[k - 1].y + (pts[k].y - pts[k - 1].y) * t,
+                });
+            }
+            const fim = pts[pts.length - 1];
+            if (Math.hypot(fim.x - out[out.length - 1].x, fim.y - out[out.length - 1].y) > 0.02)
+                out.push(fim);
+            else
+                out[out.length - 1] = fim;
+            return out;
+        };
+        // O que a folha consegue desenhar é o que quase não sai da reta entre o lábio e o pé.
+        // Na tela, travessia é (x−y) a 64px e descida é (x+y) a 32px: um lance que faz curva
+        // descreve um V e o preenchimento fecha por dentro da barriga — a laje pálida que
+        // atravessa o morro. Medir só as pontas não pega, porque um L perfeito tem as duas
+        // pontas na mesma vertical e o cotovelo a três tiles dela.
+        const prumo = (curso, pxQeda) => {
+            const boca = [(curso[0].x - curso[0].y) * 64, (curso[0].x + curso[0].y) * 32];
+            const pé = [(curso[curso.length - 1].x - curso[curso.length - 1].y) * 64,
+                (curso[curso.length - 1].x + curso[curso.length - 1].y) * 32];
+            const dx = pé[0] - boca[0];
+            const dy = pé[1] - boca[1];
+            const corda = Math.hypot(dx, dy);
+            if (corda < 1)
+                return false;
+            let max = 0;
+            for (const p of curso) {
+                const px = (p.x - p.y) * 64;
+                const py = (p.x + p.y) * 32;
+                const d = Math.abs((px - boca[0]) * dy - (py - boca[1]) * dx) / corda;
+                if (d > max)
+                    max = d;
+            }
+            return max <= Math.max(24, pxQeda * CASCATA_CURVA);
+        };
+        /**
+         * A poça é água de movimento: `isWaterWorld` vale pelo tile que o disco encosta, não pelo
+         * ponto — um canto de tile molhado afoga o tile inteiro. Por isso ela nunca pode tocar o
+         * asfalto: um carro atravessando a faixa veria água no meio da pista e a checagem de
+         * trânsito encerra ali. O passeio afogado é problema de outro lado, e está resolvido lá
+         * (`Map.buildSidewalkGraph` não planta node em tile alagado), porque tirar o node é o
+         * gesto certo: poça na calçada se contorna, como se contorna o rio.
+         *
+         * O chão disponível limita a poça; ele não cancela a queda. Encolhe-se o disco até caber,
+         * primeiro no chão natural e, não cabendo, no que sobra — laje alagada é meio-boca de
+         * desenho, queda que não existe é meio-boca de função.
+         */
+        const poçaLimpa = (fim, raio, piso) => {
+            const cx = fim.x + 0.5;
+            const cy = fim.y + 0.5;
+            const asfalto = (tx, ty) => {
+                if (tx < 0 || ty < 0 || tx >= W || ty >= H)
+                    return true;
+                return tiles[ty * W + tx].kind === 'road';
+            };
+            const natural = (tx, ty) => {
+                if (asfalto(tx, ty))
+                    return true;
+                const j = ty * W + tx;
+                return flatTile(j) || walkway[j] === 1;
+            };
+            for (const suja of [natural, asfalto]) {
+                for (let r = raio; r >= piso - 1e-6; r -= 0.05) {
+                    let limpa = true;
+                    for (let ty = Math.floor(cy - r); ty <= Math.ceil(cy + r) && limpa; ty++) {
+                        for (let tx = Math.floor(cx - r); tx <= Math.ceil(cx + r) && limpa; tx++) {
+                            const dx = Math.max(tx - cx, 0, cx - tx - 1);
+                            const dy = Math.max(ty - cy, 0, cy - ty - 1);
+                            if (Math.hypot(dx, dy) <= r && suja(tx, ty))
+                                limpa = false;
+                        }
+                    }
+                    if (limpa)
+                        return Math.max(0.5, r);
+                }
+            }
+            return 0;
+        };
+        const lances = [];
+        for (let y = CASCATA_BORDA; y < H - CASCATA_BORDA; y++) {
+            for (let x = CASCATA_BORDA; x < W - CASCATA_BORDA; x++) {
+                if (!pisável(x, y) || heights[y * W + x] < 1)
+                    continue;
+                const trilha = desce(x, y);
+                const opções = [];
+                for (let i = 0; i + CASCATA_LANCE_MIN < trilha.length; i++) {
+                    const a = trilha[i];
+                    const ia = a.y * W + a.x;
+                    for (let j = i + CASCATA_LANCE_MIN; j <= Math.min(trilha.length - 1, i + CASCATA_LANCE_MAX); j++) {
+                        const b = trilha[j];
+                        // A bacia é um anel de raio até 1,4 tile em volta do pé: se o pé chega perto
+                        // da borda, metade do anel fica fora do mundo e a água morre no nada.
+                        if (b.x < CASCATA_BORDA || b.y < CASCATA_BORDA
+                            || b.x >= W - CASCATA_BORDA || b.y >= H - CASCATA_BORDA)
+                            continue;
+                        const queda = heights[ia] - heights[b.y * W + b.x];
+                        if (queda < CASCATA_QUEDA_MIN)
+                            continue;
+                        // A conta é a projeção em si: `worldToScreen` dá y = (x+y)·32 − h·64, então o
+                        // chão andado desce 32px por tile de (x+y) e a cota perdida desce mais 64 por
+                        // tile. Travessia é o (x−y), a 64px. Um lance que desce o morro para o NORTE da
+                        // tela perde altura e ganha tela para cima — é riacho morro acima, e a primeira
+                        // régua deixou um desses passar: queda certa, sinal errado.
+                        const pxChão = ((b.x + b.y) - (a.x + a.y)) * 32;
+                        const pxAltura = queda * 64;
+                        const pxQeda = pxChão + pxAltura;
+                        if (pxChão <= 0 || pxQeda < CASCATA_DESCIDA_MIN)
+                            continue;
+                        const pxLado = Math.abs((b.x - b.y) - (a.x - a.y)) * 64;
+                        if (pxLado > pxQeda * CASCATA_LATERAL)
+                            continue;
+                        // Pontua a COLUNA de cota, nunca o comprimento: um lance largo e manso também
+                        // desce na tela pelo chão andado, e isso é rampa. O quadrado em `pxAltura` é o
+                        // que faz o talude íngreme bater o riacho comprido, e o divisor em travessia é
+                        // o que apruma a folha.
+                        const pontos = (pxAltura * pxAltura) / (pxLado + 32);
+                        // Não guardar só o campeão: o lance mais pontudo deste tile pode ser o
+                        // cotovelo que a folha não desenha. Fica uma fila curta, do melhor para o
+                        // pior, e a escolha cai no primeiro que é reto e não atravessa rua.
+                        opções.push({
+                            boca: a, fim: b, nós: trilha.slice(i, j + 1), curso: [],
+                            queda, topo: heights[ia], base: heights[b.y * W + b.x], pontos, pxQeda, poça: 0,
+                        });
+                        opções.sort((p, q) => q.pontos - p.pontos);
+                        if (opções.length > CASCATA_CANDIDATAS)
+                            opções.length = CASCATA_CANDIDATAS;
+                    }
+                }
+                for (const c of opções) {
+                    c.curso = reamostra(alisa(c.nós));
+                    if (!prumo(c.curso, c.pxQeda))
+                        continue;
+                    // O traçado alisado corta esquinas: se ele saiu do corredor, o lance não era uma
+                    // linha só e a folha ficaria torta atravessando rua e lote.
+                    let firme = true;
+                    for (const p of c.curso) {
+                        const tx = Math.floor(p.x);
+                        const ty = Math.floor(p.y);
+                        if (tx < 0 || ty < 0 || tx >= W || ty >= H) {
+                            firme = false;
+                            break;
+                        }
+                        const j = ty * W + tx;
+                        if (flatTile(j) || tiles[j].kind === 'road' || walkway[j]) {
+                            firme = false;
+                            break;
+                        }
+                    }
+                    if (!firme)
+                        continue;
+                    // Poça mínima desenhável: meio tile de calha já é o bastante para a cortina caber
+                    // dentro do caldo. Abaixo disso a folha despeja num pires e a leitura volta a ser
+                    // pintura colada na pedra.
+                    const { largura, raio } = medidaQueda(c.queda);
+                    c.poça = poçaLimpa(c.fim, raio, Math.max(0.5, largura * 0.6));
+                    if (!c.poça)
+                        continue;
+                    lances.push(c);
+                    break;
+                }
+            }
+        }
+        lances.sort((a, b) => b.pontos - a.pontos);
+        const escolhidas = [];
+        for (const c of lances) {
+            if (escolhidas.length >= CASCATA_MAX)
+                break;
+            // Duas janelas do mesmo talude têm lábios vizinhos: a varredura acha o lance a partir
+            // de cada tile rio acima, então o afastamento é medido na boca da queda.
+            const perto = escolhidas.some((o) => Math.hypot(o.boca.x - c.boca.x, o.boca.y - c.boca.y) < CASCATA_ESPACO);
+            if (!perto)
+                escolhidas.push(c);
+        }
+        escolhidas.forEach((c, id) => {
+            const fim = c.fim;
+            const { largura } = medidaQueda(c.queda);
+            const bacia = { x: fim.x + 0.5, y: fim.y + 0.5, raio: c.poça };
+            cascatas.push({
+                id,
+                curso: c.curso,
+                largura,
+                bacia,
+                topo: c.topo,
+                base: c.base,
+                queda: c.queda,
+            });
+            // Carimbo do corredor: a folha de água não pode ter mato atravessado nela, nem pedra
+            // boiando no jato. `naCatar` tira o que já foi plantado — e os retângulos em `occupied`
+            // barram o que a serra ainda vai plantar, porque adProp consulta a mesma malha.
+            const meia = largura * 0.5 + 0.75;
+            const marca = (px, py, alcance) => {
+                for (let y = Math.max(0, Math.floor(py - alcance)); y <= Math.min(H - 1, Math.floor(py + alcance)); y++) {
+                    for (let x = Math.max(0, Math.floor(px - alcance)); x <= Math.min(W - 1, Math.floor(px + alcance)); x++) {
+                        if (Math.hypot(x + 0.5 - px, y + 0.5 - py) <= alcance)
+                            naCatar[y * W + x] = 1;
+                    }
+                }
+            };
+            c.curso.forEach((p, k) => {
+                marca(p.x, p.y, meia);
+                // `occupy` escreve na malha de tiles e não conhece borda: fora do mapa não há o
+                // que bloquear, então o retângulo é aparado antes.
+                if (k % 2 === 0) {
+                    occupy({
+                        x0: Math.max(0, p.x - meia + 0.3), y0: Math.max(0, p.y - meia + 0.3),
+                        x1: Math.min(W, p.x + meia - 0.3), y1: Math.min(H, p.y + meia - 0.3),
+                    });
+                }
+            });
+            // `marca` mede ao centro do tile e `isWaterWorld` ao tile inteiro, então a máscara chega
+            // quase um tile além do disco: a folga é o que evita pedra e mato plantados na água.
+            marca(bacia.x, bacia.y, bacia.raio + 1.2);
+            occupy({
+                x0: Math.max(0, bacia.x - bacia.raio - 0.2), y0: Math.max(0, bacia.y - bacia.raio - 0.2),
+                x1: Math.min(W, bacia.x + bacia.raio + 0.2), y1: Math.min(H, bacia.y + bacia.raio + 0.2),
+            });
+        });
+        if (cascatas.length) {
+            // Pedra e mato em cima do escoamento sumiriam atrás da folha ou, pior, apareceriam
+            // atravessados nela. Tira-se antes de a copa ser carimbada, para a sombra também ir.
+            for (let k = props.length - 1; k >= 0; k--) {
+                const p = props[k];
+                if (naCatar[Math.floor(p.y) * W + Math.floor(p.x)])
+                    props.splice(k, 1);
+            }
+            // Cidadão nascendo dentro da queda acordaria boiando no lençol. O corredor é aparado da
+            // lista de spawns e o buraco tapado com a sobra do mesmo baralho, para a praça não
+            // esvaziar porque a serra resolveu despejar água na calçada.
+            for (let k = npcSpawns.length - 1; k >= 0; k--) {
+                const p = npcSpawns[k];
+                if (naCatar[Math.floor(p.y) * W + Math.floor(p.x)])
+                    npcSpawns.splice(k, 1);
+            }
+            for (const p of spawnPool.slice(MAX_SPAWNS)) {
+                if (npcSpawns.length >= MAX_SPAWNS)
+                    break;
+                if (naCatar[Math.floor(p.y) * W + Math.floor(p.x)])
+                    continue;
+                npcSpawns.push(p);
+            }
+        }
+    }
     // ---- Serra arborizada ----------------------------------------------------
     // O morro era o lugar mais visível do mapa e o mais nu: mata e pinhal param dentro do
     // próprio bioma, e a crista alta — justamente onde a sombra de telão mora — não recebia
@@ -1610,5 +2003,6 @@ function generateCity(seed = 20260909) {
     // tinta da serra não pode subir na rua nem contornar o quarteirão.
     for (let i = 0; i < W * H; i++)
         relevo[i] = flatTile(i) ? 0 : varrido[i];
-    return { tilesW: W, tilesH: H, tiles, heights, shades, relevo, copa, buildings, props, vehicles, npcSpawns, playerSpawn, worldW: W, worldH: H };
+    return { tilesW: W, tilesH: H, tiles, heights, shades, relevo, copa, buildings, props, vehicles,
+        cascatas, npcSpawns, playerSpawn, worldW: W, worldH: H };
 }
