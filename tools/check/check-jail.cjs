@@ -118,6 +118,26 @@ assert.ok(!walkable(room.map, { x: jailData.JAIL_SPAWN.x, y: jailData.JAIL_SPAWN
 // Mas a cela trancada também não abre: nem o quarto do jogador.
 assert.ok(!walkable(room.map, { x: jailData.JAIL_SPAWN.x, y: jailData.JAIL_SPAWN.y }, jailData.JAIL_CELL_SPAWN, closedGates),
   'cela trancada não tem saída');
+// TODA cela, não só a do jogador. A cela 0 encosta na parede oeste do quarto, então ela sempre
+// pareceu selada — e foi assim que o bloco inteiro passou a checar verde com a última cela aberta
+// por uma faixa de chão sobrando entre a divisória e a casca leste. O usuário viu pela frente:
+// "tem uma cela sem uma parede, fica aberta, é a do lado de onde abre as celas" (o painel fica em
+// 13.9, colado na cela 4). Fecha as duas pontas do bloco e testa cada uma, fechada e aberta.
+const ultimo = jailData.JAIL_CELLS.length - 1;
+assert.ok(Math.abs(jailData.JAIL_CELLS[0].x0 - jailData.JAIL_T) < 1e-9,
+  'a primeira cela encosta na parede oeste, sem faixa sobrando');
+assert.ok(Math.abs(jailData.JAIL_CELLS[ultimo].x1 - (jailData.JAIL_W - jailData.JAIL_T)) < 1e-9,
+  'a última cela encosta na parede leste, sem faixa sobrando');
+for (const [i, cell] of jailData.JAIL_CELLS.entries()) {
+  const dentro = { x: (cell.x0 + cell.x1) / 2, y: jailData.JAIL_FRONT_Y - 1.2 };
+  assert.ok(clearAt(room.map, dentro.x, dentro.y), `dentro da cela ${i} tem piso livre`);
+  assert.ok(!walkable(room.map, { x: jailData.JAIL_SPAWN.x, y: jailData.JAIL_SPAWN.y }, dentro, closedGates),
+    `cela ${i} fechada só tem a grade como entrada`);
+  // Abertas as grades das celas (o vão do depósito continua trancado), cada cela é alcançável.
+  assert.ok(walkable(room.map, { x: jailData.JAIL_SPAWN.x, y: jailData.JAIL_SPAWN.y }, dentro,
+      [closedGates[ultimo + 1]]),
+    `cela ${i} abre pela própria grade`);
+}
 for (const f of room.furniture) {
   if (f.kind === 'bars') continue;
   assert.ok(!clearAt(room.map, f.x + f.w / 2, f.y + f.d / 2), `móvel ${f.id} precisa bloquear o próprio centro`);
