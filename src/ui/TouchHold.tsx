@@ -22,12 +22,12 @@ export function TouchHold({
     <View
       ref={ref}
       onLayout={onLayout}
-      pointerEvents="none"
       collapsable={false}
       style={[
         styles.base,
         style,
         {
+          pointerEvents: 'none',
           backgroundColor: pressed ? activeColor : idleColor,
           borderColor: pressed ? activeColor : 'rgba(255,255,255,0.4)',
         },

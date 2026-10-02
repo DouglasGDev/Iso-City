@@ -8,7 +8,7 @@ export function RoundOverlay() {
   const busted = overlay === 'busted';
   const jailed = busted && getGame().jail.locked;
   return (
-    <View style={styles.wrap} pointerEvents="none">
+    <View style={[styles.wrap, { pointerEvents: 'none' }]}>
       <View style={[styles.tint, busted ? styles.bustedTint : styles.wastedTint]} />
       <Text style={[styles.title, busted ? styles.bustedText : styles.wastedText]}>
         {busted ? 'PRESO' : 'WASTED'}

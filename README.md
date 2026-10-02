@@ -101,6 +101,12 @@ tools/
 
 ## O que falta corrigir / validar
 
+O roteiro de evolução do mundo está em [`docs/plano-de-expansao.md`](docs/plano-de-expansao.md)
+(21 seções escritas pelo autor: relevo, exploração, clima, fazenda, tribo isolada, cativeiro).
+As seções 1 a 15 estão entregues; seguem abertos os incêndios ambientais (§7), a região isolada
+com a tribo (§16), o minigame de fuga do cativeiro (§17), o mundo vivo (§18/§19) e a escala do
+mapa (§20).
+
 - **Testar no device**: obrigatório rodar `npx expo start --clear` e re-escanear o QR (bundle velho esconde todas as mudanças). Prioridades de teste: soco → reação de civis → chegada da polícia → prisão/respawn → missão com timer → chuva/noite → explosão de veículo
 - **Oclusão por profundidade**: entidades sempre desenham **por cima** de prédios/props (jogador "atrás" de um prédio aparece na frente). Se incomodar, intercalar por profundidade usando `zIndex` (sem reordenar filhos React)
 - **Armas de fogo**: adiado por falta de sprites adequados (o combate é melee); adicionar quando existirem assets de pistola/rifle coerentes com os chars Kenney
@@ -118,6 +124,25 @@ npx expo export --platform android   # valida o bundle (Metro)
 npx tsc -p tools\check\tsconfig.json; node tools\check\check-map.cjs   # valida o mapa
 node tools/generate-sfx.js   # regenera os WAVs sintetizados em assets/Audio/generated
 ```
+
+## Web: os patches são obrigatórios
+
+Na web a Skia desenha com CanvasKit, que vive em memória wasm — o coletor de lixo do JS não
+vê `SkPath`/`SkPaint`/`SkPicture`/`PictureRecorder` e nada é devolvido sozinho. O `postinstall`
+(`npx patch-package`) conserta isso na própria biblioteca, em `lib/module` e `lib/commonjs`:
+
+- `skia/web/JsiSkPaint.js` — `dispose()` devolve a tinta, que a classe não tinha;
+- `sksg/Container.web.js` — um `PictureRecorder` por quadro gravado e apagado no mesmo lugar, e a
+  picture substituída pelo `<Canvas>` é devolvida quando aview passa a apontar para a nova; o
+  mapper parado no desmonte, e o `dispose()` do quadro anterior depois do desenho novo;
+- `sksg/Recorder/DrawingContext.js`, `sksg/Recorder/Player.js` — o pool de tintas de cada
+  gravação é reaproveitado e descartado junto dela;
+- `specs/NativeSkiaModule.web.js` — a picture guardada para uma view ainda não registrada é
+  consumida no registro, senão uma regravação posterior entrega uma alça morta ao canvas.
+
+Sem esses patches o jogo abre e morre em minutos com `Aborted(). Build with -sASSERTIONS for
+more info.` no navegador. `node tools/check/check-memory-browser.cjs` é a régua: mede o heap wasm
+e a contagem de objetos vivos por classe e trava se qualquer um deles crescer.
 
 ## Licença
 

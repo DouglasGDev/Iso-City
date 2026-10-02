@@ -96,7 +96,7 @@ function SteerBtn({ label, onChange }: { label: string; onChange: (p: boolean) =
  */
 export function VehicleDpad() {
   return (
-    <View style={styles.wrap} pointerEvents="box-none">
+    <View style={[styles.wrap, { pointerEvents: 'box-none' }]}>
       <View style={styles.row}>
         <View style={styles.steerCol}>
           <SteerBtn label="◀" onChange={(p) => setVehicleControl('left', p)} />

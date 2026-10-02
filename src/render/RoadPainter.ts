@@ -1,4 +1,4 @@
-import { Skia, PaintStyle, type SkCanvas, type SkPaint } from '@shopify/react-native-skia';
+import { Skia, PaintStyle, type SkCanvas, type SkPaint, type SkPath } from '@shopify/react-native-skia';
 import type { CityMapData } from '../data/maps/city';
 import { worldToScreen } from '../world/IsoUtils';
 
@@ -45,6 +45,14 @@ function roadPaints(): RoadPaints {
 }
 
 /**
+ * O losango do tile é sempre o mesmo objeto rebobinado. Um `Skia.Path.Make()` por tile a cada
+ * bake é memória wasm que a web não devolve ao heap, e o bake repete até dez vezes por segundo
+ * enquanto o carro anda — foi assim que o canvaskit estourou. O `rewind()` mantém o
+ * armazenamento reservado; o traço já registrado na picture não é tocado (Skia é copy-on-write).
+ */
+let losango: SkPath | null = null;
+
+/**
  * O asfalto pisa a mesma quad do chão: cada canto do tile sobe na cota do próprio
  * vértice, senão a rua atravessaria a encosta como um papel esticado por cima dela.
  */
@@ -60,7 +68,8 @@ export function drawRoad(canvas: SkCanvas, data: CityMapData, tx: number, ty: nu
   };
   const road = (x: number, y: number) => x >= 0 && y >= 0 && x < data.tilesW && y < data.tilesH
     && data.tiles[y * data.tilesW + x].kind === 'road';
-  const path = Skia.Path.Make();
+  const path = losango ??= Skia.Path.Make();
+  path.rewind();
   const corners = [[tx, ty], [tx + 1, ty], [tx + 1, ty + 1], [tx, ty + 1]];
   corners.forEach(([x, y], i) => {
     const p = worldToScreen(x, y, surf(x, y));

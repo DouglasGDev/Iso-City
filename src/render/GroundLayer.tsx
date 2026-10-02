@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, memo } from 'react';
+import { Platform } from 'react-native';
 import {
   BlendMode, ClipOp, Picture, Skia, VertexMode,
   type SkCanvas, type SkColor, type SkImage, type SkMatrix, type SkPaint, type SkPath, type SkPicture,
@@ -12,6 +13,26 @@ import { vertexHeight } from '../world/Map';
 import type { GameState } from '../game/GameState';
 import type { CityMapData } from '../data/maps/city';
 import { drawRoad } from './RoadPainter';
+
+/**
+ * Devolve o objeto ao CanvasKit depois de ele já estar registrado na picture. Só na web: lá o
+ * `SkVertices`/`SkPicture` é memória wasm que o coletor do JS não enxerga, e o bake repete até
+ * dez vezes por segundo enquanto o carro anda — foi assim que o heap estourou com `Aborted()`.
+ * No aparelho o mesmo objeto é refcountado pelo C++ da picture, e descartar daqui seria
+ * uso-after-free na thread de raster que ninguém tem como testar: lá deixamos o ciclo de vida
+ * seguir o caminho de sempre.
+ *
+ * O `WeakSet` não é frescura: em desenvolvimento o React monta, desmonta e monta de novo cada
+ * efeito, e sem a trava o segundo `dispose()` cairia sobre uma alça já morta — o CanvasKit responde
+ * com `BindingError`, exatamente o erro que se queria apagar.
+ */
+const devolvidas = new WeakSet<object>();
+function liberarWeb(obj: { dispose?: () => void } | null | undefined): void {
+  if (Platform.OS !== 'web' || !obj) return;
+  if (devolvidas.has(obj)) return;
+  devolvidas.add(obj);
+  obj.dispose?.();
+}
 
 function cameraCellKey(game: GameState): string {
   const cx = Math.round(game.camera.x * 2);
@@ -303,6 +324,10 @@ function drawGroundTint(canvas: SkCanvas, data: CityMapData,
   const verts = Skia.MakeVertices(VertexMode.Triangles, pos, null,
     pos.map((_, k) => shadeColor(cor[k], regua[k], copaV[k])), idx, false);
   canvas.drawVertices(verts, BlendMode.Modulate, pincelDeTinta());
+  // O `drawVertices` já embrulhou a malha na picture (Skia é refcountado), então o que sobrou
+  // aqui é só a alça wasm do bake anterior: sem devolvê-la, cada repintura do chão deixa um
+  // clone de vértices morto no heap.
+  liberarWeb(verts);
 }
 
 /**
@@ -377,9 +402,21 @@ function pincelDeNeve(faixa: number): SkPaint {
 const GRAO_MAX = 260;
 const GRAO_MIN = 0.4;
 
+/**
+ * Grão e manta são sempre os mesmos objetos rebobinados, não caminhos que renascem: um
+ * `Skia.Path.Make()` por bake é memória wasm que a web não devolve ao heap, e o chão repinta
+ * até dez vezes por segundo enquanto o carro anda. `rewind()` mantém o armazenamento do
+ * traçado reservado — que é justamente o que um laço de bake paga — e o caminho já registrado
+ * na picture anterior não é tocado, porque o Skia é copy-on-write.
+ */
+let graos: SkPath | null = null;
+const mantas: (SkPath | null)[] = NEVE_FAIXAS.map(() => null);
+let pincelDoGrao: SkPaint | null = null;
+
 function drawSnowGrain(canvas: SkCanvas, game: GameState, data: CityMapData,
   tx0: number, ty0: number, tx1: number, ty1: number) {
-  const path = Skia.Path.Make();
+  const path = graos ??= Skia.Path.Make();
+  path.rewind();
   const W = data.tilesW;
   let n = 0;
   for (let ty = ty0; ty <= ty1 && n < GRAO_MAX; ty++) {
@@ -411,9 +448,12 @@ function drawSnowGrain(canvas: SkCanvas, game: GameState, data: CityMapData,
     }
   }
   if (!n) return;
-  const q = Skia.Paint();
-  q.setAntiAlias(true);
-  q.setColor(Skia.Color('#eef4ff'));
+  const q = pincelDoGrao ??= (() => {
+    const p = Skia.Paint();
+    p.setAntiAlias(true);
+    p.setColor(Skia.Color('#eef4ff'));
+    return p;
+  })();
   q.setAlphaf(Math.min(0.6, 0.22 + game.snow.depth * 0.4));
   canvas.drawPath(path, q);
 }
@@ -421,7 +461,9 @@ function drawSnowGrain(canvas: SkCanvas, game: GameState, data: CityMapData,
 function drawGroundSnow(canvas: SkCanvas, game: GameState, data: CityMapData,
   tx0: number, ty0: number, tx1: number, ty1: number) {
   if (game.snow.depth <= 0) return;
-  const folhas: (SkPath | null)[] = NEVE_FAIXAS.map(() => null);
+  // Rebobinadas uma vez por bake, antes do laço: assim a faixa que não teve tile nesta janela
+  // fica vazia em vez de carregar o losango de dez segundos atrás.
+  for (let f = 0; f < mantas.length; f++) mantas[f]?.rewind();
   let temNeve = false;
   for (let ty = ty0; ty <= ty1; ty++) {
     for (let tx = tx0; tx <= tx1; tx++) {
@@ -429,8 +471,8 @@ function drawGroundSnow(canvas: SkCanvas, game: GameState, data: CityMapData,
       if (c <= 0) continue;
       temNeve = true;
       const f = Math.min(NEVE_FAIXAS.length - 1, (c * NEVE_FAIXAS.length) | 0);
-      let folha = folhas[f];
-      if (!folha) folha = folhas[f] = Skia.Path.Make();
+      let folha = mantas[f];
+      if (!folha) folha = mantas[f] = Skia.Path.Make();
       // O losango do próprio tile, nos quatro cantos projetados com a cota de cada um: a
       // folha veste a encosta entortada em vez de boiar horizontal sobre ela.
       const A = worldToScreen(tx, ty, vertexHeight(data, tx, ty));
@@ -446,8 +488,8 @@ function drawGroundSnow(canvas: SkCanvas, game: GameState, data: CityMapData,
   }
   if (!temNeve) return;
   for (let f = 0; f < NEVE_FAIXAS.length; f++) {
-    const folha = folhas[f];
-    if (folha) canvas.drawPath(folha, pincelDeNeve(f));
+    const folha = mantas[f];
+    if (folha && !folha.isEmpty()) canvas.drawPath(folha, pincelDeNeve(f));
   }
   drawSnowGrain(canvas, game, data, tx0, ty0, tx1, ty1);
 }
@@ -511,9 +553,62 @@ function bakeVisibleTiles(game: GameState): SkPicture {
   return picture;
 }
 
+/**
+ * Devolve a picture ao CanvasKit no tempo do desenho, não no tempo do React.
+ *
+ * O `<Canvas>` da web regrava a lista de comandos a cada quadro — a câmera é um shared value,
+ * então o mapper repassa o replay sem parar, e cada replay chama `drawPicture` sobre a picture
+ * que o nó `<Picture>` apontava *naquele* instante. Um `dispose()` no efeito passivo cai depois
+ * do commit, mas a fila de desenhos ainda tem o quadro anterior dentro, e ele lê uma alça morta:
+ * `Cannot pass deleted object as a pointer of type sk_sp<Picture>`. Contar frames no relógio que
+ * desenha (o mesmo `requestAnimationFrame` do `<Canvas>`) é a única margem que existe: quando o
+ * último passo dispara, todo desenho enfileirado antes da troca já rodou e pelo menos um já
+ * rodou com a picture nova.
+ *
+ * A checagem do `entregue` não é paranoia: em desenvolvimento o React desmonta e monta cada efeito
+ * de novo, e a picture da falsa saída é exatamente a que voltou para a tela. Nesse caso o adiamento
+ * desiste e a liberação fica para a próxima troca real.
+ */
+const QUADROS_DE_MARGEM = 3;
+function devolverNoTempoDoDesenho(
+  picture: SkPicture,
+  entregue: { current: SkPicture | null },
+): void {
+  // No aparelho a picture é refcountada pelo C++ e `liberarWeb` não faz nada; aqui não há
+  // motivo para adiar um nada.
+  if (Platform.OS !== 'web') return;
+  let faltam = QUADROS_DE_MARGEM;
+  const passo = () => {
+    if (entregue.current === picture) return;
+    if (--faltam > 0) {
+      requestAnimationFrame(passo);
+      return;
+    }
+    liberarWeb(picture);
+  };
+  requestAnimationFrame(passo);
+}
+
 export const GroundLayer = memo(function GroundLayer({ game }: { game: GameState }) {
   const [picture, setPicture] = useState<SkPicture | null>(null);
   const lastKey = useRef('');
+  // A picture que está no `<Picture>` agora. É a referência que decide se uma liberação adiada
+  // ainda vale: devolvê-la enquanto ela desenha é o uso-after-free que estourou o heap.
+  const entregue = useRef<SkPicture | null>(null);
+
+  useEffect(() => {
+    const anterior = entregue.current;
+    entregue.current = picture;
+    if (anterior && anterior !== picture) devolverNoTempoDoDesenho(anterior, entregue);
+  }, [picture]);
+
+  useEffect(() => {
+    return () => {
+      const atual = entregue.current;
+      entregue.current = null;
+      if (atual) devolverNoTempoDoDesenho(atual, entregue);
+    };
+  }, []);
 
   useEffect(() => {
     lastKey.current = '';

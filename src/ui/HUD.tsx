@@ -41,12 +41,13 @@ const WeaponReadout = memo(function WeaponReadout({ compact }: { compact: boolea
   const gun = isGunId(weapon.equipped);
   const reloading = weapon.reloadTenths > 0;
   return (
-    <View style={[styles.panel, styles.weaponPanel, compact && styles.compactWeapon]} pointerEvents="none"
+    <View style={[styles.panel, styles.weaponPanel, compact && styles.compactWeapon]}
       accessible accessibilityLabel={`${weapon.label}${gun ? `, ${weapon.loaded} carregadas, ${weapon.reserve} de reserva` : ''}`}
       testID="hud-weapon">
       <View style={styles.weaponHeading}>
         {weapon.equipped !== 'unarmed'
-          ? <Image source={ASSET_FILES[`Weapons/${weapon.equipped}_icon.png`]} style={styles.weaponImage} resizeMode="contain" />
+          ? <Image source={ASSET_FILES[`Weapons/${weapon.equipped}_icon.png`]} style={styles.weaponImage}
+            tintColor="#b3e5fc" resizeMode="contain" />
           : <IconFist size={18} color="#b3e5fc" />}
         <Text style={styles.weaponName} numberOfLines={1} testID="hud-weapon-label">{weapon.label}</Text>
       </View>
@@ -68,7 +69,8 @@ function MenuButton({ id, label, onPress, children }: {
 }) {
   const { ref, onLayout, managed } = useHitTarget(id);
   return (
-    <View ref={ref} onLayout={onLayout} collapsable={false} pointerEvents={managed ? 'none' : 'auto'}>
+    <View ref={ref} onLayout={onLayout} collapsable={false}
+      style={{ pointerEvents: managed ? 'none' : 'auto' }}>
       <TouchableOpacity style={styles.menuButton} accessibilityRole="button" accessibilityLabel={label}
         testID={`hud-${id}`} onPress={() => { onPress(); sound.play('uiSwitch', 0.4); }}>
         {children}
@@ -109,10 +111,9 @@ export function HUD() {
   if (game.witnesses.calls.some((call) => !call.radio)) objective = 'TESTEMUNHA · CHAMANDO A POLÍCIA';
   const timedMission = !gpsActive && !interior && mission.phase !== 'giver' && mission.phase !== 'break';
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingLeft: Math.max(12, insets.left), paddingRight: Math.max(12, insets.right) }]}
-      pointerEvents="box-none">
-      <View style={styles.topRow} pointerEvents="box-none">
-        <View style={styles.panel} pointerEvents="none" testID="hud-health">
+    <View style={[styles.container, { paddingTop: insets.top, paddingLeft: Math.max(12, insets.left), paddingRight: Math.max(12, insets.right) }]}>
+      <View style={styles.topRow}>
+        <View style={styles.panel} testID="hud-health">
           <View style={styles.statRow}>
             <Text style={styles.stat}>HP {health}</Text>
             <Text style={styles.money} testID="hud-cash">$ {Math.round(game.player.money)}</Text>
@@ -126,8 +127,8 @@ export function HUD() {
           {game.player.crouching && <Text style={styles.sprintText}>AGACHADO</Text>}
         </View>
         {!narrow && <WeaponReadout compact={compact} />}
-        <View style={styles.topRight} pointerEvents="box-none">
-          {!narrow && <View style={styles.clockPanel} pointerEvents="none">
+        <View style={styles.topRight}>
+          {!narrow && <View style={styles.clockPanel}>
             <Text style={styles.clock}>{game.dayNight.clock}</Text>
             <Text style={styles.weather} numberOfLines={1}>{game.weather.label}</Text>
             <View style={styles.stars}>
@@ -141,7 +142,7 @@ export function HUD() {
         </View>
       </View>
       {narrow && <View style={styles.narrowWeapon}><WeaponReadout compact /></View>}
-      {objective ? <View style={[styles.objectivePanel, compact && styles.compactObjective]} pointerEvents="none">
+      {objective ? <View style={[styles.objectivePanel, compact && styles.compactObjective]}>
         <Text style={styles.objective} numberOfLines={1}>{objective}</Text>
         {timedMission && <View style={styles.missionRow}>
           <Text style={styles.missionText}>{Math.ceil(mission.timeLeft)}s · $ {Math.round(mission.reward)}</Text>
@@ -150,7 +151,7 @@ export function HUD() {
           }]} /></View>
         </View>}
       </View> : null}
-      {hazard ? <View style={[styles.hazardPanel, compact && styles.compactHazard]} pointerEvents="none"
+      {hazard ? <View style={[styles.hazardPanel, compact && styles.compactHazard]}
         testID="hud-hazard" accessible accessibilityLabel={hazard}>
         <Text style={styles.hazardText} numberOfLines={1}>{hazard}</Text>
       </View> : null}
@@ -159,11 +160,13 @@ export function HUD() {
 }
 
 const styles = StyleSheet.create({
-  container: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50 },
-  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
-  topRight: { flexDirection: 'row', gap: 6, alignItems: 'center' },
+  // `pointerEvents` vive no estilo: o RNWeb avisa que a prop do View está obsoleta, e o estilo é
+  // o caminho que o próprio View nativo resolve.
+  container: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, pointerEvents: 'box-none' },
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, pointerEvents: 'box-none' },
+  topRight: { flexDirection: 'row', gap: 6, alignItems: 'center', pointerEvents: 'box-none' },
   menuButton: { width: 48, height: 48, borderRadius: 14, backgroundColor: 'rgba(8,12,18,0.62)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.24)', alignItems: 'center', justifyContent: 'center' },
-  panel: { backgroundColor: 'rgba(8,12,18,0.62)', borderRadius: 9, paddingVertical: 5, paddingHorizontal: 9 },
+  panel: { backgroundColor: 'rgba(8,12,18,0.62)', borderRadius: 9, paddingVertical: 5, paddingHorizontal: 9, pointerEvents: 'none' },
   statRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
   stat: { color: '#fff', fontSize: 11, fontWeight: '800' },
   money: { color: '#b9f6ca', fontSize: 11, fontWeight: '800' },
@@ -172,7 +175,7 @@ const styles = StyleSheet.create({
   stTrack: { height: 3, width: 110, borderRadius: 2, backgroundColor: '#344044', overflow: 'hidden' },
   stFill: { height: '100%', backgroundColor: '#4dd0e1' },
   sprintText: { fontSize: 8, color: '#4dd0e1', marginTop: 3, fontWeight: '700' },
-  clockPanel: { alignItems: 'flex-end', paddingHorizontal: 4 },
+  clockPanel: { alignItems: 'flex-end', paddingHorizontal: 4, pointerEvents: 'none' },
   clock: { color: '#fff', fontSize: 12, fontWeight: '800', textShadowColor: '#000', textShadowRadius: 3 },
   weather: { color: '#cfd8dc', fontSize: 9, fontWeight: '700', marginTop: 1, textShadowColor: '#000', textShadowRadius: 3 },
   stars: { flexDirection: 'row', gap: 1, marginTop: 3 },
@@ -180,7 +183,7 @@ const styles = StyleSheet.create({
   compactWeapon: { width: 136 },
   narrowWeapon: { alignSelf: 'flex-end', marginTop: 8 },
   weaponHeading: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  weaponImage: { width: 28, height: 17, tintColor: '#b3e5fc' },
+  weaponImage: { width: 28, height: 17 },
   weaponName: { flex: 1, color: '#e3f2fd', fontSize: 10, fontWeight: '800' },
   weaponAmmo: { color: '#fff', fontSize: 13, fontWeight: '800', fontVariant: ['tabular-nums'] },
   emptyAmmo: { color: '#ff8a80' },
@@ -188,12 +191,12 @@ const styles = StyleSheet.create({
   reloadTrack: { height: 2, marginTop: 2, backgroundColor: '#344044', overflow: 'hidden' },
   hiddenTrack: { opacity: 0 },
   reloadFill: { height: '100%', backgroundColor: '#7bddff' },
-  objectivePanel: { marginTop: 6, alignSelf: 'center', backgroundColor: 'rgba(8,12,18,0.55)', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10, maxWidth: '55%', alignItems: 'center' },
+  objectivePanel: { marginTop: 6, alignSelf: 'center', backgroundColor: 'rgba(8,12,18,0.55)', borderRadius: 6, paddingVertical: 4, paddingHorizontal: 10, maxWidth: '55%', alignItems: 'center', pointerEvents: 'none' },
   compactObjective: { maxWidth: '46%', paddingVertical: 3 },
   objective: { color: '#ffe082', fontSize: 10, fontWeight: '700' },
   hazardPanel: { marginTop: 4, alignSelf: 'center', backgroundColor: 'rgba(96,18,14,0.78)', borderWidth: 1,
     borderColor: 'rgba(255,171,145,0.55)', borderRadius: 6, paddingVertical: 3, paddingHorizontal: 10,
-    maxWidth: '55%', alignItems: 'center' },
+    maxWidth: '55%', alignItems: 'center', pointerEvents: 'none' },
   compactHazard: { maxWidth: '46%' },
   hazardText: { color: '#ffd0c2', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
   missionRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },

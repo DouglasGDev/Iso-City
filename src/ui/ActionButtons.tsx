@@ -44,7 +44,6 @@ function ActionBtn({
     <View
       ref={ref}
       onLayout={onLayout}
-      pointerEvents="none"
       collapsable={false}
       accessible
       accessibilityRole="button"
@@ -55,6 +54,7 @@ function ActionBtn({
         styles.action,
         style,
         {
+          pointerEvents: 'none',
           borderColor: pressed || active ? accent : 'rgba(255,255,255,0.4)',
           backgroundColor: pressed ? accent : active ? 'rgba(38,78,70,0.95)' : 'rgba(10,14,20,0.85)',
         },
@@ -80,31 +80,33 @@ function FootActions({ compact }: { compact: boolean }) {
     return () => clearInterval(iv);
   }, [game]);
   const armed = isGunId(equipped);
+  // `tintColor` é prop do Image, não estilo: o react-native-web avisa contra a forma antiga e o
+  // RN 0.81 tem a prop, então o caminho novo existe nos dois lados.
   const weaponIcon = equipped !== 'unarmed' ? <Image source={ASSET_FILES[`Weapons/${equipped}_icon.png`]}
-    style={{ width: 34, height: 18, tintColor: '#e4edf5' }} resizeMode="contain" /> : <IconWeapon size={18} />;
+    style={{ width: 34, height: 18 }} tintColor="#e4edf5" resizeMode="contain" /> : <IconWeapon size={18} />;
 
   return (
-    <View style={[styles.footActions, compact && styles.compactFootActions]} pointerEvents="none">
-      <View style={styles.weaponRow} pointerEvents="none">
+    <View style={[styles.footActions, compact && styles.compactFootActions, { pointerEvents: 'none' }]}>
+      <View style={[styles.weaponRow, { pointerEvents: 'none' }]}>
         <ActionBtn id="weaponPrev" icon={<Text style={styles.glyphIcon}>‹</Text>} accent="rgba(70,180,255,0.95)"
           label="‹ ARMA" accessibilityLabel="Arma anterior" style={styles.utility} />
         <ActionBtn id="weapon" icon={weaponIcon} accent="rgba(70,180,255,0.95)"
           label="ARMA ›" accessibilityLabel="Próxima arma" style={styles.utility} />
       </View>
-      <View style={styles.weaponRow} pointerEvents="none">
+      <View style={[styles.weaponRow, { pointerEvents: 'none' }]}>
         <ActionBtn id="jump" icon={<Text style={styles.jumpIcon}>↑</Text>} accent="rgba(90,200,240,0.95)"
           label="PULAR" accessibilityLabel="Pular ou saltar cerca baixa" style={styles.utility} />
         <ActionBtn id="crouch" icon={<Text style={styles.jumpIcon}>↓</Text>} accent="rgba(100,220,170,0.95)"
           label={crouching ? 'LEVANTAR' : 'AGACHAR'} accessibilityLabel="Alternar agachamento"
           active={crouching} style={styles.utility} />
       </View>
-      <View style={styles.weaponRow} pointerEvents="none">
+      <View style={[styles.weaponRow, { pointerEvents: 'none' }]}>
         <ActionBtn id="aim" icon={<IconAim size={18} />} accent="rgba(255,150,70,0.95)"
           label="MIRA" accessibilityLabel="Alternar mira manual" active={aiming} style={styles.utility} />
         <ActionBtn id="reload" icon={<IconReload size={18} color={armed ? '#fff' : '#8d9ba9'} />}
           accent="rgba(70,180,255,0.95)" label="RECARGA" accessibilityLabel="Recarregar arma" style={styles.utility} />
       </View>
-      <View style={[styles.meleeRow, compact && styles.compactRow]} pointerEvents="none">
+      <View style={[styles.meleeRow, compact && styles.compactRow, { pointerEvents: 'none' }]}>
         <ActionBtn
           id="attack"
           icon={armed ? <IconAim size={compact ? 28 : 36} /> : <IconFist size={compact ? 28 : 36} />}
@@ -164,13 +166,12 @@ export function ActionButtons({ flying = false }: { flying?: boolean }) {
 
   return (
     <View
-      style={[styles.container, { right: insets.right, bottom: insets.bottom }]}
-      pointerEvents="none"
+      style={[styles.container, { right: insets.right, bottom: insets.bottom, pointerEvents: 'none' }]}
     >
       {!driving && (interiorPrompt || near) ? (
-        <View style={styles.contextActions} pointerEvents="none">
+        <View style={[styles.contextActions, { pointerEvents: 'none' }]}>
           {interiorPrompt && (
-            <View style={styles.interiorAction} pointerEvents="none">
+            <View style={[styles.interiorAction, { pointerEvents: 'none' }]}>
               <Text style={styles.interiorLabel} numberOfLines={2}>{interiorPrompt}</Text>
               <ActionBtn id="interact" icon={<IconExit size={22} />} accent="rgba(80,180,150,0.95)"
                 label={game.interiors.active ? 'INTERAGIR' : 'ENTRAR'} accessibilityLabel={interiorPrompt} style={styles.enter} />
@@ -189,7 +190,7 @@ export function ActionButtons({ flying = false }: { flying?: boolean }) {
         </View>
       ) : null}
       {driving && (
-        <View style={styles.exitRow} pointerEvents="none">
+        <View style={[styles.exitRow, { pointerEvents: 'none' }]}>
           <ActionBtn
             id="horn"
             icon={<IconHorn size={26} />}
@@ -209,7 +210,7 @@ export function ActionButtons({ flying = false }: { flying?: boolean }) {
         </View>
       )}
       {driving ? (
-        <View style={[styles.pedals, compact && styles.compactPedals]} pointerEvents="none">
+        <View style={[styles.pedals, compact && styles.compactPedals, { pointerEvents: 'none' }]}>
           <ActionBtn
             id="brake"
             icon={flying ? <Text style={styles.glyphIcon}>▼</Text> : <IconBrake />}
@@ -247,6 +248,9 @@ const styles = StyleSheet.create({
   },
   contextActions: { flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
   interiorAction: { alignItems: 'center', gap: 4 },
+  // O react-native-web avisa que `textShadow*` está obsoleto em favor de `textShadow`, mas o RN
+  // 0.81 só tem as três propriedades antigas: `textShadow` nem entra no StyleSheet nativo. A
+  // web converte as antigas para CSS sozinha, então o aviso fica e o aparelho continua legível.
   interiorLabel: { color: '#d4f3e4', fontSize: 10, lineHeight: 12, maxWidth: 74, textShadowColor: '#000', textShadowRadius: 3 },
   footActions: { width: 198, gap: 6 },
   compactFootActions: { width: 150 },

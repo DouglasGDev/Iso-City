@@ -1082,8 +1082,15 @@ async function checkMeleeRender() {
       owner.slots[i] = typeof next === 'function' ? next(owner.slots[i]) : next;
     }];
   }
+  function useRef(initial) {
+    const owner = hooks;
+    const i = owner.cursor++;
+    if (!(i in owner.slots)) owner.slots[i] = { current: initial };
+    return owner.slots[i];
+  }
   const reactHooks = {
     useState,
+    useRef,
     useEffect(fn) {
       const i = hooks.cursor++;
       if (!(i in hooks.slots)) { hooks.slots[i] = true; hooks.effects.push(fn); }
@@ -1222,13 +1229,26 @@ async function checkMeleeRender() {
     const image = surface.makeImageSnapshot();
     const png = Buffer.from(image.encodeToBytes());
     image.delete();
-    while (allocated.length) allocated.pop().delete();
+    // Varredura aqui estava errada: o sprite e o golpe guardam o `SkPath` num ref e o rebobinam
+    // a cada quadro — apagar tudo depois de um snapshot matava alça viva, e o `rewind()` do
+    // quadro seguinte morria em `Cannot pass deleted object`. Quem cuida da memória da web é o
+    // check-memory-browser; aqui a única dívida é o fim do cenário, logo abaixo.
     return png;
   }
   const dirs = ['SE', 'SW', 'NW', 'NE'];
+  // Estes dois cenários desenham o MeleeSwing direto, sem `<Canvas>` nem React. O dono dos hooks
+  // precisa sobreviver entre quadros como um componente montado: o path do golpe é um `useRef`
+  // rebobinado, e sem slot permanente cada quadro recriaria o path — exatamente o que a produção
+  // parou de fazer.
+  const bare = { cursor: 0, slots: [], effects: [], cleanups: [] };
+  function swing(props) {
+    hooks = bare;
+    bare.cursor = 0;
+    return MeleeSwing(props);
+  }
   function frame(weapon, angle, phase, visible = true, withImage = false) {
     const dir = dirs[((Math.round(angle / (Math.PI / 2)) % 4) + 4) % 4];
-    return snapshot(MeleeSwing({ state: { value: {
+    return snapshot(swing({ state: { value: {
       weapon, angle, dir, secondsLeft: MELEE_DEFS[weapon].animationSeconds * (1 - phase), visible,
     } }, batImage: withImage ? asset(weaponKey('bat', dir)) : null }));
   }
@@ -1251,13 +1271,13 @@ async function checkMeleeRender() {
     const empty = snapshot(null);
     for (const [i, dir] of dirs.entries()) {
       const state = { value: { weapon: 'bat', angle: i * Math.PI / 2, dir, secondsLeft: 0.2, visible: true } };
-      const tree = MeleeSwing({ state, batImage: asset(weaponKey('bat', dir)) });
+      const tree = swing({ state, batImage: asset(weaponKey('bat', dir)) });
       assert.notDeepEqual(snapshot(tree), empty);
       state.value.visible = false;
       assert.deepEqual(snapshot(tree), empty, `${dir}: no floating bat when invisible`);
       state.value.visible = true;
       state.value.weapon = 'unarmed';
-      assert.deepEqual(snapshot(tree), snapshot(MeleeSwing({ state })), `${dir}: stale bat hidden after swap`);
+      assert.deepEqual(snapshot(tree), snapshot(swing({ state })), `${dir}: stale bat hidden after swap`);
     }
   });
   const pixel = (png, x, y) => png.data.subarray(((64 + y) * png.width + 60 + x) * 4,
@@ -1467,6 +1487,7 @@ async function checkMeleeRender() {
     view.dispose();
   });
   for (const image of Object.values(spriteStore)) image.delete();
+  while (allocated.length) allocated.pop().delete();
   surface.dispose();
 }
 checkMeleeRender().then(() => console.log(`Weapon checks: ${passed} passed, ${failed} failed`)).catch((error) => {

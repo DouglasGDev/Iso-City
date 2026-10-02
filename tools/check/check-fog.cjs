@@ -22,6 +22,9 @@ const stubs = {
     useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
   },
   'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
+  // GroundLayer pergunta `Platform.OS` antes de devolver uma picture ao CanvasKit: na web o
+  // dispose é obrigatório, no aparelho o C++ cuida disso. O check roda como node.
+  'react-native': { Platform: { OS: 'node' } },
   'react-native-reanimated': { useDerivedValue: (get) => ({ get value() { return get(); } }) },
   '@shopify/react-native-skia': {
     Picture: 'Picture', Group: 'Group', Image: 'Image', Rect: 'Rect', RadialGradient: 'RadialGradient',

@@ -1,0 +1,424 @@
+diff --git a/node_modules/@shopify/react-native-skia/lib/commonjs/skia/web/JsiSkPaint.js b/node_modules/@shopify/react-native-skia/lib/commonjs/skia/web/JsiSkPaint.js
+index fa57f67..08082ca 100644
+--- a/node_modules/@shopify/react-native-skia/lib/commonjs/skia/web/JsiSkPaint.js
++++ b/node_modules/@shopify/react-native-skia/lib/commonjs/skia/web/JsiSkPaint.js
+@@ -24,10 +24,16 @@ class JsiSkPaint extends _Host.HostObject {
+     return new JsiSkPaint(this.CanvasKit, this.ref.copy());
+   }
+   assign(paint) {
++    const previous = this.ref;
+     this.ref = paint.ref.copy();
++    // The replaced ref is a WASM object the JS garbage collector does not perceive:
++    // without delete() it stays in the wasm heap forever.
++    previous.delete();
+   }
+   reset() {
++    const previous = this.ref;
+     this.ref = new this.CanvasKit.Paint();
++    previous.delete();
+   }
+   getAlphaf() {
+     return this.getColor()[3];
+diff --git a/node_modules/@shopify/react-native-skia/lib/commonjs/sksg/Container.web.js b/node_modules/@shopify/react-native-skia/lib/commonjs/sksg/Container.web.js
+index 5155d49..1c7cff7 100644
+--- a/node_modules/@shopify/react-native-skia/lib/commonjs/sksg/Container.web.js
++++ b/node_modules/@shopify/react-native-skia/lib/commonjs/sksg/Container.web.js
+@@ -20,16 +20,53 @@ function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e =
+ const drawOnscreen = (Skia, nativeId, recording) => {
+   "worklet";
+ 
++  var _recording$lastPictur;
+   const rec = Skia.PictureRecorder();
+   const canvas = rec.beginRecording();
+   //const start = performance.now();
+ 
+   const ctx = (0, _DrawingContext.createDrawingContext)(Skia, recording.paintPool, canvas);
+-  (0, _Player.replay)(ctx, recording.commands);
+-  const picture = rec.finishRecordingAsPicture();
++  let picture;
++  try {
++    (0, _Player.replay)(ctx, recording.commands);
++    picture = rec.finishRecordingAsPicture();
++  } finally {
++    // Once the picture is finished, the recorder has no frame-scoped memory
++    // left to hand over: the JS handle is ours to delete. On Web CanvasKit
++    // objects live in WASM memory the GC cannot perceive, so keeping one
++    // recorder per frame per canvas exhausts the heap and aborts.
++    rec.dispose();
++  }
+   //const end = performance.now();
+   //console.log("Recording time: ", end - start);
+   SkiaViewApi.setJsiProperty(nativeId, "picture", picture);
++  // The view now references the new picture; the previous one is ours to
++  // delete. When the view was not registered yet the picture is parked in the
++  // deferred slot instead, so clear it there first: a later registerView would
++  // otherwise hand a deleted handle back to the canvas.
++  const anterior = recording.lastPicture;
++  if (anterior) {
++    const chave = "" + nativeId;
++    if (SkiaViewApi.deferedPictures[chave] === anterior) {
++      SkiaViewApi.deferedPictures[chave] = null;
++    }
++    anterior.dispose();
++  }
++  recording.lastPicture = picture;
++};
++const disposeRecording = recording => {
++  "worklet";
++
++  const pool = recording.paintPool;
++  for (let i = 0; i < pool.length; i++) {
++    pool[i].dispose();
++  }
++  pool.length = 0;
++  const last = recording.lastPicture;
++  recording.lastPicture = null;
++  if (last) {
++    last.dispose();
++  }
+ };
+ class ReanimatedContainer extends _StaticContainer.Container {
+   constructor(Skia, nativeId) {
+@@ -37,13 +74,45 @@ class ReanimatedContainer extends _StaticContainer.Container {
+     this.nativeId = nativeId;
+     _defineProperty(this, "mapperId", null);
+   }
++  unmount() {
++    super.unmount();
++    if (this.mapperId !== null) {
++      // The mapper closure retains the recording and keeps updating the
++      // picture of an unmounted view — stop it or it leaks for the
++      // lifetime of the app.
++      _ReanimatedProxy.default.stopMapper(this.mapperId);
++      this.mapperId = null;
++    }
++    const recording = this.recording;
++    const nativeId = this.nativeId;
++    if (recording) {
++      this.recording = null;
++      // Deferred through the same channel as the draw calls so it runs after
++      // any of them that are still queued. The view is torn down around the
++      // same time as this container and may still hold the current picture in
++      // its ref, so drop that handle before giving the picture back.
++      _ReanimatedProxy.default.runOnUI(() => {
++        "worklet";
++
++        const chave = "" + nativeId;
++        const view = SkiaViewApi.views[chave];
++        SkiaViewApi.deferedPictures[chave] = null;
++        if (view) {
++          view.setPicture(null);
++        }
++        disposeRecording(recording);
++      })();
++    }
++  }
+   redraw() {
+     if (this.mapperId !== null) {
+       _ReanimatedProxy.default.stopMapper(this.mapperId);
++      this.mapperId = null;
+     }
+     if (this.unmounted) {
+       return;
+     }
++    const previousRecording = this.recording;
+     const recorder = new _Recorder.Recorder();
+     (0, _Visitor.visit)(recorder, this.root);
+     const record = recorder.getRecording();
+@@ -70,6 +139,12 @@ class ReanimatedContainer extends _StaticContainer.Container {
+       "worklet";
+ 
+       drawOnscreen(Skia, nativeId, recording);
++      if (previousRecording) {
++        // Only after the new frame is on the view: releasing the previous
++        // picture first would leave the canvas pointing at a deleted handle if
++        // this frame's replay threw halfway through.
++        disposeRecording(previousRecording);
++      }
+     })();
+   }
+ }
+diff --git a/node_modules/@shopify/react-native-skia/lib/commonjs/sksg/Recorder/DrawingContext.js b/node_modules/@shopify/react-native-skia/lib/commonjs/sksg/Recorder/DrawingContext.js
+index 281d56e..cd576ef 100644
+--- a/node_modules/@shopify/react-native-skia/lib/commonjs/sksg/Recorder/DrawingContext.js
++++ b/node_modules/@shopify/react-native-skia/lib/commonjs/sksg/Recorder/DrawingContext.js
+@@ -18,7 +18,14 @@ const createDrawingContext = (Skia, paintPool, canvas) => {
+   let nextPaintIndex = 1;
+ 
+   // Initialize first paint and opacity
+-  paintPool[0] = Skia.Paint();
++  if (paintPool.length === 0) {
++    paintPool.push(Skia.Paint());
++  } else {
++    // reset() produces an anti-alias false paint, unlike the Skia.Paint()
++    // factory: restore the default so reused pools render like the first frame.
++    paintPool[0].reset();
++    paintPool[0].setAntiAlias(true);
++  }
+   paints.push(paintPool[0]);
+   opacities.push(1);
+ 
+diff --git a/node_modules/@shopify/react-native-skia/lib/commonjs/sksg/Recorder/Player.js b/node_modules/@shopify/react-native-skia/lib/commonjs/sksg/Recorder/Player.js
+index 979943a..8cdf0ca 100644
+--- a/node_modules/@shopify/react-native-skia/lib/commonjs/sksg/Recorder/Player.js
++++ b/node_modules/@shopify/react-native-skia/lib/commonjs/sksg/Recorder/Player.js
+@@ -39,6 +39,11 @@ function play(ctx, _command) {
+       if (standalone) {
+         const freshPaint = ctx.Skia.Paint();
+         ctx.paint.assign(freshPaint);
++        // `assign` copies the properties, so the fresh paint is dead after this
++        // line. Without dispose() its WASM allocation stays in the heap forever.
++        if (freshPaint.dispose) {
++          freshPaint.dispose();
++        }
+       }
+       (0, _Paint.setPaintProperties)(ctx.Skia, ctx, command.props, standalone);
+     }
+@@ -131,6 +136,11 @@ function play(ctx, _command) {
+       }
+       ctx.paints.pop();
+     });
++    // The copy above belongs to this draw command only: it is a WASM allocation,
++    // so dropping the reference does not release it. Pooled paints stay alive.
++    if (paint.dispose) {
++      paint.dispose();
++    }
+   }
+ }
+ const replay = (ctx, commands) => {
+diff --git a/node_modules/@shopify/react-native-skia/lib/commonjs/specs/NativeSkiaModule.web.js b/node_modules/@shopify/react-native-skia/lib/commonjs/specs/NativeSkiaModule.web.js
+index 387efe5..aa4c989 100644
+--- a/node_modules/@shopify/react-native-skia/lib/commonjs/specs/NativeSkiaModule.web.js
++++ b/node_modules/@shopify/react-native-skia/lib/commonjs/specs/NativeSkiaModule.web.js
+@@ -15,6 +15,11 @@ global.SkiaViewApi = {
+     // Maybe a picture for this view was already set
+     if (this.deferedPictures[nativeId]) {
+       view.setPicture(this.deferedPictures[nativeId]);
++      // The recording that created this picture owns it and gives it back to
++      // CanvasKit on the next frame. Keeping the handle here made any later
++      // re-registration hand an already-deleted picture back to the canvas,
++      // which then died with `Cannot pass deleted object ... sk_sp<Picture>`.
++      this.deferedPictures[nativeId] = null;
+     }
+     this.views[nativeId] = view;
+   },
+@@ -24,6 +29,7 @@ global.SkiaViewApi = {
+       if (!this.views[`${nativeId}`]) {
+         this.deferedPictures[`${nativeId}`] = value;
+       } else {
++        this.deferedPictures[`${nativeId}`] = null;
+         this.views[`${nativeId}`].setPicture(value);
+       }
+     }
+diff --git a/node_modules/@shopify/react-native-skia/lib/module/skia/web/JsiSkPaint.js b/node_modules/@shopify/react-native-skia/lib/module/skia/web/JsiSkPaint.js
+index 5f05738..e837e7c 100644
+--- a/node_modules/@shopify/react-native-skia/lib/module/skia/web/JsiSkPaint.js
++++ b/node_modules/@shopify/react-native-skia/lib/module/skia/web/JsiSkPaint.js
+@@ -18,10 +18,16 @@ export class JsiSkPaint extends HostObject {
+     return new JsiSkPaint(this.CanvasKit, this.ref.copy());
+   }
+   assign(paint) {
++    const previous = this.ref;
+     this.ref = paint.ref.copy();
++    // The replaced ref is a WASM object the JS garbage collector does not perceive:
++    // without delete() it stays in the wasm heap forever.
++    previous.delete();
+   }
+   reset() {
++    const previous = this.ref;
+     this.ref = new this.CanvasKit.Paint();
++    previous.delete();
+   }
+   getAlphaf() {
+     return this.getColor()[3];
+diff --git a/node_modules/@shopify/react-native-skia/lib/module/sksg/Container.web.js b/node_modules/@shopify/react-native-skia/lib/module/sksg/Container.web.js
+index a3e9071..05a9217 100644
+--- a/node_modules/@shopify/react-native-skia/lib/module/sksg/Container.web.js
++++ b/node_modules/@shopify/react-native-skia/lib/module/sksg/Container.web.js
+@@ -13,16 +13,53 @@ import "../views/api";
+ const drawOnscreen = (Skia, nativeId, recording) => {
+   "worklet";
+ 
++  var _recording$lastPictur;
+   const rec = Skia.PictureRecorder();
+   const canvas = rec.beginRecording();
+   //const start = performance.now();
+ 
+   const ctx = createDrawingContext(Skia, recording.paintPool, canvas);
+-  replay(ctx, recording.commands);
+-  const picture = rec.finishRecordingAsPicture();
++  let picture;
++  try {
++    replay(ctx, recording.commands);
++    picture = rec.finishRecordingAsPicture();
++  } finally {
++    // Once the picture is finished, the recorder has no frame-scoped memory
++    // left to hand over: the JS handle is ours to delete. On Web CanvasKit
++    // objects live in WASM memory the GC cannot perceive, so keeping one
++    // recorder per frame per canvas exhausts the heap and aborts.
++    rec.dispose();
++  }
+   //const end = performance.now();
+   //console.log("Recording time: ", end - start);
+   SkiaViewApi.setJsiProperty(nativeId, "picture", picture);
++  // The view now references the new picture; the previous one is ours to
++  // delete. When the view was not registered yet the picture is parked in the
++  // deferred slot instead, so clear it there first: a later registerView would
++  // otherwise hand a deleted handle back to the canvas.
++  const anterior = recording.lastPicture;
++  if (anterior) {
++    const chave = "" + nativeId;
++    if (SkiaViewApi.deferedPictures[chave] === anterior) {
++      SkiaViewApi.deferedPictures[chave] = null;
++    }
++    anterior.dispose();
++  }
++  recording.lastPicture = picture;
++};
++const disposeRecording = recording => {
++  "worklet";
++
++  const pool = recording.paintPool;
++  for (let i = 0; i < pool.length; i++) {
++    pool[i].dispose();
++  }
++  pool.length = 0;
++  const last = recording.lastPicture;
++  recording.lastPicture = null;
++  if (last) {
++    last.dispose();
++  }
+ };
+ class ReanimatedContainer extends Container {
+   constructor(Skia, nativeId) {
+@@ -30,13 +67,45 @@ class ReanimatedContainer extends Container {
+     this.nativeId = nativeId;
+     _defineProperty(this, "mapperId", null);
+   }
++  unmount() {
++    super.unmount();
++    if (this.mapperId !== null) {
++      // The mapper closure retains the recording and keeps updating the
++      // picture of an unmounted view — stop it or it leaks for the
++      // lifetime of the app.
++      Rea.stopMapper(this.mapperId);
++      this.mapperId = null;
++    }
++    const recording = this.recording;
++    const nativeId = this.nativeId;
++    if (recording) {
++      this.recording = null;
++      // Deferred through the same channel as the draw calls so it runs after
++      // any of them that are still queued. The view is torn down around the
++      // same time as this container and may still hold the current picture in
++      // its ref, so drop that handle before giving the picture back.
++      Rea.runOnUI(() => {
++        "worklet";
++
++        const chave = "" + nativeId;
++        const view = SkiaViewApi.views[chave];
++        SkiaViewApi.deferedPictures[chave] = null;
++        if (view) {
++          view.setPicture(null);
++        }
++        disposeRecording(recording);
++      })();
++    }
++  }
+   redraw() {
+     if (this.mapperId !== null) {
+       Rea.stopMapper(this.mapperId);
++      this.mapperId = null;
+     }
+     if (this.unmounted) {
+       return;
+     }
++    const previousRecording = this.recording;
+     const recorder = new Recorder();
+     visit(recorder, this.root);
+     const record = recorder.getRecording();
+@@ -63,6 +132,12 @@ class ReanimatedContainer extends Container {
+       "worklet";
+ 
+       drawOnscreen(Skia, nativeId, recording);
++      if (previousRecording) {
++        // Only after the new frame is on the view: releasing the previous
++        // picture first would leave the canvas pointing at a deleted handle if
++        // this frame's replay threw halfway through.
++        disposeRecording(previousRecording);
++      }
+     })();
+   }
+ }
+diff --git a/node_modules/@shopify/react-native-skia/lib/module/sksg/Recorder/DrawingContext.js b/node_modules/@shopify/react-native-skia/lib/module/sksg/Recorder/DrawingContext.js
+index d131685..0713022 100644
+--- a/node_modules/@shopify/react-native-skia/lib/module/sksg/Recorder/DrawingContext.js
++++ b/node_modules/@shopify/react-native-skia/lib/module/sksg/Recorder/DrawingContext.js
+@@ -12,7 +12,14 @@ export const createDrawingContext = (Skia, paintPool, canvas) => {
+   let nextPaintIndex = 1;
+ 
+   // Initialize first paint and opacity
+-  paintPool[0] = Skia.Paint();
++  if (paintPool.length === 0) {
++    paintPool.push(Skia.Paint());
++  } else {
++    // reset() produces an anti-alias false paint, unlike the Skia.Paint()
++    // factory: restore the default so reused pools render like the first frame.
++    paintPool[0].reset();
++    paintPool[0].setAntiAlias(true);
++  }
+   paints.push(paintPool[0]);
+   opacities.push(1);
+ 
+diff --git a/node_modules/@shopify/react-native-skia/lib/module/sksg/Recorder/Player.js b/node_modules/@shopify/react-native-skia/lib/module/sksg/Recorder/Player.js
+index e643d48..cf22daf 100644
+--- a/node_modules/@shopify/react-native-skia/lib/module/sksg/Recorder/Player.js
++++ b/node_modules/@shopify/react-native-skia/lib/module/sksg/Recorder/Player.js
+@@ -33,6 +33,11 @@ function play(ctx, _command) {
+       if (standalone) {
+         const freshPaint = ctx.Skia.Paint();
+         ctx.paint.assign(freshPaint);
++        // `assign` copies the properties, so the fresh paint is dead after this
++        // line. Without dispose() its WASM allocation stays in the heap forever.
++        if (freshPaint.dispose) {
++          freshPaint.dispose();
++        }
+       }
+       setPaintProperties(ctx.Skia, ctx, command.props, standalone);
+     }
+@@ -125,6 +130,11 @@ function play(ctx, _command) {
+       }
+       ctx.paints.pop();
+     });
++    // The copy above belongs to this draw command only: it is a WASM allocation,
++    // so dropping the reference does not release it. Pooled paints stay alive.
++    if (paint.dispose) {
++      paint.dispose();
++    }
+   }
+ }
+ export const replay = (ctx, commands) => {
+diff --git a/node_modules/@shopify/react-native-skia/lib/module/specs/NativeSkiaModule.web.js b/node_modules/@shopify/react-native-skia/lib/module/specs/NativeSkiaModule.web.js
+index 82d5558..b51a91d 100644
+--- a/node_modules/@shopify/react-native-skia/lib/module/specs/NativeSkiaModule.web.js
++++ b/node_modules/@shopify/react-native-skia/lib/module/specs/NativeSkiaModule.web.js
+@@ -9,6 +9,11 @@ global.SkiaViewApi = {
+     // Maybe a picture for this view was already set
+     if (this.deferedPictures[nativeId]) {
+       view.setPicture(this.deferedPictures[nativeId]);
++      // The recording that created this picture owns it and gives it back to
++      // CanvasKit on the next frame. Keeping the handle here made any later
++      // re-registration hand an already-deleted picture back to the canvas,
++      // which then died with `Cannot pass deleted object ... sk_sp<Picture>`.
++      this.deferedPictures[nativeId] = null;
+     }
+     this.views[nativeId] = view;
+   },
+@@ -18,6 +23,7 @@ global.SkiaViewApi = {
+       if (!this.views[`${nativeId}`]) {
+         this.deferedPictures[`${nativeId}`] = value;
+       } else {
++        this.deferedPictures[`${nativeId}`] = null;
+         this.views[`${nativeId}`].setPicture(value);
+       }
+     }

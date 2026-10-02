@@ -8,10 +8,9 @@ export function VehicleSteer() {
 
   return (
     <View
-      style={[styles.wrap, { left: insets.left, bottom: insets.bottom }]}
-      pointerEvents="none"
+      style={[styles.wrap, { left: insets.left, bottom: insets.bottom, pointerEvents: 'none' }]}
     >
-      <View style={styles.row} pointerEvents="none">
+      <View style={[styles.row, { pointerEvents: 'none' }]}>
         <TouchHold id="left" style={styles.btn} activeColor="rgba(80,150,255,0.95)">
           <IconTurnLeft />
         </TouchHold>

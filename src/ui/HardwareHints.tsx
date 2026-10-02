@@ -21,7 +21,7 @@ export function HardwareHints({ mode, driving, flying = false }: {
     : flying ? 'WASD voar · Espaço subir · Ctrl descer · E sair · M mapa · Esc pausa'
       : driving ? 'W acelerar · S frear/ré · A/D virar · H buzina · E sair · M mapa · Esc pausa'
         : 'WASD andar · C agachar · Shift correr · Space pular · Ctrl/clique esq. atirar · clique dir. mira · R recarga · Q anterior · Z próxima · E veículo · F interior';
-  return <View style={styles.wrap} pointerEvents="none" testID="hardware-hints">
+  return <View style={[styles.wrap, { pointerEvents: 'none' }]} testID="hardware-hints">
     {prompt && <Text style={styles.prompt}>{pad ? 'Y' : 'F'} · {prompt}</Text>}
     <Text style={styles.text}>{text}</Text>
   </View>;
