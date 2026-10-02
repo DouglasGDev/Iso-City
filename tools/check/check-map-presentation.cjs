@@ -426,7 +426,8 @@ for (const detailed of [true, false]) test(`MapCanvas ${detailed ? 'detailed map
   for (const key of ['n101', 'cop102', 'v103', 'v104', 'ammo105', 'door106', 'n201', 'cop202', 'v203',
     ...(!detailed ? ['n1', 'door6'] : [])]) assert.ok(!byKey.has(key), key + ' must be hidden');
   const mask = explorationPaths(game.exploration);
-  const image = entries.find(({ node }) => node.type === 'Image');
+  const image = entries.find(({ node, ancestors }) => node.type === 'Image'
+    && ancestors.some((n) => n.props.clip === mask.discovered));
   assert.ok(image, 'real bakeRadar feeds Skia image');
   assert.ok(image.ancestors.some((n) => n.props.clip === mask.discovered), 'raster clipped to actual discoveries');
   // O rastro do já percorrido saiu do mapa de propósito: em verde por cima da tinta da
@@ -436,6 +437,46 @@ for (const detailed of [true, false]) test(`MapCanvas ${detailed ? 'detailed map
   const trail = entries.find(({ node }) => node.type === 'Path' && node.props.path === mask.visited);
   assert.ok(!trail, 'o rastro verde do já percorrido voltou a ser pintado no mapa');
   assert.equal(imagesBaked, dataDisposed, 'temporary Skia data disposed');
+});
+
+// O radar é o instrumento do "onde estou agora", e a janela dele alcança ~20 tiles para todo
+// lado enquanto a descoberta revela 8. Quando só a máscara desenhava, 67% do painel era o
+// cinza de nunca-visitado (#15212c) — inclusive a rua sob o pé do jogador — e o painel lia
+// como um GPS sem sinal. A terra desconhecida agora fica APAGADA no radar, não sumida; no
+// mapa cheio ela continua sumida, porque lá a névoa é a recompensa de explorar. As duas
+// metades são o contrato, e é a assimetria que este teste trava.
+test('o radar apaga a terra desconhecida e o mapa cheio continua escondendo quem nunca foi lá', () => {
+  const camadas = (detailed) => {
+    // Cidade 100% desconhecida: é o caso em que o bug aparecia com mais força.
+    const game = fixture(true);
+    const mask = explorationPaths(game.exploration);
+    const { imgW, imgH } = isoMetrics(64, 40);
+    return readOnlyRender(() => MapCanvas({ ...canvasProps, detailed })).map(({ node, ancestors }) => {
+      if (node.type !== 'Image') return null;
+      return {
+        descoberta: ancestors.some((n) => n.props.clip === mask.discovered),
+        // Apagar não é mover: a camada tem de rolar junto com o mapa, no mesmo grupo projectado.
+        noMapa: ancestors.some((n) => Array.isArray(n.props.transform)
+          && n.props.transform.some((t) => 'scale' in t)),
+        cobrindoOTudo: node.props.x === 0 && node.props.y === 0
+          && node.props.width === imgW && node.props.height === imgH,
+        opacidade: node.props.opacity ?? 1,
+      };
+    }).filter(Boolean);
+  };
+  const cheio = camadas(true);
+  assert.equal(cheio.length, 1, 'no mapa cheio só a descoberta desenha a cidade');
+  assert.deepEqual(cheio[0], { descoberta: true, noMapa: true, cobrindoOTudo: true, opacidade: 1 });
+
+  const radar = camadas(false);
+  assert.equal(radar.length, 2, 'o radar desenha a terra uma vez apagada e outra na máscara');
+  const [velada, descoberta] = radar;
+  assert.equal(descoberta.descoberta, true, 'a camada acesa é a da descoberta');
+  assert.equal(velada.descoberta, false, 'a terra não explorada não passa pela máscara');
+  assert.equal(velada.noMapa, true, 'a névoa apagada rola com o mapa, senão o terreno escapa do pingo');
+  assert.equal(velada.cobrindoOTudo, true, 'a camada apagada cobre o raster inteiro, não um remendo');
+  assert.ok(velada.opacidade > 0 && velada.opacidade <= 0.5,
+    `apagar é meio caminho entre o terreno e o vazio: opacidade ${velada.opacidade}`);
 });
 
 for (const detailed of [true, false]) test(`MapCanvas ${detailed ? 'detailed map' : 'radar'} desenha o arco de visão dos oficiais, não um raio-x da HUD`, () => {
