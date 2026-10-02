@@ -56,6 +56,10 @@ export class NPCSystem {
     }
 
     npc.swimming = map.isWaterWorld(npc.x, npc.y);
+    // Nadando não há faixa a atravessar: o state continua 'walking' durante a natação, e sem
+    // este corte o pedido de travessia feito antes de cair na água fica vivo, projeto o ponto
+    // de cruzamento no eixo do carro e para uma faixa inteira atrás de um pedestre boiando.
+    if (npc.swimming) crossings.delete(npc);
     if (npc.swimming) {
       this.swimToShore(npc, map, dt);
       return;
@@ -196,9 +200,39 @@ export class NPCSystem {
     return true;
   }
 
+  /**
+   * Margem = o node de passeio SECO mais próximo. O node mais próximo a conta pura não pode
+   * ser: uma poça permanente (bacia de cachoeira, entulho alagado) em cima de um passeio deixa
+   * o pedestre em cima do próprio destino, `dist` 0, e ele nada parado ali para sempre. Como o
+   * intento de travessia sobrevivia enquanto ele nadava, um só pedestre afogado parava a faixa
+   * inteira atrás dele. Varre o grafo de passeio em largura, com orçamento curto: passado o
+   * orçamento, nada na direção que já tinha (enxurrada e tsunami são finitos e a água baixa).
+   */
+  private dryShore(npc: NPC, map: Map): { x: number; y: number } | null {
+    const start = map.nearestSidewalkNode(npc.x, npc.y);
+    const first = map.sidewalkNodes[start];
+    if (!first) return null;
+    if (!map.isWaterWorld(first.x, first.y)) return first;
+    const fila = [start];
+    const visto = new Set<number>([start]);
+    for (let frente = 0; frente < fila.length && visto.size <= 48; frente++) {
+      for (const vizinho of map.sidewalkNeighbors[fila[frente]] ?? []) {
+        if (visto.has(vizinho)) continue;
+        visto.add(vizinho);
+        const n = map.sidewalkNodes[vizinho];
+        if (n && !map.isWaterWorld(n.x, n.y)) return n;
+        fila.push(vizinho);
+      }
+    }
+    return null;
+  }
+
   /** Água não é calçada: o pedestre nada até a margem em vez de andar boiando. */
   private swimToShore(npc: NPC, map: Map, dt: number) {
-    const shore = map.sidewalkNodes[map.nearestSidewalkNode(npc.x, npc.y)];
+    // Sem margem seca ao alcance: usa o node de sempre e nada às cegas, o código abaixo já
+    // faz isso. Ir para `idle` aqui seria o pedestre largando a braçada enquanto ainda está
+    // com a cintura na água—a animação segue a posição, não o destino.
+    const shore = this.dryShore(npc, map) ?? map.sidewalkNodes[map.nearestSidewalkNode(npc.x, npc.y)];
     if (!shore) {
       this.goIdle(npc);
       return;

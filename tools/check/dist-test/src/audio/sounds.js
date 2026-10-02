@@ -128,8 +128,9 @@ exports.AMBIENT = {
     fireworksDistant: require('../../assets/Audio/fogos-artificio/fireworks_distant.mp3'),
     fireworksClose: require('../../assets/Audio/fogos-artificio/fireworks_close.mp3'),
 };
-/** Loops contínuos por canal (motor, sirene) com volume dinâmico. */
+/** Loops contínuos por canal (motor, sirene, cachoeira) com volume dinâmico. */
 exports.LOOPS = {
     engine: require('../../assets/Audio/generated/engine_loop.wav'),
     siren: require('../../assets/Audio/generated/siren_loop.wav'),
+    cascade: require('../../assets/Audio/generated/cascade_loop.wav'),
 };

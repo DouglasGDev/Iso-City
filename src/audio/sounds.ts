@@ -136,17 +136,18 @@ export const AMBIENT = {
   fireworksClose: require('../../assets/Audio/fogos-artificio/fireworks_close.mp3'),
 } as const;
 
-/** Loops contínuos por canal (motor, sirene) com volume dinâmico. */
+/** Loops contínuos por canal (motor, sirene, cachoeira) com volume dinâmico. */
 export const LOOPS = {
   engine: require('../../assets/Audio/generated/engine_loop.wav'),
   siren: require('../../assets/Audio/generated/siren_loop.wav'),
+  cascade: require('../../assets/Audio/generated/cascade_loop.wav'),
 } as const;
 
 /** Um só leito de clima por vez: chuva, vento, tornado ou a onda do tsunami. */
 export type WeatherBed = 'rain' | 'wind' | 'tornado' | 'wave';
 
 export type LoopKey = keyof typeof LOOPS;
-export type LoopChannel = 'engine' | 'siren';
+export type LoopChannel = 'engine' | 'siren' | 'cascade';
 
 export type SfxKey = keyof typeof SFX;
 export type AmbientKey = keyof typeof AMBIENT;

@@ -280,6 +280,27 @@ export const GAME_CONFIG = {
   /** Quanto a subida come de velocidade por tile de desnível à frente. */
   TERRAIN_SLOPE_SLOW: 0.5,
 
+  /** ---- Cachoeiras do relevo (§6) ---- */
+  /**
+   * Velocidade da veia no pé da queda, em tiles por segundo. Tem de passar de
+   * PLAYER_SWIM_SPEED (1,15), senão quem cai no lençol consegue nadar contra a queda e a
+   * cachoeira vira enfeite: aqui a água manda, e sair dela é andar até a margem.
+   */
+  CASCADE_FLOW_SPEED: 3.4,
+  /** Giro da bacia: mais fraco que a queda, para o corpo encostar na borda e poder sair. */
+  CASCADE_POOL_SPEED: 1.05,
+  /**
+   * Folga lateral além da folha desenhada, em fração da meia-largura. O espirro molha e
+   * empurra um pouco fora do lençol, e é esta margem que decide onde a beira ainda pega.
+   */
+  CASCADE_MARGIN: 1.35,
+  /** Vida por segundo embaixo do lençol. Dói e empurra para fora, mas não é tsunami. */
+  CASCADE_PLAYER_DMG_S: 6,
+  /** Ferro batido na pedra molhada: o carro arrastado perde lataria, não explode sozinho. */
+  CASCADE_VEHICLE_DMG_S: 9,
+  /** Alcance do rugido em tiles: uma cachoeira é um lugar, não uma estação do mapa. */
+  CASCADE_NOISE_TILES: 17,
+
   /** ---- Destruição de veículos ---- */
   VEHICLE_EXPLOSION_RADIUS: 2.6,
   VEHICLE_EXPLOSION_DMG: 38,

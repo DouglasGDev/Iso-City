@@ -429,8 +429,12 @@ for (const detailed of [true, false]) test(`MapCanvas ${detailed ? 'detailed map
   const image = entries.find(({ node }) => node.type === 'Image');
   assert.ok(image, 'real bakeRadar feeds Skia image');
   assert.ok(image.ancestors.some((n) => n.props.clip === mask.discovered), 'raster clipped to actual discoveries');
-  const trail = entries.find(({ node }) => node.type === 'Path' && node.props.path === mask.visited && node.props.opacity === 0.7);
-  assert.ok(trail, 'actual visited path displayed');
+  // O rastro do já percorrido saiu do mapa de propósito: em verde por cima da tinta da
+  // cidade ele lia como território conquistado e sujava o plano. O que continua desenhado é
+  // a máscara de descoberta, que é o clip da imagem logo acima — e é por isso que esta
+  // asserção é negativa: se aparecer um traçado com o caminho do `visited`, o rastro voltou.
+  const trail = entries.find(({ node }) => node.type === 'Path' && node.props.path === mask.visited);
+  assert.ok(!trail, 'o rastro verde do já percorrido voltou a ser pintado no mapa');
   assert.equal(imagesBaked, dataDisposed, 'temporary Skia data disposed');
 });
 

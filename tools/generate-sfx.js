@@ -2,7 +2,7 @@
  * Sintetiza SFX e ambientes originais como WAV PCM16 mono 22.05kHz.
  * Rode: node tools/generate-sfx.js (todos), --weapons (armas) ou
  * --exploration (movimento, floresta, chamado animal e buzina), --regions (biomas),
- * --weather (vento e trovão) e --hazards (tornado, onda e sirene de aviso).
+ * --weather (vento e trovão) e --hazards (tornado, onda, cachoeira e sirene de aviso).
  */
 const fs = require('fs');
 const path = require('path');
@@ -578,6 +578,29 @@ function waveLoop() {
   writeWav('wave_loop.wav', out, 0.32);
 }
 
+// ---- Cachoeira (loop 8s): água branca — assopro contínuo da folha com o tombo grave na bacia ----
+function cascadeLoop() {
+  seed = 58271;
+  const n = sec(8);
+  const deep = lowpass(lowpass(forestNoise(n, 0.05), 0.1), 0.05);
+  const sheet = forestNoise(n, 0.22);
+  const foam = forestNoise(n, 0.62);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const cycle = 2 * Math.PI * i / n;
+    // A folha ondula devagar e a espuma pisca por cima: três voltas por loop, ciclo inteiro,
+    // para a emenda não deixar corte no meio do barulho.
+    const breathe = 0.6 + 0.28 * Math.sin(cycle * 3) + 0.12 * Math.sin(cycle * 7 + 1.7);
+    out[i] = deep[i] * 2.5 * (0.5 + 0.5 * breathe)
+      + sheet[i] * 1.5 * breathe
+      + foam[i] * 0.45 * (0.45 + 0.55 * breathe);
+  }
+  let mean = 0;
+  for (const sample of out) mean += sample / n;
+  for (let i = 0; i < n; i++) out[i] -= mean;
+  writeWav('cascade_loop.wav', out, 0.3);
+}
+
 // ---- Alerta de clima severo: sirene de defesa civil em dois tons ----
 function weatherAlert() {
   const out = new Float32Array(sec(2.8));
@@ -651,6 +674,7 @@ if (!skips('weather')) {
 if (!skips('hazards')) {
   tornadoLoop();
   waveLoop();
+  cascadeLoop();
   weatherAlert();
 }
 console.log('OK →', OUT);

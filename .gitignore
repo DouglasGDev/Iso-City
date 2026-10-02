@@ -24,6 +24,7 @@ assets/Audio/**
 !assets/Audio/generated/bat_hit.wav
 !assets/Audio/generated/bat_swing.wav
 !assets/Audio/generated/car_horn.wav
+!assets/Audio/generated/cascade_loop.wav
 !assets/Audio/generated/coast_day.wav
 !assets/Audio/generated/coast_night.wav
 !assets/Audio/generated/country_day.wav
