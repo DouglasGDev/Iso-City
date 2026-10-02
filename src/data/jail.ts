@@ -28,9 +28,20 @@ const cell = (x0: number, x1: number): JailCell => {
 };
 
 // Cinco celas ao longo da parede do fundo, com divisórias de uma espessura de parede.
-export const JAIL_CELLS: JailCell[] = [
-  cell(0.4, 3.2), cell(3.55, 6.35), cell(6.7, 9.5), cell(9.85, 12.65), cell(13.0, 15.8),
-];
+// O bloco encosta nas faces internas das paredes oeste e leste do próprio quarto: sobrar piso
+// entre a casca e a divisória é uma cela sem porta — era a última, aberta para o pátio bem ao
+// lado do painel que destranca tudo. As larguras saem da conta, então o bloco nunca deixa fresta.
+const CELAS = 5;
+const faceOeste = JAIL_T;
+const faceLeste = JAIL_W - JAIL_T;
+const larguraCela = (faceLeste - faceOeste - (CELAS - 1) * JAIL_T) / CELAS;
+export const JAIL_CELLS: JailCell[] = Array.from(
+  { length: CELAS },
+  (_unused, i) => cell(
+    faceOeste + i * (larguraCela + JAIL_T),
+    faceOeste + (i + 1) * larguraCela + i * JAIL_T,
+  ),
+);
 
 /** Cela onde quem é pego acorda. */
 export const JAIL_PLAYER_CELL = 0;
@@ -44,8 +55,10 @@ export const JAIL_PANEL = { x: 13.9, y: 6.5 };
 /**
  * Depósito de armas: uma jaula gradesada no canto do pátio. As grades são a única
  * passagem; com a cela-mãe fechada é impossível alcançá-las por fora — é área trancada.
+ * A face oeste da jaula é a própria parede do quarto: uma jaula que não encosta nela
+ * deixa um beco de piso entre as barras e a casca, que é o mesmo buraco da cela aberta.
  */
-export const JAIL_ARMORY = { x0: 0.6, x1: 4.4, y0: 6.6, y1: 9.4, gateX0: 1.9, gateX1: 3.3, loot: { x: 1.5, y: 7.3 } };
+export const JAIL_ARMORY = { x0: JAIL_T, x1: 4.4, y0: 6.6, y1: 9.4, gateX0: 1.9, gateX1: 3.3, loot: { x: 1.5, y: 7.3 } };
 
 /**
  * Cada vão gradesado da sala, indexado na ordem em que `JailSystem.gates` os mantém.
@@ -132,7 +145,7 @@ export const JAIL_PIECES: JailPiece[] = [
   // Pátio de dia: mesa de serviço, balcão de triagem, evidências e visita.
   { id: 'guard-desk', kind: 'desk', x: 12.6, y: 5.0, w: 1.3, d: 0.65, height: 15, color: '#7c6a52' },
   { id: 'intake', kind: 'counter', x: 6.4, y: 10.4, w: 2.4, d: 0.65, height: 20, color: '#6b737b' },
-  { id: 'evidence', kind: 'shelf', x: 15.4, y: 4.9, w: 0.5, d: 1.7, height: 34, color: '#7a6a55' },
+  { id: 'evidence', kind: 'shelf', x: faceLeste - 0.5, y: 4.9, w: 0.5, d: 1.7, height: 34, color: '#7a6a55' },
   { id: 'panel', kind: 'desk', x: 14.3, y: 6.15, w: 0.9, d: 0.7, height: 26, color: '#3f4a55' },
   { id: 'visitor-a', kind: 'chair', x: 8.2, y: 8.0, w: 0.5, d: 0.5, height: 13, color: '#5a6470' },
   { id: 'visitor-b', kind: 'chair', x: 9.4, y: 8.0, w: 0.5, d: 0.5, height: 13, color: '#5a6470' },
