@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { Group, Image, Path, Skia, type SkImage } from '@shopify/react-native-skia';
+import { useMemo, useRef } from 'react';
+import { Group, Image, Path, Skia, type SkImage, type SkPath } from '@shopify/react-native-skia';
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
 import type { WeaponTracer } from '../systems/WeaponSystem';
 import { meleeMotion } from '../entities/Player';
@@ -60,8 +60,20 @@ export function MeleeSwing({ state, batImage = null }: {
     return { side, shoulder, hand, elbow, tip, reach, swing };
   }, [state]);
 
+  // Um `Skia.Path.Make()` por quadro não é objeto que o coletor recolhe: na web é memória wasm
+  // que ninguém devolve — medida em ~1.250 paths por segundo criados e zero deletados até o
+  // canvaskit dar `Aborted()`. O caminho mora no ref e cada leitura rebobina o mesmo objeto;
+  // `rewind()` mantém o armazenamento reservado, que é justamente o que um laço a 60 Hz paga.
+  const armPath = useRef<SkPath | null>(null);
+  const fistPath = useRef<SkPath | null>(null);
+  const trailPath = useRef<SkPath | null>(null);
+  const batPath = useRef<SkPath | null>(null);
+  const grainPath = useRef<SkPath | null>(null);
+
   const arm = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!armPath.current) armPath.current = Skia.Path.Make();
+    const path = armPath.current;
+    path.rewind();
     if (!state.value.visible) return path;
     const { shoulder, elbow, hand } = pose.value;
     path.moveTo(shoulder.x, shoulder.y);
@@ -70,7 +82,9 @@ export function MeleeSwing({ state, batImage = null }: {
     return path;
   }, [state, pose]);
   const fist = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!fistPath.current) fistPath.current = Skia.Path.Make();
+    const path = fistPath.current;
+    path.rewind();
     if (!state.value.visible) return path;
     const { hand } = pose.value;
     path.addCircle(hand.x, hand.y, 2.9);
@@ -78,7 +92,9 @@ export function MeleeSwing({ state, batImage = null }: {
   }, [state, pose]);
   /** Swept arc behind the striking limb while it is actually accelerating. */
   const trail = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!trailPath.current) trailPath.current = Skia.Path.Make();
+    const path = trailPath.current;
+    path.rewind();
     const s = state.value;
     const { shoulder, hand, reach } = pose.value;
     if (!s.visible || reach < 0.15) return path;
@@ -95,7 +111,9 @@ export function MeleeSwing({ state, batImage = null }: {
     return path;
   }, [state, pose]);
   const bat = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!batPath.current) batPath.current = Skia.Path.Make();
+    const path = batPath.current;
+    path.rewind();
     if (!state.value.visible || state.value.weapon !== 'bat' || batImage) return path;
     const { hand: h, tip: t } = pose.value;
     const length = Math.max(1, Math.hypot(t.x - h.x, t.y - h.y));
@@ -110,7 +128,9 @@ export function MeleeSwing({ state, batImage = null }: {
     return path;
   }, [state, pose, batImage]);
   const grain = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!grainPath.current) grainPath.current = Skia.Path.Make();
+    const path = grainPath.current;
+    path.rewind();
     if (!state.value.visible || state.value.weapon !== 'bat' || batImage) return path;
     const { hand: h, tip: t } = pose.value;
     path.moveTo(h.x * 0.7 + t.x * 0.3, h.y * 0.7 + t.y * 0.3 - 0.7);
@@ -172,8 +192,13 @@ export interface WeaponVisualState {
 }
 
 export function WeaponEffects({ state }: { state: SharedValue<WeaponVisualState> }) {
+  // Mesma razão do `MeleeSwing`: o caminho renasce a cada leitura, não a cada quadro.
+  const trailsPath = useRef<SkPath | null>(null);
+  const impactsPath = useRef<SkPath | null>(null);
   const trails = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!trailsPath.current) trailsPath.current = Skia.Path.Make();
+    const path = trailsPath.current;
+    path.rewind();
     for (const t of state.value.tracers) {
       const dx = t.x2 - t.x1;
       const dy = t.y2 - t.y1;
@@ -186,7 +211,9 @@ export function WeaponEffects({ state }: { state: SharedValue<WeaponVisualState>
     return path;
   }, [state]);
   const impacts = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!impactsPath.current) impactsPath.current = Skia.Path.Make();
+    const path = impactsPath.current;
+    path.rewind();
     for (const t of state.value.tracers) {
       if (!t.hit) continue;
       const to = worldToScreen(t.x2, t.y2, t.h2);

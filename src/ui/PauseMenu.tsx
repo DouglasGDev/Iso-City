@@ -91,7 +91,7 @@ function PausePanel({
             onPress={() => act(row)}
           >
             <Text style={styles.btnText}>{row.label}</Text>
-            {focus === row.id && <View style={styles.caret} pointerEvents="none" />}
+            {focus === row.id && <View style={styles.caret} />}
           </TouchableOpacity>
         ))}
         <Text style={styles.saved} testID="pause-saved-note">{saved ? 'JOGO SALVO ✓' : ' '}</Text>
@@ -161,6 +161,7 @@ const styles = StyleSheet.create({
     borderColor: '#ffe9a8',
   },
   caret: {
+    pointerEvents: 'none',
     position: 'absolute',
     left: 12,
     top: 10,

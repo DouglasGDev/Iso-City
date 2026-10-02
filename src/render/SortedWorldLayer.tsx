@@ -112,8 +112,14 @@ function WildlifeSprite({ animal, game, clock }: {
   const position = useSharedValue({
     x: animal.x, y: animal.y, h: game.map.heightSmoothAt(animal.x, animal.y),
   });
-  const visual = useSharedValue(animalVisualState(animal, clock.value));
+  // Ler `clock.value` aqui é o aviso que o Reanimated dá no aparelho ("Reading from `value` during
+  // component render"), e ele dispara um por animal visível. A semente só serve ao primeiro desenho:
+  // o efeito abaixo publica a pose real no commit, antes do primeiro quadro, e o GameLoop continua
+  // escrevendo a cada tick. O `sampledAt` sem relógio não engana ninguém — só os mortos o leem,
+  // interpolando no máximo 0.1s.
+  const visual = useSharedValue(animalVisualState(animal, 0));
   useEffect(() => {
+    visual.value = animalVisualState(animal, clock.value);
     animalSVs.set(animal.id, { position, visual });
     return () => { if (animalSVs.get(animal.id)?.position === position) animalSVs.delete(animal.id); };
   }, [animal.id, position, visual]);

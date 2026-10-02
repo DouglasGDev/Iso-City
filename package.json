@@ -10,7 +10,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "postinstall": "patch-package"
   },
   "allowScripts": {
     "@shopify/react-native-skia@2.6.2": true
@@ -18,6 +19,7 @@
   "devDependencies": {
     "@types/react": "~19.1.10",
     "babel-preset-expo": "~54.0.12",
+    "patch-package": "^8.0.1",
     "pngjs": "^7.0.0",
     "typescript": "~5.9.2"
   },

@@ -8,11 +8,10 @@ export function VirtualJoystick() {
 
   return (
     <View
-      pointerEvents="none"
       collapsable={false}
       style={[
         styles.base,
-        { left: base.x, top: base.y, opacity: active ? 0.95 : 0.55 },
+        { left: base.x, top: base.y, opacity: active ? 0.95 : 0.55, pointerEvents: 'none' },
       ]}
     >
       <View style={styles.ring} />

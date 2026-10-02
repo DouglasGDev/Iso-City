@@ -15,7 +15,7 @@ const VectorIcon = memo(function VectorIcon({
   filled = false,
 }: IconProps & { path: string; filled?: boolean }) {
   return (
-    <Canvas style={{ width: size, height: size }} pointerEvents="none">
+    <Canvas style={{ width: size, height: size, pointerEvents: 'none' }}>
       <Group transform={[{ scale: size / 24 }]}>
         <Path
           path={path}
@@ -39,8 +39,7 @@ export function IconStarRow({ count, size = 12, color = '#ffd54a', gap = 1 }:
   const scale = size / 24;
   return (
     <Canvas
-      style={{ width: count * size + (count - 1) * gap, height: size }}
-      pointerEvents="none"
+      style={{ width: count * size + (count - 1) * gap, height: size, pointerEvents: 'none' }}
       accessible
       accessibilityLabel={`Procurado: ${count} de 5`}
       testID="hud-wanted"

@@ -140,7 +140,23 @@ async function test(name, fn) {
     await evaluate(`(()=>{const p=qa.g.player,v=qa.g.vehicles.find(v=>v.id===987654);p.x=v.x;p.y=v.y;})()`);
     await tap('KeyE', 69);
     await until('qa.g.player.currentVehicleId===qa.heliId', 'entrou no helicóptero');
-    await hold('KeyW', 87, 2600);
+    // A subida é por TAXA (HELI_CLIMB_RATE) e só existe enquanto o manche segura: soltar W depois
+    // de um tempo fixo deixa o aparelho parado no meio da rampa quando o platô da decolagem é mais
+    // baixo que o do cruzeiro. Então W fica pressionado até a levitação ser alcançada, com prazo,
+    // e a velocidade é lida ainda em voo — largar o acelerador antes zeraria o próximo assert.
+    await send('Input.dispatchKeyEvent',
+      { type: 'keyDown', code: 'KeyW', key: 'KeyW', windowsVirtualKeyCode: 87 });
+    let alcancou = false;
+    const prazo = Date.now() + 12000;
+    while (!alcancou && Date.now() < prazo) {
+      alcancou = await evaluate(`(()=>{const g=qa.g,v=g.vehicles.find(v=>v.id===qa.heliId);
+        return !!v && g.map.heightAt(v.x,v.y)+qa.cfg().HELI_CRUISE_ALTITUDE-v.elevation < 0.05;})()`);
+      if (!alcancou) await delay(80);
+    }
+    const voando = await evaluate(`(()=>({speed:qa.g.vehicles.find(v=>v.id===qa.heliId).speed}))()`);
+    await send('Input.dispatchKeyEvent',
+      { type: 'keyUp', code: 'KeyW', key: 'KeyW', windowsVirtualKeyCode: 87 });
+    assert.ok(alcancou, 'segurando W o aparelho nunca chega na levitação do platô');
     const air = await evaluate(`(()=>{const g=qa.g,v=g.vehicles.find(v=>v.id===qa.heliId);
       return{alt:v.altitude,elev:v.elevation,chao:g.map.heightSmoothAt(v.x,v.y),
         regra:g.map.heightAt(v.x,v.y),speed:v.speed,cruise:qa.cfg().HELI_CRUISE_ALTITUDE};})()`);
@@ -153,7 +169,7 @@ async function test(name, fn) {
     // misturada à frente: se perseguisse a frente, a montanha içaria o helicóptero sozinha.
     assert.ok(Math.abs(air.elev - (air.regra + air.cruise)) < 0.05,
       `cota ${air.elev} não é o platô ${air.regra} + cruzeiro ${air.cruise}`);
-    assert.ok(air.speed > 0.5, 'o aparelho anda quando se acelera');
+    assert.ok(voando.speed > 0.5, 'o aparelho anda quando se acelera');
     assert.equal(air.cruise > 1.25, true, 'tem que subir mais do que antes');
   });
 

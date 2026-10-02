@@ -45,7 +45,7 @@ export function InteriorPlan({ room, mapW, mapH, zoom = 1, panX = 0, panY = 0, d
   const people = jail ? game.jail.occupants : game.crowd.list;
 
   return (
-    <Canvas style={{ width: mapW, height: mapH }} pointerEvents="none">
+    <Canvas style={{ width: mapW, height: mapH, pointerEvents: 'none' }}>
       <Rect x={0} y={0} width={mapW} height={mapH} color={C.background} />
       <Group transform={[{ translateX: imgX }, { translateY: imgY }, { scale }]}>
         <Path path={mapPolygon(0, 0, W, H, H)} color={FLOOR} />

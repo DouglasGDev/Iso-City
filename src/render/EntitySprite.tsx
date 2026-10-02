@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDerivedValue, useSharedValue } from 'react-native-reanimated';
-import { Circle, FilterMode, Group, Image, Oval, Skia, type SkImage } from '@shopify/react-native-skia';
+import { Circle, FilterMode, Group, Image, Oval, Skia, type SkImage, type SkPath } from '@shopify/react-native-skia';
 import { entitySVs } from './SharedValues';
 import { resolveEntityImage } from './entityImages';
 import { getGame } from '../game/GameState';
@@ -211,8 +211,13 @@ export function EntitySprite({ id }: Props) {
     { translateX: -w / 2 }, { translateY: -h },
   ], [posture, w, h]);
   const { direction, anim, frame } = sprite;
+  // Rebobinado, não recriado: este worklet roda por sprite visível a cada quadro, e na web um
+  // `Skia.Path.Make()` por quadro é memória wasm que ninguém devolve ao heap.
+  const armClipBox = useRef<SkPath | null>(null);
   const armClip = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!armClipBox.current) armClipBox.current = Skia.Path.Make();
+    const path = armClipBox.current;
+    path.rewind();
     const s = melee.value;
     if (id !== 'player' || !s.visible || w !== 24 || h !== 32) return path;
     // Match MeleeSwing's actual side, not the rounded sprite/weapon direction.

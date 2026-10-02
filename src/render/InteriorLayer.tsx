@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react';
-import { Circle, Group, Path, RadialGradient, Skia } from '@shopify/react-native-skia';
+import { Circle, Group, Path, RadialGradient, Skia, type SkPath } from '@shopify/react-native-skia';
 import type { Furniture, InteriorKind, InteriorRoom } from '../systems/InteriorSystem';
 import type { GameState } from '../game/GameState';
 import { worldToScreen } from '../world/IsoUtils';
@@ -411,6 +411,17 @@ export function InteriorLayer({ game, room }: { game: GameState; room: InteriorR
   </Group>;
 }
 
+/**
+ * A setinha da porta é sempre o mesmo triângulo: o que muda é onde ela pousa, e isso é o
+ * `transform` que resolve. Refazer o caminho a cada tique de cull deixava um `SkPath` novo
+ * no heap da web por porta visível — foi o último crescimento que a régua de memória mediu
+ * depois que os recorders por quadro pararam de vazar.
+ */
+let setaEntrada: SkPath | null = null;
+function setaDeEntrada(): SkPath {
+  return setaEntrada ??= polygon([{ x: -5, y: -6 }, { x: 5, y: -6 }, { x: 0, y: 3 }]);
+}
+
 export function EntranceMarkers({ game }: { game: GameState }) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -424,7 +435,8 @@ export function EntranceMarkers({ game }: { game: GameState }) {
       if (!game.fog.intersects(view, p.x - 10, p.y - 10, 20, 20)) return null;
       return <Group key={door.id}>
         <Circle cx={p.x} cy={p.y} r={10} color="#86d4c2" opacity={0.35} />
-        <Path path={polygon([{ x: p.x - 5, y: p.y - 6 }, { x: p.x + 5, y: p.y - 6 }, { x: p.x, y: p.y + 3 }])} color="#b5f0da" />
+        <Path path={setaDeEntrada()} color="#b5f0da"
+          transform={[{ translateX: p.x }, { translateY: p.y }]} />
       </Group>;
     })}
   </Group>;

@@ -9,6 +9,23 @@ let socket;
 let nextId = 0;
 const pending = new Map();
 const errors = [];
+// Além dos erros, o harness guarda os avisos: a regra #156 é o console limpo, não só a página viva.
+const avisos = [];
+// Índice a índice com `avisos`: a seção que estava aberta quando cada um saiu.
+const fases = [];
+// O React manda o stack do componente como segundo argumento do console.error. É a diferença entre
+// "apareceu um loop" e "este componente está em loop". Quando ele não manda (é o caso do
+// "Maximum update depth exceeded"), a pilha vem do próprio page: o laço abaixo captura
+// `new Error().stack` na hora do console.error e o Node drena a fila a cada aviso.
+const pilhas = [];
+// A régua roda no fim, então "existe um aviso" sem "em que seção ele nasceu" obriga a caçar às
+// cegas. O log de seção é o marcador de página: guardar o último deixa o aviso geograficamente.
+let secao = 'boot';
+const imprimir = console.log.bind(console);
+console.log = (...args) => {
+  secao = String(args[0] ?? '').replace(/^OK /, '').slice(0, 34);
+  return imprimir(...args);
+};
 const send = (method, params = {}) => new Promise((resolve, reject) => {
   const id = ++nextId;
   pending.set(id, { resolve, reject });
@@ -18,6 +35,17 @@ const evaluate = async (expression) => {
   const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
   return result.result.value;
+};
+/**
+ * O stack do aviso nasce na página. Para "Maximum update depth exceeded" o React não manda o stack do
+ * componente como argumento, então a régua de console nomeava o sintoma e nunca o componente culpado.
+ * O hook de document-start (logo abaixo) guarda a pilha JS em `window.__qaPilhas`; o Node drena a cada
+ * aviso, e a linha sai prefixada com o texto do aviso para a régua conseguir casá-los.
+ */
+const drenarPilhas = async () => {
+  const lote = await evaluate('(() => {const l = window.__qaPilhas || []; window.__qaPilhas = []; '
+    + 'return l.map((p) => p.js ? p.texto.slice(0, 60) + " || " + p.js : null).filter(Boolean);})()');
+  if (lote) pilhas.push(...lote);
 };
 async function until(expression, label, timeout = 20000) {
   const end = Date.now() + timeout;
@@ -83,6 +111,15 @@ const channelDistance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[
 /** The rim colour is weather/biome driven, so the checks read it live instead of hardcoding it. */
 const fogState = () => evaluate(`(() => {const s = qa.g.fog.snapshot, h = s.color.slice(1);
   return { rgb: [0, 2, 4].map((i) => parseInt(h.substr(i, 2), 16)), positions: s.positions, colors: s.colors };})()`);
+/**
+ * Amarra o relógio SEM pausar: a névoa persegue a cor-alvo pelo `FogSystem.update`, então com o
+ * jogo parado ela congela no meio do caminho e com o relógio livre ela muda entre o screenshot e a
+ * leitura. Prender `t` e o clima a cada quadro dá um número que se repete.
+ */
+const amarrar = (relogio) => evaluate(`qa.g.paused=false;clearInterval(qa.__amarra);qa.__amarra=setInterval(()=>{`
+  + `${relogio};const w=qa.g.weather;w.kind="clear";w.target=0;w.intensity=0;`
+  + 'w.cover=0;w.coverTarget=0;w.mist=0;w.mistTarget=0;},16)');
+const soltar = () => evaluate('clearInterval(qa.__amarra);qa.g.paused=false');
 async function viewport(width, height, mobile = true) {
   await send('Emulation.setDeviceMetricsOverride', { width, height, screenWidth: width, screenHeight: height, deviceScaleFactor: 1, mobile });
   await send('Emulation.setTouchEmulationEnabled', mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
@@ -108,6 +145,19 @@ async function exposeGame() {
       errors.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text);
     } else if (message.method === 'Log.entryAdded' && message.params.entry.level === 'error') {
       errors.push(message.params.entry.text);
+    } else if (message.method === 'Log.entryAdded' && message.params.entry.level === 'warning') {
+      avisos.push(message.params.entry.text);
+      fases.push(secao);
+    } else if (message.method === 'Runtime.consoleAPICalled' && (message.params.type === 'warning' || message.params.type === 'error')) {
+      // O tipo está em `params.type`; `message.type` só existe em resposta de comando. Ler o campo
+      // errado fazia todo console.warn virar silêncio e o "console limpo" ser do harness, não do jogo.
+      const texto = message.params.args.map((a) => a.value ?? a.description ?? '').join(' ');
+      avisos.push(texto);
+      fases.push(secao);
+      const pilha = message.params.args.slice(1).map((a) => a.value ?? a.description ?? '').join('');
+      if (pilha) pilhas.push(`${texto.slice(0, 60)}${pilha.slice(0, 400)}`);
+      // Sem stack no argumento, a pilha é a da própria página no instante do console.*: drena já.
+      if (!pilha) void drenarPilhas().catch(() => {});
     }
   });
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve); socket.addEventListener('error', reject); });
@@ -117,8 +167,23 @@ async function exposeGame() {
   await send('Runtime.enable');
   await send('Log.enable');
   await send('Log.clear');
+  // Antes de qualquer script da página: o aviso de loop nasce no boot, e perder o instante é perder
+  // o autor. O texto completo fica na página; só a pilha das oito primeiras linhas vem pro Node.
+  await send('Page.addScriptToEvaluateOnNewDocument', {
+    source: 'window.__qaPilhas = []; for (const nivel of ["warn", "error"]) {'
+      + 'const original = console[nivel].bind(console);'
+      + 'console[nivel] = function (...args) {'
+      + 'const texto = String((args[0] && args[0].message) || args[0] || "");'
+      + 'const bruta = args[0] && args[0].stack ? String(args[0].stack) : new Error().stack;'
+      + 'window.__qaPilhas.push({ texto, js: bruta.split("\\n").slice(1, 9).join(" | ") });'
+      + 'if (window.__qaPilhas.length > 120) window.__qaPilhas.shift();'
+      + 'return original(...args);};};',
+  });
   await viewport(844, 390);
   errors.length = 0;
+  avisos.length = 0;
+  pilhas.length = 0;
+  fases.length = 0;
   await send('Page.navigate', { url: 'http://localhost:8082/?isolated-test=1' });
   // Navegar reaplica o override da aba: reafirmar, senão o desktop herda o toque e perde o teclado.
   await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
@@ -129,10 +194,11 @@ async function exposeGame() {
   await delay(500);
   assert.equal(await evaluate('qa.mobile'), true);
   assert.equal(await evaluate('!!document.querySelector("[data-testid=hardware-hints]")'), false);
-  await evaluate('qa.g.dayNight.t=0.5;qa.g.weather.intensity=0');
-  await delay(150);
+  await amarrar('qa.g.dayNight.t=0.5');
+  await delay(2600);
   const fogDay = await screenshot('qa-fog-day');
   const dayFog = await fogState();
+  await soltar();
   nearPixel(pixel(fogDay, 8, 8), dayFog.rgb, 'opaque fog must cover unloaded corners');
   assert.deepEqual(pixel(fogDay, 8, 8), pixel(fogDay, 836, 382));
   assert.equal(await evaluate('qa.g.weapons.equipped'), 'unarmed');
@@ -388,17 +454,28 @@ async function exposeGame() {
   console.log('OK mobile: hardware events never hide touch controls or display keyboard/gamepad hints');
 
   const duskFog = await fogState();
-  await evaluate('qa.g.dayNight.t=0.05;qa.g.weather.intensity=0');
-  await delay(1400);
+  // A cor da névoa é um lerp: `FogSystem.update` persegue o alvo e nem roda com `dt<=0`. Pausar
+  // congelava o meio do caminho (o canto saía mais escuro que a cor publicada) e deixar o relógio
+  // livre fazia a leitura correr à frente do screenshot. A amarra prende `t` e o clima a cada
+  // quadro enquanto o update roda: o lerp chega no alvo, para de se mover, e aí a medição é a
+  // mesma sempre. Prende em `clear` porque a tempestade sorteada escurece a névoa e o empurrão do
+  // perfil de cor do Chrome passa da tolerância — o check mede a névoa, não a roleta do tempo.
+  await amarrar('qa.g.dayNight.t=0.05');
+  await delay(2600);
+  const antesDaNoite = await fogState();
   const fogNight = await screenshot('qa-fog-night');
   const nightFog = await fogState();
+  await soltar();
+  assert.deepEqual(nightFog.rgb, antesDaNoite.rgb, 'a cor da névoa não pode mudar durante a medição noturna');
   nearPixel(pixel(fogNight, 8, 8), nightFog.rgb, 'night fog must still seal the corners');
   assert.ok(pixel(fogNight, 8, 8).every((channel, i) => channel < duskFog.rgb[i]),
     `night must also darken fog: ${pixel(fogNight, 8, 8)} vs ${duskFog.rgb}`);
-  await evaluate('qa.g.weather.intensity=0.8');
+  await evaluate('qa.g.weather.force("rain",120);qa.g.weather.intensity=0.8');
   await delay(650);
   await screenshot('qa-fog-rain');
-  await evaluate('qa.g.paused=true;qa.g.camera.x=-100;qa.g.camera.y=-100;qa.g.dayNight.t=0.5;qa.g.weather.intensity=0');
+  await amarrar('qa.g.dayNight.t=0.5');
+  await delay(2600);
+  await evaluate('clearInterval(qa.__amarra);qa.g.paused=true;qa.g.camera.x=-100;qa.g.camera.y=-100');
   await delay(1200);
   for (const [width, height] of [[667,390],[844,390],[1280,720],[2560,1080]]) {
     for (const zoom of [0.95, 1.85]) {
@@ -482,6 +559,30 @@ async function exposeGame() {
   await evaluate('qa.pad=null');
   await until('qa.input.magnitude===0 && !qa.input.runHeld','gamepad disconnect reset');
   console.log('OK emulated Xbox Standard mapping: left stick walks, LT+right stick aims, RT fires, sprint, pause/resume and disconnect; no physical controller tested');
+  // #156: `pointerEvents` e `style.tintColor` passaram a viver no lugar certo, e o `clock.value`
+  // do WildlifeSprite saiu do render. O único aviso que fica é o do `textShadow*`: o
+  // react-native-web pede `textShadow`, propriedade que o RN 0.81 não tem — trocá-la deixaria o
+  // texto sem sombra no aparelho.
+  const proibidos = avisos.filter((a) => /pointerEvents|Reading from `value`|style\.tintColor/.test(a));
+  // Um console "limpo" também é o que um listener morto imprime. Injeta um aviso conhecido e
+  // exige que ele chegue: sem esta prova a contagem zero não significaria nada.
+  await evaluate('console.warn("PROVA-156 listener vivo")');
+  await delay(120);
+  assert.ok(avisos.some((a) => a.includes('PROVA-156')), 'o harness precisa captar console.warn — listener morto fingiria console limpo');
+  assert.deepEqual(proibidos, [], `avisos que não podem existir: ${proibidos.slice(0, 3).join(' | ')}`);
+  const sombras = avisos.filter((a) => /textShadow/.test(a));
+  assert.ok(sombras.length >= 1, `textShadow deveria aparecer (o aviso que decidimos manter): ${sombras.length}`);
+  assert.ok(sombras.length <= 2, `textShadow é warnOnce por carga de página, não pode repetir: ${sombras.length}`);
+  // A régua é total, não de três olhos: qualquer aviso que não seja o textShadow mantido de
+  // propósito (nem o da própria prova) precisa aparecer aqui, senão um novo passa mudo.
+  const novidades = [...new Set(avisos.filter((a) => !/textShadow|PROVA-156/.test(a)))];
+  const culpadas = pilhas.filter((p) => novidades.some((a) => p.startsWith(a.slice(0, 60))));
+  // Sem correspondência, a última pilha captada ainda é a pista mais próxima do aviso.
+  const mostradas = culpadas.length ? culpadas : pilhas.slice(-3);
+  const onde = novidades.map((a) => `após [${fases[avisos.indexOf(a)] || 'boot'}] ${a.slice(0, 90)}`);
+  assert.deepEqual(novidades, [], `avisos novos no console:\n${onde.join('\n')}\n`
+    + `pilha do componente:\n${mostradas.join('\n---\n')}`);
+  console.log(`OK console: ${avisos.length} avisos, listener provado, nenhum de pointerEvents/shared value/tintColor, ${sombras.length} de textShadow (mantido de propósito, uma carga por vez)`);
   assert.deepEqual(errors.filter(e=>!e.includes('favicon.ico')), []);
   console.log('Browser checks passed; screenshots in tools/tmp/qa-*.png');
 })().catch(async (error) => {

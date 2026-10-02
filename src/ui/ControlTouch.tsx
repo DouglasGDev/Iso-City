@@ -379,7 +379,7 @@ export function ControlTouch({
 
   return (
     <ControlTouchContext.Provider value={value}>
-      <View style={styles.layer} pointerEvents="box-none" collapsable={false}>
+      <View style={[styles.layer, { pointerEvents: 'box-none' }]} collapsable={false}>
         {children}
         <GestureDetector gesture={gesture}>
           <Animated.View collapsable={false} style={styles.capture} />

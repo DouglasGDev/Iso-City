@@ -250,7 +250,7 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
   }, [loop, game, camera, shake, env, fog, rainY, clock, rainTileH, weapons, hazard, focus, suspended]);
 
   return (
-    <View style={styles.container} onLayout={onLayout} pointerEvents="none">
+    <View style={[styles.container, { pointerEvents: 'none' }]} onLayout={onLayout}>
       <Canvas ref={canvasRef} style={styles.canvas} opaque>
         <Rect x={0} y={0} width={size.width} height={size.height} color="#3d4a2f" />
         <Group transform={cameraTransform}>

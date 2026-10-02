@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { Group, Path, Skia, type SkPath } from '@shopify/react-native-skia';
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
 import { GAME_CONFIG } from '../game/GameConfig';
@@ -237,31 +238,54 @@ export function HazardLayer({ state }: { state: SharedValue<HazardVisualState> }
   const tsunami = useDerivedValue(() => (state.value.kind === 'tsunami' && shown(state.value) ? 1 : 0), [state]);
   const hurricane = useDerivedValue(() => (state.value.kind === 'hurricane' && shown(state.value) ? 1 : 0), [state]);
 
+  // Cada um destes caminhos é lido a todo quadro, com perigo ativo ou não. Um
+  // `Skia.Path.Make()` por quadro é memória wasm que na web ninguém devolve — foi assim que o
+  // canvaskit estourou com `Aborted()`. O objeto então mora no ref e é rebobinado: `rewind()`
+  // mantém o armazenamento reservado, exatamente o que um laço a 60 Hz quer pagar.
+  const massBox = useRef<SkPath | null>(null);
+  const eyeBox = useRef<SkPath | null>(null);
+  const spiralBox = useRef<SkPath | null>(null);
+  const funnelBox = useRef<SkPath | null>(null);
+  const coverBox = useRef<SkPath | null>(null);
+  const swirlBox = useRef<SkPath | null>(null);
+  const trashBox = useRef<SkPath | null>(null);
+  const foamBox = useRef<SkPath | null>(null);
+
   /** Massa de nuvem do furacão: o disco de vento, o olho calmo no meio e os braços em giro. */
   const mass = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!massBox.current) massBox.current = Skia.Path.Make();
+    const path = massBox.current;
+    path.rewind();
     if (state.value.kind === 'hurricane' && shown(state.value)) stormCover(path, state.value);
     return path;
   }, [state]);
   const eye = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!eyeBox.current) eyeBox.current = Skia.Path.Make();
+    const path = eyeBox.current;
+    path.rewind();
     if (state.value.kind === 'hurricane' && shown(state.value)) stormEye(path, state.value);
     return path;
   }, [state]);
   const spiral = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!spiralBox.current) spiralBox.current = Skia.Path.Make();
+    const path = spiralBox.current;
+    path.rewind();
     if (state.value.kind === 'hurricane' && shown(state.value)) stormArms(path, state.value);
     return path;
   }, [state]);
 
   const funnel = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!funnelBox.current) funnelBox.current = Skia.Path.Make();
+    const path = funnelBox.current;
+    path.rewind();
     if (state.value.kind === 'tornado' && shown(state.value)) funnelPath(path, state.value);
     return path;
   }, [state]);
   /** Nuvem baixa sobre o funil; para o tsunami é o espelho d'água inundando a rua. */
   const cover = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!coverBox.current) coverBox.current = Skia.Path.Make();
+    const path = coverBox.current;
+    path.rewind();
     const s = state.value;
     if (!shown(s)) return path;
     if (s.kind === 'tornado') {
@@ -272,17 +296,23 @@ export function HazardLayer({ state }: { state: SharedValue<HazardVisualState> }
     return path;
   }, [state]);
   const swirl = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!swirlBox.current) swirlBox.current = Skia.Path.Make();
+    const path = swirlBox.current;
+    path.rewind();
     if (state.value.kind === 'tornado' && shown(state.value)) bands(path, state.value);
     return path;
   }, [state]);
   const trash = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!trashBox.current) trashBox.current = Skia.Path.Make();
+    const path = trashBox.current;
+    path.rewind();
     if (state.value.kind === 'tornado' && shown(state.value)) debris(path, state.value);
     return path;
   }, [state]);
   const foam = useDerivedValue(() => {
-    const path = Skia.Path.Make();
+    if (!foamBox.current) foamBox.current = Skia.Path.Make();
+    const path = foamBox.current;
+    path.rewind();
     if (state.value.kind === 'tsunami' && shown(state.value)) crestPath(path, state.value);
     return path;
   }, [state]);

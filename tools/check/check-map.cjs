@@ -12,7 +12,7 @@ const skia = {
   Skia: {
     Color: (color) => color,
     Paint: () => ({ setColor(color) { this.color = color; }, setStyle() {}, setStrokeWidth() {}, setAntiAlias() {} }),
-    Path: { Make: () => ({ moveTo() {}, lineTo() {}, close() {} }) },
+    Path: { Make: () => ({ moveTo() {}, lineTo() {}, close() {}, rewind() {} }) },
   },
 };
 function load(filename) {

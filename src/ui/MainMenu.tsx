@@ -75,7 +75,7 @@ export function MainMenu({
           }}
         >
           <Text style={styles.btnText}>{row.label}</Text>
-          {focus === row.id && <View style={styles.caret} pointerEvents="none" />}
+          {focus === row.id && <View style={styles.caret} />}
         </Pressable>
       ))}
       {kind !== 'touch' && (
@@ -141,6 +141,7 @@ const styles = StyleSheet.create({
     width: 4,
     borderRadius: 2,
     backgroundColor: '#1b2130',
+    pointerEvents: 'none',
   },
   btnText: {
     color: '#fff',

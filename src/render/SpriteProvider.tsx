@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 import { Asset } from 'expo-asset';
 import { useImage, type SkImage } from '@shopify/react-native-skia';
@@ -10,8 +10,19 @@ import { spriteStore } from '../assets/SpriteStore';
 const DOWNLOAD_BATCH = 24;
 /** O `fromURI` do Skia rejeita por fora do nosso callback: sem esta janela a tela não levanta. */
 const STALL_S = 12;
+/**
+ * Janela do contador de progresso. Decodificar é assíncrono e independente por arquivo; se cada
+ * imagem chama `setState` no pai, a mesma raiz fecha um commit que agenda outro update 543 vezes
+ * seguidas — é exatamente a sequência que o React denuncia como "Maximum update depth exceeded",
+ * e o boot engole O(arquivos²) renders. O tique pinta a barra e nada mais.
+ */
+const PROGRESS_TICK_MS = 150;
 
-function LoadSprite({
+/**
+ * `memo` porque o pai repinta a cada tique de progresso: as props são uma string e um callback
+ * estável, então uma imagem decodificada não pode reacender as outras 542 fileiras.
+ */
+const LoadSprite = memo(function LoadSprite({
   assetKey,
   onSettle,
 }: {
@@ -24,7 +35,7 @@ function LoadSprite({
     if (img) onSettle(assetKey, img);
   }, [img, assetKey, onSettle]);
   return null;
-}
+});
 
 export function SpriteProvider({ children }: { children: ReactNode }) {
   const total = ASSETS_TO_LOAD.length;
@@ -65,13 +76,19 @@ export function SpriteProvider({ children }: { children: ReactNode }) {
 
   const onSettle = useCallback((key: string, img: SkImage | null) => {
     if (img) spriteStore[key] = img;
-    if (doneRef.current.has(key)) return;
+    // Só o ref: sem `setState` aqui, nenhuma imagem decodificada agenda update na raiz, e a barra
+    // lê o tamanho do conjunto no seu próprio ritmo.
     doneRef.current.add(key);
-    setLoadedCount(doneRef.current.size);
   }, []);
 
   const ready = downloaded && total > 0;
   const finished = ready && (stalled || loadedCount >= total);
+
+  useEffect(() => {
+    if (!ready) return;
+    const iv = setInterval(() => setLoadedCount(doneRef.current.size), PROGRESS_TICK_MS);
+    return () => clearInterval(iv);
+  }, [ready]);
 
   useEffect(() => {
     if (!ready || loadedCount >= total) return;

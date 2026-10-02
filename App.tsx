@@ -1,6 +1,6 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import {
-  ActivityIndicator, AppState, BackHandler, InteractionManager, StyleSheet, Text, View,
+  ActivityIndicator, AppState, BackHandler, InteractionManager, Platform, Pressable, StyleSheet, Text, View,
   type AppStateStatus,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -98,11 +98,36 @@ class BootBoundary extends Component<{ children: ReactNode }, { error: Error | n
   }
 
   render() {
-    if (!this.state.error) return this.props.children;
+    const error = this.state.error;
+    if (!error) return this.props.children;
+    // O `Aborted()` do canvaskit.wasm chega com a instância do desenhista já morta: re-renderizar
+    // o que falhou não levanta nada, e a pessoa ficava olhando um texto em inglês sem saber o que
+    // fazer. Para esse caso o botão é recarregar; para os outros, tentar de novo basta.
+    const memoriaEsgotada = /Aborted\(\)|out of memory|memory growth|WebGL/i.test(error.message);
+    const recarregar = () => {
+      if (!memoriaEsgotada || Platform.OS !== 'web') {
+        this.setState({ error: null });
+        return;
+      }
+      const loc = (globalThis as { location?: { reload?: () => void } }).location;
+      if (loc?.reload) loc.reload();
+      else this.setState({ error: null });
+    };
     return (
       <View style={styles.loading}>
         <Text style={styles.errorTitle}>O jogo não conseguiu iniciar</Text>
-        <Text style={styles.errorText}>{this.state.error.message}</Text>
+        <Text style={styles.errorText}>
+          {memoriaEsgotada
+            ? 'A memória do desenhista esgotou. Feche outras abas pesadas e recarregue: a '
+              + 'partida volta do último salvamento automático.'
+            : 'Alguma coisa falhou no carregamento. Dá para tentar de novo sem perder a partida.'}
+        </Text>
+        <Pressable onPress={recarregar} style={styles.errorButton} accessibilityRole="button">
+          <Text style={styles.errorButtonText}>
+            {memoriaEsgotada && Platform.OS === 'web' ? 'Recarregar o jogo' : 'Tentar de novo'}
+          </Text>
+        </Pressable>
+        <Text style={styles.errorDetail}>{error.message}</Text>
       </View>
     );
   }
@@ -314,5 +339,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
     paddingHorizontal: 24,
+  },
+  errorButton: {
+    paddingHorizontal: 22,
+    paddingVertical: 11,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: '#ffd54a',
+    backgroundColor: '#31373f',
+  },
+  errorButtonText: {
+    color: '#ffd54a',
+    fontFamily: 'monospace',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  errorDetail: {
+    color: '#7d8794',
+    fontFamily: 'monospace',
+    fontSize: 11,
+    textAlign: 'center',
+    paddingHorizontal: 32,
   },
 });

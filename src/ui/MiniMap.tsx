@@ -111,7 +111,7 @@ function MapCanvas({ mapW, mapH, zoom, panX, panY, detailed }: {
     Math.cos(player.facingAngle) - Math.sin(player.facingAngle));
   const target = game.missions.state.phase !== 'break' ? game.missions.state.target : null;
 
-  return <Canvas style={{ width: mapW, height: mapH }} pointerEvents="none">
+  return <Canvas style={{ width: mapW, height: mapH, pointerEvents: 'none' }}>
     <Rect x={0} y={0} width={mapW} height={mapH} color={C.background} />
     <Group transform={[{ translateX: imgX }, { translateY: imgY }, { scale }]}>
       <Path path={outline} color={C.unknown} />
@@ -226,7 +226,7 @@ export function MiniMap() {
   const rem = dest ? mapMarker && mapRoute.length >= 2 ? remainingRouteDistance(mapRoute, position.x, position.y)
     : Math.hypot(position.x - dest.x, position.y - dest.y) : null;
   const room = game.interiors.active;
-  return <View style={[styles.wrap, { top: insets.top + 52, left: Math.max(12, insets.left) }]} pointerEvents="none" testID="minimap">
+  return <View style={[styles.wrap, { top: insets.top + 52, left: Math.max(12, insets.left), pointerEvents: 'none' }]} testID="minimap">
     <View style={[styles.clip, { width: size, height: size }]}>
       <MapCanvas mapW={size} mapH={size} zoom={radarZoom} panX={(size / 2 - p.x) * radarZoom}
         panY={(size / 2 - p.y) * radarZoom} detailed={false} />
@@ -376,14 +376,14 @@ export function FullMap({ onClose }: { onClose: () => void }) {
       </View>
     </GestureDetector>
     {hardware && (
-      <View style={[styles.crosshair, { left: mapW / 2, top: mapH / 2 }]} pointerEvents="none" testID="map-crosshair">
+      <View style={[styles.crosshair, { left: mapW / 2, top: mapH / 2, pointerEvents: 'none' }]} testID="map-crosshair">
         <View style={styles.crossRing} />
         <Text style={styles.crossLabel}>{inside ? (kind === 'gamepad' ? 'Sem destino dentro de casa' : 'Sem GPS dentro de casa')
           : kind === 'gamepad' ? 'A · marcar aqui' : 'Enter · marcar aqui'}</Text>
       </View>
     )}
-    <View style={[styles.mapHeader, { top: safe.top + 12, left: safe.left + 16, right: safe.right + 16 }]} pointerEvents="box-none">
-      <View style={styles.titleCard} pointerEvents="none">
+    <View style={[styles.mapHeader, { top: safe.top + 12, left: safe.left + 16, right: safe.right + 16, pointerEvents: 'box-none' }]}>
+      <View style={[styles.titleCard, { pointerEvents: 'none' }]}>
         <Text style={styles.eyebrow}>ISO CITY / {inside ? 'INTERIOR' : 'NAVEGAÇÃO'}</Text>
         <Text style={[styles.fullTitle, compact && styles.titleCompact]}>{inside ? 'Plano do interior' : 'Mapa da cidade'}</Text>
         <Text style={styles.subtle}>{inside
@@ -391,7 +391,7 @@ export function FullMap({ onClose }: { onClose: () => void }) {
           : BIOME_LABEL[tile?.biome] ?? 'Cidade'}</Text>
       </View>
       <View style={styles.headerRight}>
-        <View style={[styles.progressCard, compact && styles.progressCompact]} pointerEvents="none">
+        <View style={[styles.progressCard, compact && styles.progressCompact, { pointerEvents: 'none' }]}>
           <View style={styles.progressHeading}><Text style={styles.progressLabel}>EXPLORADO</Text>
             <Text style={styles.percent} testID="map-explored">{discovered.toFixed(1)}%</Text></View>
           <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${discovered}%` }]} /></View>
@@ -408,14 +408,14 @@ export function FullMap({ onClose }: { onClose: () => void }) {
         <Text style={styles.toolText}>{tool.text}</Text>
       </TouchableOpacity>)}
     </View>
-    <View style={[styles.mapFooter, { bottom: safe.bottom + 12, left: safe.left + 16, right: safe.right + 80 }]} pointerEvents="box-none">
+    <View style={[styles.mapFooter, { bottom: safe.bottom + 12, left: safe.left + 16, right: safe.right + 80, pointerEvents: 'box-none' }]}>
       {mapMarker && rem !== null && <View style={styles.destinationCard}>
-        <View style={styles.destinationInfo} pointerEvents="none"><Text style={styles.destinationTitle}>DESTINO MARCADO · {Math.round(rem)}m</Text>
+        <View style={[styles.destinationInfo, { pointerEvents: 'none' }]}><Text style={styles.destinationTitle}>DESTINO MARCADO · {Math.round(rem)}m</Text>
           <Text style={styles.subtle}>{game.exploration.isExplored(Math.floor(mapMarker.x), Math.floor(mapMarker.y)) ? 'Área descoberta' : 'Área não explorada'} · {game.player.currentVehicleId !== null ? 'Veículo' : 'A pé'}</Text></View>
         <TouchableOpacity testID="map-clear" accessibilityRole="button" accessibilityLabel="Limpar destino" style={styles.clearButton}
           onPress={() => useGameStore.clearMapMarker()}><Text style={styles.clearText}>Limpar</Text></TouchableOpacity>
       </View>}
-      <View style={styles.legendCard} pointerEvents="none">
+      <View style={[styles.legendCard, { pointerEvents: 'none' }]}>
         <View style={styles.legendRow}>
           {inside ? <>
             <Legend color={C.player} label="Você" /><Legend color={C.route} label="Balcão" />
