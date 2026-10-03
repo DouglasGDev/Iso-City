@@ -43,6 +43,11 @@ const manifest = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'assets
 const registered = new Set([...manifest.matchAll(/"([^"]+\.png)": require\(/g)].map((m) => m[1]));
 const catalog = new Map(BUILDING_CATALOG.map((entry) => [entry.name, entry]));
 const naturalBiomes = ['forest', 'countryside', 'beach', 'pinewood', 'savanna', 'desert'];
+// Os postos da hierarquia que o gerador declara. `access` está na lista porque é tipo do
+// modelo, mas continuar sem tile: derivação sem saída é ilegal no grafo dirigido e ainda
+// não existe instalação (porto, aeroporto, pátio) que justifique uma.
+const RANKS = ['highway', 'avenue', 'street', 'residential', 'access'];
+const ARTERIAIS = ['highway', 'avenue'];
 // Cada reserva tem a sua própria trilha seca: terra batida na mata, areia clara
 // pisada na praia e no deserto. O gerador escreve exatamente estas chaves.
 const TRAIL_KEY = { forest: 'tile_ground_dirt', countryside: 'tile_ground_dirt',
@@ -192,6 +197,8 @@ function validate(city, seed, generationMs) {
   check(city.worldW === W && city.worldH === H && city.tiles.length === W * H, 'dimensoes/array de tiles inconsistentes');
   const roadTiles = [];
   const riverTiles = [];
+  const porRanko = new Map();
+  const tilesPorRanko = {};
   let waterTop = H;
   let waterBottom = 0;
   let crosswalks = 0;
@@ -217,9 +224,14 @@ function validate(city, seed, generationMs) {
       check(x >= 3 && y >= 3 && x < W - 3 && y < H - 3, `estrada solta na borda (${x},${y})`);
       // Fora da reserva a avenida é asfalto; dentro dela a mesma malha é estrada
       // de terra, e só a ponte sobre o rio continua pavimentada.
-      const dirtRoad = t.key.includes('dirt') || t.secondary;
+      const dirtRoad = t.key.includes('dirt');
       check(naturalBiomes.includes(t.biome) ? dirtRoad !== !!t.bridge : !dirtRoad,
         `pavimento errado em (${x},${y})`);
+      // Hierarquia viária é dado do mapa, não tinta: sem posto o tile não diz velocidade
+      // de cruzeiro, nem custo de rota, nem onde um ônibus pode parar.
+      check(RANKS.includes(t.rank), `estrada sem posto na hierarquia (${x},${y})`);
+      porRanko.set(t.rank, (porRanko.get(t.rank) ?? 0) + 1);
+      (tilesPorRanko[t.rank] ??= []).push(y * W + x);
       check(steps.filter(([dx, dy]) => isRoad(x + dx, y + dy)).length >= 2, `ponta solta (${x},${y})`);
       if (t.lane == null) {
         const inJunction = [x - 1, x].some((jx) => [y - 1, y].some((jy) =>
@@ -383,7 +395,12 @@ function validate(city, seed, generationMs) {
   const firstRoad = roadTiles[0];
   const firstX = firstRoad % W;
   const firstY = Math.floor(firstRoad / W);
-  for (let x = 0; x < W; x++) if (tileAt(x, firstY)?.lane === null && tileAt(x - 1, firstY)?.lane !== null) xLines.push(x);
+  // Caixa de cruzamento não identifica linha de avenida sozinha: a boca de uma rua local
+  // é exatamente o mesmo desenho de 2x2. Quem separa uma da outra é o posto na
+  // hierarquia, lido uma célula depois da boca — ali a avenida continua, a rua não.
+  const arterial = (rank) => rank === 'avenue' || rank === 'highway';
+  for (let x = 0; x < W; x++) if (tileAt(x, firstY)?.lane === null && tileAt(x - 1, firstY)?.lane !== null
+    && arterial(tileAt(x, firstY + 2)?.rank)) xLines.push(x);
   for (let y = 0; y < H; y++) if (tileAt(firstX, y)?.lane === null && tileAt(firstX, y - 1)?.lane !== null) yLines.push(y);
   for (let row = 0; row < yLines.length - 1; row++) {
     if (yLines[row] < waterTop && yLines[row + 1] > waterBottom) continue;
@@ -595,6 +612,77 @@ function validate(city, seed, generationMs) {
   const dryAccess = flood(Math.floor(city.playerSpawn.y) * W + Math.floor(city.playerSpawn.x),
     (i) => city.tiles[i].kind !== 'water' && !blocked[i]);
   for (const index of protectedPaths) check(dryAccess.has(index), 'entrada/trilha sem acesso seco desde o jogador');
+
+  // Hierarquia viária é topologia, não cor. Cada posto tem que existir no mapa, ter
+  // massa suficiente, seguir como faixa dirigida célula a célula e desembocar em
+  // arterial nas duas pontas — senão o transporte da Fase 1 não tem o que derivar.
+  // `access` continua sem tile de propósito: derivação sem saída é ilegal no grafo
+  // dirigido, e ainda não existe instalação (porto, aeroporto, pátio) que o justifique.
+  for (const rank of ['highway', 'avenue', 'street', 'residential']) {
+    check((tilesPorRanko[rank] ?? []).length > 0, `hierarquia sem o posto ${rank}`);
+  }
+  check(!tilesPorRanko.access, 'posto carimbado sem instalacao que dê saida a ele');
+  const miudo = [...(tilesPorRanko.street ?? []), ...(tilesPorRanko.residential ?? [])];
+  const miudoSet = new Set(miudo);
+  check(miudo.length > 600, `ruas locais geradas em quantidade insuficiente (${miudo.length} tiles)`);
+
+  const nodeIndex = new Map();
+  map.roadNodeTiles.forEach((n, i) => nodeIndex.set(n.ty * W + n.tx, i));
+  const sentido = { SW: [0, 1], NE: [0, -1], SE: [1, 0], NW: [-1, 0] };
+  for (const index of miudo) {
+    const t = city.tiles[index];
+    const x = index % W, y = Math.floor(index / W);
+    const [dx, dy] = sentido[t.lane];
+    const from = nodeIndex.get(index);
+    const to = nodeIndex.get((y + dy) * W + x + dx);
+    check(to !== undefined && map.roadOut[from].includes(to),
+      `faixa local para no meio do quarteirao (${x},${y})`);
+  }
+
+  // Uma rua começa na boca sul e termina na boca norte. Caminhando na direção da
+  // faixa a partir da primeira célula da fila, a única saída possível é uma celula
+  // de arterial — e o comprimento mínimo é o quarteirao inteiro, não um beco.
+  let filas = 0;
+  for (const index of miudo) {
+    const t = city.tiles[index];
+    const x = index % W, y = Math.floor(index / W);
+    const [dx, dy] = sentido[t.lane];
+    const atras = (y - dy) * W + x - dx;
+    if (miudoSet.has(atras) && city.tiles[atras].lane === t.lane) continue;
+    filas++;
+    let cx = x, cy = y, comprimento = 0;
+    for (;;) {
+      cx += dx; cy += dy; comprimento++;
+      const proxima = tileAt(cx, cy);
+      check(proxima?.kind === 'road', `rua local morre fora do asfalto (${cx},${cy})`);
+      if (ARTERIAIS.includes(proxima?.rank)) break;
+      check(comprimento < 20, `rua local nunca alcanca uma arterial (${cx},${cy})`);
+    }
+    check(comprimento >= 8, `rua local curta demais para ser via (${comprimento} celulas)`);
+  }
+  check(filas >= 40, `apenas ${filas} filas de rua local geradas`);
+
+  // O posto mora no bioma certo: comercial tem rua, residencial tem vizinho, e a
+  // malha local não invade reserva natural nem zona industrial.
+  for (const [rank, permitidos] of [['street', ['downtown', 'commercial', 'market']],
+    ['residential', ['residential', 'suburb']]]) {
+    for (const index of tilesPorRanko[rank] ?? []) {
+      check(permitidos.includes(city.tiles[index].biome),
+        `${rank} no bioma ${city.tiles[index].biome} (${index % W},${Math.floor(index / W)})`);
+    }
+  }
+  const espinha = tilesPorRanko.highway;
+  check(flood(espinha[0], (i) => city.tiles[i].kind === 'road'
+    && city.tiles[i].rank === 'highway').size === espinha.length, 'highway nao e uma espinha continua');
+  {
+    const a = miudo[Math.floor(miudo.length / 4)];
+    const b = miudo[Math.floor(miudo.length * 3 / 4)];
+    const rota = map.findRoadPath(a % W + 0.5, Math.floor(a / W) + 0.5,
+      b % W + 0.5, Math.floor(b / W) + 0.5);
+    check(rota.length > 12 && rota.some((n) => miudoSet.has(Math.floor(n.y) * W + Math.floor(n.x))),
+      'transito nao usa as ruas locais para ligar dois bairros');
+  }
+
   for (const r of buildingRects) {
     let accessible = false;
     cells({ x0: r.x0 - 1, y0: r.y0 - 1, x1: r.x1 + 1, y1: r.y1 + 1 }, (x, y) => {

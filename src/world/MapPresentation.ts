@@ -94,7 +94,17 @@ export function radarPixels(data: CityMapData) {
       const index = y * data.tilesW + x, t = data.tiles[index];
       let rgb = BIOME_RGB[t.biome];
       if (t.kind === 'water') rgb = [28, 55, 75];
-      else if (t.kind === 'road') rgb = t.bridge ? [172, 159, 123] : t.secondary || t.key.includes('dirt') ? [118, 117, 94] : [159, 174, 178];
+      else if (t.kind === 'road') {
+        // Na terra batida da reserva e no deque da ponte o que se lê é o material, e ele
+        // manda antes do posto. No asfalto da cidade o que manda é a hierarquia: a
+        // espinha clareia, a rua de bairro escurece, e o radar passa a mostrar por onde
+        // se atravessa o mapa e por onde se entra só para morar.
+        rgb = t.bridge ? [172, 159, 123] : t.key.includes('dirt') ? [118, 117, 94]
+          : t.rank === 'highway' ? [200, 212, 216]
+          : t.rank === 'street' ? [123, 137, 142]
+          : t.rank === 'residential' ? [104, 116, 121]
+          : [159, 174, 178];
+      }
       else if (t.kind === 'concrete') rgb = [67, 83, 91];
       if (buildings[index] && t.kind !== 'road' && t.kind !== 'water') rgb = [94, 111, 119];
       const o = (py * width + px) * 4;

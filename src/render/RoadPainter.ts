@@ -91,13 +91,16 @@ export function drawRoad(canvas: SkCanvas, data: CityMapData, tx: number, ty: nu
   if (!road(tx - 1, ty)) line(tx, ty, tx, ty + 1);
 
   const pedestrian = tile.key.includes('pelican');
+  // Faixa amarela no eixo é sinal de arterial: rua de bairro não tem mão separada por
+  // tinta, tem passeio dos dois lados. Sem rank (mapa antigo) continua sendo avenida.
+  const arterial = !tile.rank || tile.rank === 'highway' || tile.rank === 'avenue';
   if (pedestrian && tile.lane) {
     for (let i = 0; i < 5; i++) {
       const offset = 0.14 + i * 0.18;
       if (tile.lane === 'SE' || tile.lane === 'NW') line(tx + 0.1, ty + offset, tx + 0.9, ty + offset, crossing);
       else line(tx + offset, ty + 0.1, tx + offset, ty + 0.9, crossing);
     }
-  } else if (!dirt) {
+  } else if (!dirt && arterial) {
     if (tile.lane === 'NW' && road(tx, ty + 1)
       && data.tiles[(ty + 1) * data.tilesW + tx].lane === 'SE') {
       line(tx + 0.2, ty + 1, tx + 0.8, ty + 1, marking);

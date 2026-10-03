@@ -316,11 +316,13 @@ test('raster colors sample roads, bridges, water, concrete, all biomes and south
     for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) colors[y * 13 + x] = [94, 111, 119];
   }
   tile(0, 2, { kind: 'road' }, [159, 174, 178]);
-  tile(1, 2, { kind: 'road', secondary: true }, [118, 117, 94]);
+  tile(1, 2, { kind: 'road', rank: 'highway' }, [200, 212, 216]);
   tile(2, 2, { kind: 'road', key: 'tile_road_dirt' }, [118, 117, 94]);
-  tile(3, 2, { kind: 'road', bridge: true, secondary: true }, [172, 159, 123]);
+  tile(3, 2, { kind: 'road', bridge: true, rank: 'street' }, [172, 159, 123]);
   tile(4, 2, { kind: 'water' }, [28, 55, 75]);
   tile(5, 2, { kind: 'concrete' }, [67, 83, 91]);
+  tile(8, 2, { kind: 'road', rank: 'street' }, [123, 137, 142]);
+  tile(9, 2, { kind: 'road', rank: 'residential' }, [104, 116, 121]);
   tile(6, 5, { kind: 'road' }, [159, 174, 178]); // Buildings may not cover roads/water.
   tile(7, 5, { kind: 'water' }, [28, 55, 75]);
   tile(8, 5, { kind: 'concrete' }, [94, 111, 119]);
