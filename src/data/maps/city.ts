@@ -75,6 +75,22 @@ export interface CaveMouth {
   cota: number;
 }
 
+/**
+ * O posto do tile na hierarquia viária. Não é tinta nem enfeite de radar: é o que diz a
+ * velocidade de cruzeiro, o custo de uma rota e onde um ônibus pode parar. Vem sempre da
+ * geometria do gerador, nunca de um desenho à mão.
+ * - `highway` — a espinha do mapa: as colunas que têm ponte sobre o rio e as duas avenidas
+ *   que correm nas margens. É por onde passa toda viagem de ponta a ponta.
+ * - `avenue` — o grid primário, uma a cada `SPACING` tiles, com calçada dos dois lados.
+ * - `street` — rua local que parte o quarteirão comercial ao meio e serve os lotes.
+ * - `residential` — a mesma rua, no bairro de casas: quem entra ali é vizinho, não passagem.
+ * - `access` — derivação curta que serve uma instalação (porto, aeroporto, pátio). Ainda não
+ *   existe nenhuma no mapa, e acesso sem instalação seria só asfalto sobrando: quem criar a
+ *   instalação carimba o acesso junto. Toda rua deste mapa é de mão dupla em faixas
+ *   separadas, porque o grafo dirigido não aceita beco sem saída.
+ */
+export type RoadRank = 'highway' | 'avenue' | 'street' | 'residential' | 'access';
+
 export interface MapTile {
   kind: TileKind;
   key: string;
@@ -82,8 +98,8 @@ export interface MapTile {
   /** One-way straight lane; null only inside a 2x2 junction. */
   lane?: Dir4 | null;
   bridge?: boolean;
-  /** Reserved for secondary roads; avenues always remain asphalt. */
-  secondary?: boolean;
+  /** Papel na hierarquia viária. Todo tile de estrada tem um; os outros não. */
+  rank?: RoadRank;
 }
 
 export interface CityMapData {
@@ -138,7 +154,9 @@ export interface CityMapData {
 }
 
 type Rect = { x0: number; y0: number; x1: number; y1: number };
-type Block = Rect & { col: number; row: number; biome: Biome; special?: BuildingCatalogEntry };
+type Block = Rect & { col: number; row: number; biome: Biome; special?: BuildingCatalogEntry;
+  /** Rua local no corredor da quadra, com o posto dela. `null` é a entrada pedonal só. */
+  street?: RoadRank };
 type Point = { x: number; y: number };
 
 const GRASS = 'tile_ground_grass';
@@ -194,7 +212,8 @@ const MAX_SPAWNS = 700;
 const FENCE_THICKNESS = 0.12;
 const FENCE_GATE = 1; // Full AABB-to-AABB opening, not distance between anchors.
 
-function mulberry32(seed: number) {
+/** Gerador determinístico compartilhado com a derivação da malha de transporte. */
+export function mulberry32(seed: number) {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) | 0;
@@ -492,7 +511,13 @@ function blockPalette(biome: Biome, rng: () => number): BlockPalette | null {
   };
 }
 
-export function generateCity(seed = 20260909): CityMapData {
+/**
+ * A semente do mundo. Um só lugar, porque dela dependem o mapa e tudo que é derivado do
+ * mapa — a malha de transporte nasce das mesmas ruas e precisa nascer da mesma cidade.
+ */
+export const WORLD_SEED = 20260909;
+
+export function generateCity(seed = WORLD_SEED): CityMapData {
   const rng = mulberry32(seed);
   const W = GAME_CONFIG.MAP_TILES_W;
   const H = GAME_CONFIG.MAP_TILES_H;
@@ -703,7 +728,7 @@ export function generateCity(seed = 20260909): CityMapData {
       for (let lane = 0; lane < 2; lane++) {
         Object.assign(tiles[(y + lane) * W + x], {
           kind: 'road', key: 'tile_road_straight_SE_normal',
-          lane: lane === 0 ? 'NW' : 'SE', bridge: false, secondary: false,
+          lane: lane === 0 ? 'NW' : 'SE', bridge: false,
         });
       }
     }
@@ -716,7 +741,7 @@ export function generateCity(seed = 20260909): CityMapData {
         const junction = t.kind === 'road';
         const bridge = t.kind === 'water';
         Object.assign(t, {
-          kind: 'road', bridge, secondary: false,
+          kind: 'road', bridge,
           lane: junction ? null : lane === 0 ? 'SW' : 'NE',
           key: junction ? 'tile_road_xsing_normal'
             : bridge ? 'tile_road_bridge_body_SW_normal' : 'tile_road_straight_SW_normal',
@@ -1138,6 +1163,38 @@ export function generateCity(seed = 20260909): CityMapData {
   let ruralHomes = 0;
   const urbanSites: { key: string; x: number; y: number }[] = [];
   const parkingSlots: Point[] = [];
+  /**
+   * Qual quadra ganha rua local. É a metade leste do corredor pedonal que o gerador já
+   * protegia virando asfalto de bairro, então a pergunta é de vizinhança, não de desenho:
+   * uma coluna sim serve duas, os lotes continuam dos dois lados, e o grafo dirigido só
+   * aceita quem atravessa de avenida a avenida. Fica de fora o que não tem fachada para
+   * servir: quadra cívica (o prédio ancorado em `cx - 1.4` comeria a calçada nova),
+   * parque, zona portuária e as quadras de armazém, cujo lote de 3 tiles não cabe em uma
+   * faixa de 2,7. `access` não aparece aqui de propósito: acesso é derivação sem saída,
+   * e este mapa proibe faixa sem saída — quem criar a instalação carimba o acesso junto.
+   */
+  const ruaDe = (b: Block): RoadRank | null => {
+    if (b.special || b.col % 2 !== 1) return null;
+    const rank = b.biome === 'downtown' || b.biome === 'commercial' || b.biome === 'market' ? 'street'
+      : b.biome === 'residential' || b.biome === 'suburb' ? 'residential' : null;
+    if (!rank) return null;
+    // O nome do bairro não basta: na orla e nas costuras do mosaico o bioma troca de
+    // célula em célula, e uma célula de reserva no corredor faria nascer asfalto sobre a
+    // terra batida da mata e calçada de concreto onde o pedestre pisa areia. Varre as
+    // quatro células do corredor — passeio, duas faixas, passeio — dentro da quadra. Quem
+    // já é via fica de fora: a boca encostada na avenida é asfalto por contrato.
+    const meio = Math.round((b.x0 + b.x1) / 2);
+    for (let y = b.y0; y < b.y1; y++) {
+      for (let x = meio - 2; x <= meio + 1; x++) {
+        const t = at(x, y);
+        if (t?.kind !== 'road' && isNatural(t?.biome ?? 'forest')) return null;
+      }
+    }
+    return rank;
+  };
+  type Rua = { x: number; y0: number; y1: number; sul: number; norte: number;
+    row: number; col: number; rank: RoadRank };
+  const ruas: Rua[] = [];
   for (const b of blocks) {
     const cx = (b.x0 + b.x1) / 2;
     const cy = (b.y0 + b.y1) / 2;
@@ -1148,8 +1205,21 @@ export function generateCity(seed = 20260909): CityMapData {
     const industrial = b.biome === 'industrial' || b.biome === 'docks';
     const natural = isNatural(b.biome);
     const hasParking = !b.special && !natural && b.biome !== 'park' && (industrial || (b.row + b.col) % 2 === 0);
+    const street = natural ? null : ruaDe(b);
+    // Meia-largeza do corredor, em tiles: 1 é a travessa pedonal de sempre; 2 acrescenta
+    // o passeio dos dois lados da rua nova. É a única forma de a calçada nascer de
+    // concreto — a varredura que paveia o passeio do mapa inteiro já rodou.
+    const faixa = street ? 2 : 1;
+    // Do muro até o passeio. Sem rua a borda é a travessa de sempre; com rua o lote
+    // encosta no passeio novo, e é dali que o recuo de 0,65 é medido.
+    const Oeste = street ? cx - faixa - SETBACK : cx - 1;
+    const Leste = street ? cx + faixa + SETBACK : cx + 1;
     // Every court has an unobstructed two-tile entrance between the front lots.
-    reservePath({ x0: cx - 1, x1: cx + 1, y0: b.y0, y1: b.y1 }, natural);
+    reservePath({ x0: cx - faixa, x1: cx + faixa, y0: b.y0, y1: b.y1 }, natural);
+    if (street) {
+      ruas.push({ x: cx - 1, y0: b.y0, y1: b.y1, sul: ys[b.row], norte: ys[b.row + 1],
+        row: b.row, col: b.col, rank: street });
+    }
     if (natural) {
       reservePath({ x0: b.col === 0 ? 3 : b.x0, x1: b.col === xs.length - 2 ? W - 3 : b.x1,
         y0: cy - 1, y1: cy + 1 }, true);
@@ -1179,7 +1249,7 @@ export function generateCity(seed = 20260909): CityMapData {
       continue; // O resto da reserva continua mato: nem prédio nem vaga de carro.
     }
     if (hasParking) {
-      for (const [x0, x1] of [[b.x0 + 2, cx - 1], [cx + 1, b.x1 - 2]]) {
+      for (const [x0, x1] of [[b.x0 + 2, cx - faixa], [cx + faixa, b.x1 - 2]]) {
         eachCell({ x0, x1, y0: b.y1 - 5, y1: b.y1 - 2 }, (x, y) => {
           parking[y * W + x] = 1;
           Object.assign(tiles[y * W + x], { kind: 'concrete', key: ASPHALT });
@@ -1187,7 +1257,7 @@ export function generateCity(seed = 20260909): CityMapData {
         for (const y of [b.y1 - 4.3, b.y1 - 2.7]) parkingSlots.push({ x: (x0 + x1) / 2, y });
       }
       // Open side forecourts act as driveways; sidewalks remain continuous concrete.
-      for (const [x0, x1] of [[b.x0, cx - 1], [cx + 1, b.x1]]) {
+      for (const [x0, x1] of [[b.x0, cx - faixa], [cx + faixa, b.x1]]) {
         eachCell({ x0, x1, y0: b.y1 - 4, y1: b.y1 - 3 }, (x, y) => {
           Object.assign(tiles[y * W + x], { kind: 'concrete', key: CONCRETE });
         });
@@ -1217,9 +1287,10 @@ export function generateCity(seed = 20260909): CityMapData {
       const rows = Math.max(1, 1 + Math.floor((lastY - firstY - yardPad) / (size + alley)));
       for (let row = 0; row < rows; row++) {
         const y = rowY(row);
-        // Os lotes vão até a borda do corredor protegido (cx-1 / cx+1), nunca além:
-        // a cobertura do céu da quadra continua sendo a entrada pedonal oficial.
-        for (const [start, end] of [[left, cx - 1], [cx + 1, right]]) {
+        // Os lotes vão até a borda do corredor protegido (`Oeste`/`Leste`), nunca além: a
+        // cobertura do céu da quadra continua sendo a entrada pedonal oficial, e com rua
+        // nasce aí o passeio — o recuo de 0,65 é medido a partir dele, não do eixo.
+        for (const [start, end] of [[left, Oeste], [Leste, right]]) {
           // A casa do quintal fica isolada na fileira da frente: sem folga lateral a
           // cerca do vizinho reclama os painéis e a quadra vira um quintal só.
           const side = row === 0 && yardPad ? 1.25 : join;
@@ -1244,6 +1315,9 @@ export function generateCity(seed = 20260909): CityMapData {
         const gapBottom = rowY(row) - size; // Borda norte desta.
         for (let y = Math.ceil(gapTop - 0.2); y + 0.5 <= gapBottom - 0.3; y++) {
           for (let x = Math.ceil(left); x < Math.floor(right); x++) {
+            // O beco para no passeio da rua: asfalto de beco por cima de via e calçada
+            // novas sumiria com o traçado, e a célula da via não pode ser passeio.
+            if (x >= cx - faixa && x < cx + faixa) continue;
             walkway[y * W + x] = 1;
             Object.assign(tiles[y * W + x], { kind: 'concrete', key: ASPHALT });
           }
@@ -1260,9 +1334,85 @@ export function generateCity(seed = 20260909): CityMapData {
         for (const y of [top + 1, bottom - 1]) urbanSites.push({ key: 'prop_tree_common_large', x, y });
       }
     } else {
-      urbanSites.push({ key: 'prop_lightpole_a', x: cx + 1.7, y: bottom - 0.1 });
+      // O poste fica no lote, encostado no passeio: com rua, a célula cx+1 é calçada e
+      // objeto nenhum pisa calçada; sem rua, é a mesma borda de sempre. Os 0,02 de folga
+      // dos dois lados são o halo de 0,3 do prop não raspando nem o passeio nem o recuo
+      // de 0,65 do lote vizinho, que chegaria a flutuar no concreto.
+      urbanSites.push({ key: 'prop_lightpole_a', x: cx + 2.32, y: bottom - 0.1 });
     }
   }
+  /**
+   * A rua local existe no chão a partir do corredor que o laço de quadras acabou de
+   * proteger: asfalto de bairro ligado de avenida a avenida, na única forma que o grafo
+   * dirigido aceita neste mapa — mão dupla em faixas separadas, a oeste descendo (+y) e a
+   * leste subindo (−y) — e com caixa de cruzamento de 2×2 nas duas bocas, do mesmo
+   * desenho que se usa onde uma avenida cruza a outra. Nenhuma célula aqui é coordenada
+   * escrita à mão: tudo vem do que `ruaDe` escolheu quadra a quadra.
+   */
+  const POSTOS: RoadRank[] = ['avenue', 'highway', 'street', 'residential'];
+  const posto = new Uint8Array(W * H); // índice em POSTOS; 0 = ainda sem posto
+  // O pavimento continua sendo decisão do bioma de cada tile, não da rua: na boca norte
+  // de um subúrbio que encosta na orla, a avenida ali já é terra batida, e a caixa de
+  // cruzamento que ela empresta à rua tem que nascer com o mesmo pavimento. É exatamente
+  // a regra que a varredura de avenidas aplica dentro da reserva.
+  const chave = (i: number, desenho: string) =>
+    `tile_road_${isNatural(tiles[i].biome) ? 'dirt_' : ''}${desenho}_normal`;
+  for (const r of ruas) {
+    for (let y = r.y0; y < r.y1; y++) {
+      for (const [x, lane] of [[r.x, 'SW'], [r.x + 1, 'NE']] as [number, Dir4][]) {
+        const i = y * W + x;
+        // O beco e o corredor pedonal marcaram estas células como passeio. Via não é
+        // passeio: deixá-las marcadas é o que faria um NPC nascer no meio do trânsito.
+        walkway[i] = 0;
+        parking[i] = 0;
+        posto[i] = r.rank === 'street' ? 2 : 3;
+        Object.assign(tiles[i], { kind: 'road', key: chave(i, 'straight_SW'),
+          lane, bridge: false });
+      }
+    }
+    // Nas bocas o asfalto da avenida entra dentro do cruzamento: as quatro células que
+    // ela tinha ali perdem a faixa e quem chega decide o rumo lá dentro, igual a um
+    // cruzamento de avenida com avenida.
+    for (const [y, linha] of [[r.sul, r.row], [r.norte, r.row + 1]] as [number, number][]) {
+      for (let dy = 0; dy < 2; dy++) {
+        for (let dx = 0; dx < 2; dx++) {
+          const i = (y + dy) * W + r.x + dx;
+          Object.assign(tiles[i], { kind: 'road', key: chave(i, 'xsing'),
+            lane: null, bridge: false });
+        }
+      }
+      // Travessia na boca, no mesmo ritmo do grid de avenidas: a mesma quadra que tem
+      // faixa no cruzamento grande tem na boca da sua rua, e a cidade não fica metade
+      // sinalizada.
+      if ((linha + r.col) % 3 !== 0) continue;
+      for (const [dx, dy] of [[-1, 0], [-1, 1], [2, 0], [2, 1], [0, -1], [1, -1], [0, 2], [1, 2]]) {
+        const t = at(r.x + dx, y + dy);
+        if (t?.kind === 'road' && t.lane && !t.bridge && !isNatural(t.biome)) {
+          t.key = `tile_road_pelican_${t.lane}_normal`;
+        }
+      }
+    }
+  }
+
+  // Todo tile de estrada recebe o seu posto na hierarquia, e a regra é a geometria que o
+  // gerador usou acima, não uma lista de coordenadas. Espinha do mapa: as colunas que têm
+  // ponte sobre o rio e as avenidas das duas margens — é por aí que se viaja de ponta a
+  // ponta e onde um ônibus faz velocidade. Miúdo: as ruas que acabaram de nascer. O resto
+  // do grid primário é avenida. `access` continua sem carimbo: derivação sem saída é
+  // ilegal neste grafo, e instalação que justifique uma derivação ainda não existe.
+  const espinhaCol = new Set<number>();
+  for (const col of crossings) espinhaCol.add(xs[col]).add(xs[col] + 1);
+  const espinhaRow = new Set<number>([northQuay, northQuay + 1, southQuay, southQuay + 1]);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const t = tiles[i];
+      if (t.kind !== 'road') continue;
+      t.rank = posto[i] ? POSTOS[posto[i]]
+        : espinhaCol.has(x) || espinhaRow.has(y) ? 'highway' : 'avenue';
+    }
+  }
+
   // Spread the bounded urban quota across both riverbanks, not just early rows.
   for (const p of shuffle(urbanSites, mulberry32(seed ^ 0x75726261))) {
     if (propCounts.urban >= PROP_BUDGET.urban) break;
