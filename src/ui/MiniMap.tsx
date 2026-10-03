@@ -9,6 +9,7 @@ import { useControlInsets } from './useControlInsets';
 import { useGameStore } from '../stores/useGameStore';
 import { sound } from '../audio/SoundManager';
 import { useUiInputKind, useUiSurface } from './useUiNav';
+import { readableShadow } from './textShadow';
 import { remainingRouteDistance, type GpsPoint, buildGpsRoute } from '../world/Gps';
 import { MAP_COLORS as C, BIOME_LABEL, makeProjectors, mapPolygon, explorationPaths, radarPixels } from '../world/MapPresentation';
 import { InteriorPlan } from './InteriorPlan';
@@ -442,7 +443,7 @@ const styles = StyleSheet.create({
   clip: { overflow: 'hidden', borderRadius: 12, borderWidth: 1.5, borderColor: '#637e80', backgroundColor: C.background },
   radarLabel: { position: 'absolute', top: 4, left: 5, color: '#b1c4c7', fontSize: 7, fontWeight: '800', letterSpacing: 1.2 },
   markerHint: { marginTop: 3, color: C.visited, fontSize: 10, fontWeight: '700', textAlign: 'center',
-    textShadowColor: '#0a1219', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+    ...readableShadow('#0a1219', 0, 1, 3) },
   fullOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: C.background, zIndex: 110 },
   // Mira do centro: sem cursor, o jogador move o mapa até o ponto e marca ali.
   crosshair: { position: 'absolute', width: 0, alignItems: 'center', zIndex: 120 },

@@ -7,6 +7,7 @@ import { useControlInsets } from './useControlInsets';
 import { type HitId, useHitTarget } from './ControlTouch';
 import type { Vehicle } from '../entities/Vehicle';
 import { isGunId } from '../data/weapons';
+import { readableShadow } from './textShadow';
 import {
   IconAim,
   IconBrake,
@@ -248,10 +249,10 @@ const styles = StyleSheet.create({
   },
   contextActions: { flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
   interiorAction: { alignItems: 'center', gap: 4 },
-  // O react-native-web avisa que `textShadow*` está obsoleto em favor de `textShadow`, mas o RN
-  // 0.81 só tem as três propriedades antigas: `textShadow` nem entra no StyleSheet nativo. A
-  // web converte as antigas para CSS sozinha, então o aviso fica e o aparelho continua legível.
-  interiorLabel: { color: '#d4f3e4', fontSize: 10, lineHeight: 12, maxWidth: 74, textShadowColor: '#000', textShadowRadius: 3 },
+  // Legibilidade sobre o asfalto: a sombra é a mesma nos dois lados, só a API muda —
+  // `readableShadow` entrega `textShadow` ao react-native-web e as três propriedades
+  // antigas ao nativo, que é a única forma que ele tem de aplicá-las.
+  interiorLabel: { color: '#d4f3e4', fontSize: 10, lineHeight: 12, maxWidth: 74, ...readableShadow('#000') },
   footActions: { width: 198, gap: 6 },
   compactFootActions: { width: 150 },
   jumpIcon: { color: '#fff', fontSize: 20, lineHeight: 22, fontWeight: '800' },

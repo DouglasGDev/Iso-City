@@ -29,6 +29,9 @@ const stubs = {
   'react/jsx-runtime': { jsx: element, jsxs: element, Fragment: 'Fragment' },
   'react-native': {
     StyleSheet: { create: (styles) => styles, absoluteFill: {}, absoluteFillObject: {} },
+    // A UI lê a plataforma para escolher entre sombra de texto nativa e CSS. Este harness
+    // roda os caminhos web (o stub da Skia é o da web), então é 'web' que ele declara.
+    Platform: { OS: 'web' },
     Text: 'Text', TouchableOpacity: 'TouchableOpacity', View: 'View', useWindowDimensions: () => windowSize,
   },
   '@shopify/react-native-skia': {

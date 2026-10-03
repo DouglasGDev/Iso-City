@@ -1,14 +1,12 @@
 import { memo, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { Group, Image, Path, Skia, type SkImage, type SkPath } from '@shopify/react-native-skia';
+import { Group, Image, Path } from '@shopify/react-native-skia';
 import { useDerivedValue, useSharedValue, type SharedValue } from 'react-native-reanimated';
-import { buildingKey, propKey } from '../assets/AssetRegistry';
-import { spriteStore } from '../assets/SpriteStore';
-import { BUILDING_GEOMETRY } from '../assets/BuildingGeometry';
 import { depthOf, ELEVATION_PX, worldToScreen } from '../world/IsoUtils';
-import { buildingShadowDrop, lotShadow } from './ContactShadow';
+import { expandRect } from '../world/streaming/StreamingBounds';
 import type { FogView } from '../systems/FogSystem';
 import { GAME_CONFIG } from '../game/GameConfig';
 import type { GameState } from '../game/GameState';
+import { staticNodesFor, type StaticNode } from './ChunkStatics';
 import { EntitySprite } from './EntitySprite';
 import { resolveEntityImage } from './entityImages';
 import { isNpcVisible } from '../entities/NPC';
@@ -17,53 +15,6 @@ import { AnimalSprite } from './AnimalSprite';
 import { animalSVs } from './SharedValues';
 import { SMOLDER_S, WreckSprite } from './WreckSprite';
 import type { Wreck } from '../systems/DestructionSystem';
-
-interface StaticNode {
-  id: string;
-  img: SkImage;
-  sx: number;
-  sy: number;
-  w: number;
-  h: number;
-  depth: number;
-  /** Os dois losangos do lote deslocados para baixo: a sombra de contato do prédio. */
-  shade?: { penumbra: SkPath; core: SkPath };
-}
-
-function buildStaticNodes(game: GameState): StaticNode[] {
-  const nodes: StaticNode[] = [];
-  for (const [i, b] of game.map.data.buildings.entries()) {
-    const img = spriteStore[buildingKey(b.key)];
-    if (!img) continue;
-    // O prédio pisa o próprio terraço: o `h` é o do lote, nivelado no gerador, e o
-    // sprite sobe junto com o chão em vez de ficar enterrado na encosta.
-    const groundH = game.map.heightSmoothAt(b.x, b.y);
-    const p = worldToScreen(b.x, b.y, groundH);
-    const geometry = BUILDING_GEOMETRY[b.key];
-    const scale = b.footprintW * 64 / geometry.span;
-    const w = img.width() * scale, h = img.height() * scale;
-    // A sombra nasce do mesmo losango do colisor: se o prédio ocupa o lote, é o lote que
-    // ele escurece. Fica pré-montada aqui, uma vez por partida, porque prédios não andam.
-    const drop = buildingShadowDrop(h);
-    const penumbra = Skia.Path.Make(), core = Skia.Path.Make();
-    lotShadow(penumbra, b.x, b.y, b.footprintW, groundH, drop);
-    lotShadow(core, b.x, b.y, b.footprintW, groundH, drop * 0.4);
-    nodes.push({ id: `building:${i}`, img,
-      sx: p.x + w / 2 - geometry.anchorX * scale, sy: p.y + h - geometry.anchorY * scale,
-      w, h, depth: depthOf(b.x, b.y, groundH), shade: { penumbra, core } });
-  }
-  for (const [i, pr] of game.map.data.props.entries()) {
-    const img = spriteStore[propKey(pr.key)];
-    if (!img) continue;
-    const p = worldToScreen(pr.x, pr.y, game.map.heightSmoothAt(pr.x, pr.y));
-    const scale = pr.renderScale ?? 1;
-    const w = img.width() * scale, h = img.height() * scale;
-    const anchor = pr.renderAnchor ?? { x: 0.5, y: 1 };
-    nodes.push({ id: `prop:${i}`, img, sx: p.x + w * (0.5 - anchor.x), sy: p.y + h * (1 - anchor.y),
-      w, h, depth: depthOf(pr.x, pr.y, game.map.heightSmoothAt(pr.x, pr.y)) });
-  }
-  return nodes;
-}
 
 export interface OcclusionFocus {
   x: number;
@@ -141,34 +92,66 @@ function visibleItems(game: GameState, statics: StaticNode[]): DrawItem[] {
   // Profundidade com relevo: o tile elevado do morro da frente passa na frente de
   // quem está embaixo, exatamente como o losango dele aparece na tela.
   const depth = (x: number, y: number) => depthOf(x, y, game.map.heightSmoothAt(x, y));
-  const items: DrawItem[] = statics.filter((n) => game.fog.intersects(view, n.sx - n.w / 2, n.sy - n.h, n.w, n.h))
-    .map((node) => ({ id: node.id, depth: node.depth, node }));
+  const items: DrawItem[] = [];
+  // `statics` já é só o que mora nos chunks da tela: a filtragem abaixo decide o quadro,
+  // não a existência. São dezenas de nós, não os 4.451 da cidade.
+  for (const node of statics) {
+    if (game.fog.intersects(view, node.sx - node.w / 2, node.sy - node.h, node.w, node.h)) {
+      items.push({ id: node.id, depth: node.depth, node });
+    }
+  }
+  game.streaming.stats.drawnStatics = items.length;
   if (game.player.currentVehicleId === null) {
     items.push({ id: 'player', depth: depth(game.player.x, game.player.y) });
   }
-  for (const [i, n] of game.npcs.entries()) {
-    if (isNpcVisible(n) && entityVisible(game, view, `npc:${i}`, n.x, n.y)) {
+  // Os candidatos vêm da grade de vizinhança, nunca da lista mundial: cada tipo tem seu
+  // próprio buffer emprestado, então as quatro consultas não se derrubam entre si.
+  // A janela é a visível dilatada até englobar o jogador. A câmera o segue, mas ela é medida
+  // pelo ponto que mira, e no quadro em que ele entra num carro longe desse ponto o carro
+  // dirigido sumiria da tela junto com ele — o recorte fino abaixo continua decidindo o que
+  // de fato aparece, então alargar o candidato aqui não desenha nada a mais.
+  const w = game.streaming.zones.visible;
+  const p = game.player;
+  const window = { minX: Math.min(w.minX, p.x - 1), minY: Math.min(w.minY, p.y - 1),
+    maxX: Math.max(w.maxX, p.x + 1), maxY: Math.max(w.maxY, p.y + 1) };
+  const { spatial } = game;  for (const i of spatial.query('npc', window)) {
+    const n = game.npcs[i];
+    if (!n || !isNpcVisible(n)) continue;
+    if (entityVisible(game, view, `npc:${i}`, n.x, n.y)) {
       items.push({ id: `npc:${i}`, depth: depth(n.x, n.y) });
     }
   }
-  for (const [i, v] of game.vehicles.entries()) {
-    if (v.state === 'destroyed') continue;
-    if (game.player.currentVehicleId === v.id || entityVisible(game, view, `veh:${i}`, v.x, v.y, v.altitude * ELEVATION_PX)) {
+  // O helicóptero no teto aparece na tela muito antes de o tile dele entrar no footprint: a
+  // projeção sobe `altitude * ELEVATION_PX` pixels, e em tiles de tela isso vale até a própria
+  // cota máxima. A janela de carro é dilatada por esse alcance — senão o helicóptero entraria
+  // voando pelo canto da tela com um sumiço no lugar.
+  const vehWindow = expandRect(window, GAME_CONFIG.HELI_CEILING_ELEVATION);
+  for (const i of spatial.query('veh', vehWindow)) {
+    const v = game.vehicles[i];
+    if (!v || v.state === 'destroyed') continue;
+    if (game.player.currentVehicleId === v.id ||
+      entityVisible(game, view, `veh:${i}`, v.x, v.y, v.altitude * ELEVATION_PX)) {
       items.push({ id: `veh:${i}`, depth: depth(v.x, v.y) + (v.altitude > 0.5 ? 1000 : 0) });
     }
   }
-  for (const animal of game.wildlife.animals) {
+  for (const i of spatial.query('animal', window)) {
+    const animal = game.wildlife.animals[i];
+    if (!animal || !isAnimalVisible(animal)) continue;
     const p = worldToScreen(animal.x, animal.y, game.map.heightSmoothAt(animal.x, animal.y));
-    if (isAnimalVisible(animal) && game.fog.intersects(view, p.x - 40, p.y - 65, 80, 90)) {
+    if (game.fog.intersects(view, p.x - 40, p.y - 65, 80, 90)) {
       items.push({ id: `animal:${animal.id}`, depth: depth(animal.x, animal.y), animal });
     }
   }
-  for (const [i, wreck] of game.destruction.wrecks.entries()) {
+  for (const i of spatial.query('wreck', window)) {
+    const wreck = game.destruction.wrecks[i];
+    if (!wreck) continue;
     const p = worldToScreen(wreck.x, wreck.y, game.map.heightSmoothAt(wreck.x, wreck.y));
     if (game.fog.intersects(view, p.x - 46, p.y - 46, 92, 66)) {
       items.push({ id: `wreck:${i}`, depth: depth(wreck.x, wreck.y), wreck });
     }
   }
+  game.streaming.stats.visibleEntities =
+    items.length - game.streaming.stats.drawnStatics;
   return items.sort((a, b) => a.depth - b.depth || a.id.localeCompare(b.id));
 }
 
@@ -180,13 +163,21 @@ export function SortedWorldLayer({ game, focus, clock }: {
     () => game.entityVersion,
     () => game.entityVersion,
   );
-  const allStatic = useMemo(() => buildStaticNodes(game), [game]);
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const timer = setInterval(() => setTick((value) => value + 1), GAME_CONFIG.ENTITY_CULL_MS);
     return () => clearInterval(timer);
   }, [game]);
-  const items = useMemo(() => visibleItems(game, allStatic), [game, allStatic, version, tick]);
+  const items = useMemo(() => {
+    // É aqui que a cadeia fecha: câmera → chunks → nós residentes → recorte fino → Skia. O
+    // orçamento de construção anda junto, então o anel de streaming se preenche sem nunca
+    // atrasar o que já está na tela.
+    const t0 = performance.now();
+    const nodes = staticNodesFor(game, game.streaming);
+    const result = visibleItems(game, nodes);
+    game.streaming.stats.cullMs = Math.round((performance.now() - t0) * 100) / 100;
+    return result;
+  }, [game, version, tick]);
 
   // Chaves estáveis e o mesmo pai preservam os shared values ao mudar a ordem de profundidade.
   return (

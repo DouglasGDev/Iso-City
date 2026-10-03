@@ -68,7 +68,7 @@ const stubs = {
 };
 const extraExports = {
   [srcPath('render/GroundLayer.tsx')]: '\nexport { bakeVisibleTiles, cameraCellKey };',
-  [srcPath('render/SortedWorldLayer.tsx')]: '\nexport { buildStaticNodes, visibleItems, entityVisible };',
+  [srcPath('render/SortedWorldLayer.tsx')]: '\nexport { visibleItems, entityVisible };',
 };
 function resolve(filename) {
   for (const candidate of [filename, filename + '.ts', filename + '.tsx']) {
@@ -96,6 +96,9 @@ function load(filename) {
   return mod.exports;
 }
 const source = (name) => load(srcPath(name));
+const { ChunkIndex } = source('world/streaming/ChunkIndex.ts');
+const { SpatialIndex } = source('world/streaming/SpatialIndex.ts');
+const { WorldStreamingManager } = source('world/streaming/WorldStreamingManager.ts');
 const { FogSystem, FOG, fogRadii } = source('systems/FogSystem.ts');
 const { GAME_CONFIG: C } = source('game/GameConfig.ts');
 const { worldToScreen, screenToWorld } = source('world/IsoUtils.ts');
@@ -104,6 +107,7 @@ const registry = source('assets/AssetRegistry.ts');
 const { BUILDING_GEOMETRY } = source('assets/BuildingGeometry.ts');
 const ground = source('render/GroundLayer.tsx');
 const sorted = source('render/SortedWorldLayer.tsx');
+const chunkStatics = source('render/ChunkStatics.ts');
 const { buildingShadowDrop } = source('render/ContactShadow.ts');
 const { FogLayer } = source('render/FogLayer.tsx');
 const { SnowSystem } = source('systems/SnowSystem.ts');
@@ -157,7 +161,10 @@ function tileGame(ctx, width = C.MAP_TILES_W, height = C.MAP_TILES_H) {
   const heights = new Float32Array(width * height);
   return { ...ctx, camera: { ...ctx.camera }, fog,
     // Chão plano de propósito: este oracle mede culling, não relevo (check-terrain cuida do relevo).
-    map: { data: { tilesW: width, tilesH: height, buildings: [], props: [], heights,
+    // worldW/worldH é o que o índice de chunk usa para dimensionar a malha; sem eles o mapa fake
+    // não tem chão para o recorte novo.
+    map: { data: { tilesW: width, tilesH: height, worldW: width, worldH: height,
+      buildings: [], props: [], heights,
       tiles: Array.from({ length: width * height }, (_, i) => ({ kind: i % 5 ? 'grass' : 'road',
         key: i % 7 ? 'tile_ground_grass' : 'missing-tile' })) }, heightAt: () => 0, heightSmoothAt: () => 0 },
   };
@@ -395,9 +402,25 @@ function entityGame() {
   game.wildlife = { animals: [] };
   game.destruction = { wrecks: [] };
   game.entityVersion = 0; game.subscribeEntityChange = () => () => {};
+  // O mundo fake entra no streaming do mesmo jeito que o real: índice dos estáticos depois
+  // de o mapa estar montado, grade dos que se mexem depois das entidades, zonas a partir da
+  // câmera. Sem isso o check mediria o recorte antigo e o recorte novo passaria junto.
+  game.streaming = new WorldStreamingManager(new ChunkIndex(game.map.data));
+  game.spatial = new SpatialIndex(C.MAP_TILES_W, C.MAP_TILES_H);
+  syncWorld(game);
   currentGame = game;
   assert.ok(geometry.anchorY * 2 * 64 / geometry.span > FOG.padding + 140);
   return game;
+}
+/** Reconstrói grade e zonas do fake — é o que `GameState.update` faz a cada tick no jogo. */
+function syncWorld(game) {
+  const s = game.spatial;
+  s.rebuild('npc', game.npcs, (n) => n.x, (n) => n.y);
+  s.rebuild('veh', game.vehicles, (v) => v.x, (v) => v.y);
+  s.rebuild('animal', game.wildlife.animals, (a) => a.x, (a) => a.y);
+  s.rebuild('wreck', game.destruction.wrecks, (w) => w.x, (w) => w.y);
+  game.streaming.update({ ax: game.camera.x, ay: game.camera.y, zoom: game.camera.zoom,
+    viewBounds: game.fog.worldBounds(game.fog.view(game)) });
 }
 function freezeSimulation(game) {
   for (const list of [game.npcs, game.vehicles, game.map.data.buildings, game.map.data.props]) {
@@ -409,7 +432,10 @@ test('actual SortedWorldLayer keeps exact tall static bounds, lifted vehicles an
   const game = entityGame(); const view = fog.view(game); const b = game.map.data.buildings[0];
   const p = worldToScreen(b.x, b.y);
   assert.equal(fog.intersects(view, p.x, p.y, 0, 0), false, 'building base is outside even the apron');
-  const nodes = sorted.buildStaticNodes(game); const building = nodes.find((n) => n.id === 'building:0');
+  // Copia do buffer: o cache de chunks devolve o mesmo array a cada passada, e o render
+  // abaixo o reescreveria por baixo deste teste.
+  const nodes = [...chunkStatics.staticNodesFor(game, game.streaming)];
+  const building = nodes.find((n) => n.id === 'building:0');
   assert.equal(fog.intersects(view, building.sx - building.w / 2, building.sy - building.h, building.w, building.h, 0), true);
   const g = BUILDING_GEOMETRY[b.key]; const scale = b.footprintW * 64 / g.span;
   near(building.sx - building.w / 2, p.x - g.anchorX * scale);
@@ -477,6 +503,9 @@ test('SortedWorldLayer always keeps current vehicle by ID, hides passenger playe
     assert.ok(keys.includes('veh:1')); assert.ok(!keys.includes('player')); assert.ok(!keys.includes('veh:4'));
     const next = screenToWorld(fog.view(game).x - 5000, fog.view(game).y - 5000);
     game.camera.x = next.x; game.camera.y = next.y;
+    // No jogo é o GameLoop que move as zonas com a câmera; aqui o fake precisa do mesmo
+    // passo, senão o teste estaria medindo o recorte contra a janela de uma câmera velha.
+    syncWorld(game);
     component.tick();
     const moved = component.render().props.children.map((child) => child.key);
     assert.ok(moved.includes('veh:1'), 'occupied vehicle cannot be culled');
@@ -493,7 +522,8 @@ test('wrecks join the depth-sorted pass and cull with the same envelope as the h
     { ...scorch, ...screenToWorld(v.x + 5000, v.y + 5000) },
     { ...scorch, ...screenToWorld(v.x, v.y) },
   ];
-  const items = sorted.visibleItems(game, sorted.buildStaticNodes(game));
+  syncWorld(game);
+  const items = sorted.visibleItems(game, [...chunkStatics.staticNodesFor(game, game.streaming)]);
   assert.deepEqual(items.filter((i) => i.wreck).map((i) => i.id), ['wreck:1'],
     'only the on-screen scorch is drawn');
   assert.ok(items.every((i, k) => !k || i.depth >= items[k - 1].depth), 'depth order kept');

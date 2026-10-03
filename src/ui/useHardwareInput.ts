@@ -145,8 +145,19 @@ export function attachHardwareInput(win: Window, doc: Document, options: Browser
 
   const keydown = (event: KeyboardEvent) => {
     refresh();
-    if (touchOnly || event.defaultPrevented || event.isComposing ||
+    if (event.defaultPrevented || event.isComposing ||
         closest(event.target, EDITABLE) || (event.code === 'Space' && closest(event.target, UI_TARGET))) return;
+    // F3 liga o painel de métricas do streaming (§17). Vem antes do `touchOnly` de propósito:
+    // tecla de função não é ponteiro. Deixá-la atrás do guarda significaria que o painel só
+    // existe no teclado de quem nunca tocou na tela — num tablet com teclado físico, e no QA web
+    // que nasce em emulação de toque, o painel seria impossível de abrir.
+    if (event.code === 'F3') {
+      event.preventDefault();
+      const game = getGame();
+      game.showDebug = !game.showDebug;
+      return;
+    }
+    if (touchOnly) return;
     if (event.metaKey || event.altKey || (event.ctrlKey && !CTRL_GAME_KEYS.has(event.code))) {
       input.release();
       return;

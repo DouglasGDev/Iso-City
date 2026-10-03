@@ -9,6 +9,7 @@ import { useHitTarget } from './ControlTouch';
 import { remainingRouteDistance } from '../world/Gps';
 import { IconFist, IconMap, IconPause, IconPlay, IconStarRow } from './ActionIcons';
 import { isGunId } from '../data/weapons';
+import { readableShadow } from './textShadow';
 
 const MISSION_LABEL: Record<string, string> = {
   giver: 'Vá até o contato', toPickup: 'Pegue a encomenda', toDeliver: 'Entregue a encomenda',
@@ -129,7 +130,7 @@ export function HUD() {
         {!narrow && <WeaponReadout compact={compact} />}
         <View style={styles.topRight}>
           {!narrow && <View style={styles.clockPanel}>
-            <Text style={styles.clock}>{game.dayNight.clock}</Text>
+            <Text style={styles.clock} testID="hud-clock">{game.dayNight.clock}</Text>
             <Text style={styles.weather} numberOfLines={1}>{game.weather.label}</Text>
             <View style={styles.stars}>
               <IconStarRow count={wantedLevel} />
@@ -155,6 +156,36 @@ export function HUD() {
         testID="hud-hazard" accessible accessibilityLabel={hazard}>
         <Text style={styles.hazardText} numberOfLines={1}>{hazard}</Text>
       </View> : null}
+      {game.showDebug ? <Metrics /> : null}
+    </View>
+  );
+}
+
+const KIND_LABEL: Record<string, string> = { npc: 'pedestres', veh: 'carros', animal: 'bichos', wreck: 'destroços' };
+
+/**
+ * Painel de métricas do streaming (F3). É o único lugar do HUD que lê o gestor diretamente:
+ * só Text, porque o limite de `<Canvas>` da tela já está gasto, e o HUD já re-renderiza a
+ * cada 200 ms — não precisa de relógio próprio.
+ */
+function Metrics() {
+  const game = getGame();
+  const s = game.streaming.stats;
+  const totais = game.spatial.totals;
+  const heap = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+  return (
+    <View style={styles.metrics} testID="hud-metrics" accessible
+      accessibilityLabel={`Depuração: ${s.fps} quadros por segundo`}>
+      <Text style={styles.metric}>{`FPS ${s.fps} · quadro ${s.frameMs}ms · loop ${s.updateMs}ms · corte ${s.cullMs}ms`}</Text>
+      <Text style={styles.metric}>{`chunks ${s.visibleChunks} visíveis / ${s.activeChunks} ativos / ${s.loadedChunks} carregados`}</Text>
+      <Text style={styles.metric}>{`estáticos ${s.drawnStatics} desenhados / ${s.staticNodes} residentes`}</Text>
+      <Text style={styles.metric}>{`entidades ${s.visibleEntities} na tela / ${s.simulatedEntities} simulados / ${s.totalEntities} no mundo`}</Text>
+      <Text style={styles.metric}>
+        {(['npc', 'veh', 'animal', 'wreck'] as const)
+          .map((k) => `${KIND_LABEL[k]} ${totais[k]}`).join(' · ')}
+        {` · ${s.activeNpcs} ped. ativos`}
+        {heap ? ` · heap ${(heap.usedJSHeapSize / 1048576).toFixed(0)}MB` : ''}
+      </Text>
     </View>
   );
 }
@@ -176,8 +207,8 @@ const styles = StyleSheet.create({
   stFill: { height: '100%', backgroundColor: '#4dd0e1' },
   sprintText: { fontSize: 8, color: '#4dd0e1', marginTop: 3, fontWeight: '700' },
   clockPanel: { alignItems: 'flex-end', paddingHorizontal: 4, pointerEvents: 'none' },
-  clock: { color: '#fff', fontSize: 12, fontWeight: '800', textShadowColor: '#000', textShadowRadius: 3 },
-  weather: { color: '#cfd8dc', fontSize: 9, fontWeight: '700', marginTop: 1, textShadowColor: '#000', textShadowRadius: 3 },
+  clock: { color: '#fff', fontSize: 12, fontWeight: '800', ...readableShadow('#000') },
+  weather: { color: '#cfd8dc', fontSize: 9, fontWeight: '700', marginTop: 1, ...readableShadow('#000') },
   stars: { flexDirection: 'row', gap: 1, marginTop: 3 },
   weaponPanel: { width: 160 },
   compactWeapon: { width: 136 },
@@ -203,4 +234,9 @@ const styles = StyleSheet.create({
   missionText: { color: '#b3e5fc', fontSize: 9 },
   missionTrack: { height: 2, width: 64, backgroundColor: '#344044', overflow: 'hidden' },
   missionFill: { height: '100%', backgroundColor: '#ffd54a' },
+  metrics: { position: 'absolute', bottom: 6, left: 8, backgroundColor: 'rgba(4,8,14,0.78)',
+    borderRadius: 6, paddingVertical: 4, paddingHorizontal: 7, borderWidth: 1,
+    borderColor: 'rgba(125,221,255,0.35)', pointerEvents: 'none' },
+  metric: { color: '#7bddff', fontSize: 9, fontWeight: '700', fontVariant: ['tabular-nums'],
+    ...readableShadow('#000') },
 });

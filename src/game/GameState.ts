@@ -48,6 +48,9 @@ import { JailSystem, type JailContext, type JailOccupant } from '../systems/Jail
 import { InteriorCrowdSystem, type CrowdContext } from '../systems/InteriorCrowdSystem';
 import { JAIL_CELL_SPAWN } from '../data/jail';
 import { SAVE_VERSION, type SaveGame } from './SaveGame';
+import { ChunkIndex } from '../world/streaming/ChunkIndex';
+import { SpatialIndex } from '../world/streaming/SpatialIndex';
+import { WorldStreamingManager } from '../world/streaming/WorldStreamingManager';
 
 let _game: GameState | null = null;
 
@@ -83,6 +86,13 @@ export function resetGame(): GameState {
  */
 export class GameState {
   map: Map;
+  /**
+   * Dono das três zonas do mundo (visível / simula / carrega). Uma instância por partida,
+   * alimentada pelo `update` e lida pelo render: nada aqui dentro vive na árvore React.
+   */
+  streaming: WorldStreamingManager;
+  /** Grade espacial do que se move, recarregada uma vez por tick no fim do `update`. */
+  spatial: SpatialIndex;
   interiors: InteriorSystem;
   /** Cela, guarda e presos: só existe enquanto a sala da cadeia está aberta. */
   jail = new JailSystem();
@@ -146,6 +156,8 @@ export class GameState {
   private biomeAtCamera: Biome = 'residential';
   private nextVehicleId = 0;
   private nextNpcId = 0;
+  /** Janela de veículos do `separate`, reutilizada de um tick para o outro. */
+  private nearbyVehicles: Vehicle[] = [];
   private rnd = () => Math.random();
 
   private entityListeners = new Set<() => void>();
@@ -175,6 +187,10 @@ export class GameState {
       onEmpty: () => sound.play('weaponEmpty', 0.4),
     };
     this.map = new Map(generateCity());
+    // O índice dos estáticos nasce do mapa pronto e nunca mais muda: é ele que responde
+    // "o que esta quadra tem?" sem percorrer as 4.451 estáticas da cidade inteira.
+    this.streaming = new WorldStreamingManager(new ChunkIndex(this.map.data));
+    this.spatial = new SpatialIndex(this.map.data.worldW, this.map.data.worldH);
     this.cascade = new CascadeSystem(this.map.data);
     this.wildlife.init(this.map);
     this.interiors = new InteriorSystem(this.map);
@@ -236,6 +252,11 @@ export class GameState {
       if (npc.inVehicle || npc.dead) continue;
       npc.patienceTimer = 50 + Math.random() * 200;
     }
+
+    // As zonas e o índice antes do primeiro quadro: sem isto a cidade nasceria sem chunk
+    // carregado, e o render só veria prédio depois do primeiro tick do GameLoop.
+    this.updateStreaming();
+    this.rebuildSpatial();
   }
 
   setViewSize(w: number, h: number) {
@@ -355,6 +376,10 @@ export class GameState {
     }
 
     this.exploration.update({ position: p, outdoors: true });
+    // O save teleporta o jogador: as zonas têm que pular para o ponto novo na hora, senão o
+    // primeiro quadro depois do carregar seria a cidade do spawn.
+    this.updateStreaming();
+    this.rebuildSpatial();
     this.notifyEntityChange();
   }
 
@@ -400,6 +425,10 @@ export class GameState {
     if (this.interiors.active) {
       if (consumeEnter() && this.useInterior()) return;
     } else if (this.handleVehicleInput()) return;
+    // As zonas acompanham a câmera antes de qualquer sistema decidir quem vive. Dentro de
+    // uma sala a câmera mira o plano do interior, que não é um lugar do mapa: a cidade fica
+    // congelada na última configuração, exatamente como estava quando a porta fechou.
+    if (!this.interiors.active) this.updateStreaming();
     if (crouch) this.crouch.toggle(this.player);
     this.crouch.update(this.player);
     if (jump && this.jump.tryJump(this.player, this.activeMap, this.collision)) {
@@ -423,7 +452,7 @@ export class GameState {
       ? { ...this.player, x: this.worldPosition.x, y: this.worldPosition.y, vx: 0, vy: 0, speed: 0, invulnUntil: Infinity }
       : this.player;
 
-    this.trafficSystem.update(this.map, this.npcs, this.vehicles, dt, outdoorPlayer);
+    this.trafficSystem.update(this.map, this.npcs, this.vehicles, dt, outdoorPlayer, this.streaming);
     this.updateNpcs(dt, outdoorPlayer);
 
     this.witnesses.update(dt, this.witnessContext(outdoorPlayer));
@@ -512,6 +541,9 @@ export class GameState {
     this.cascade.sweep(dt, this.cascadeSweepContext(!!room));
     this.wanted.update(dt, this.player, !room && this.police.playerVisible);
 
+    // Todo mundo já se moveu: é aqui, uma vez por tick, que a grade de vizinhança é montada
+    // para a separação de corpos de agora e para o recorte do render no próximo quadro.
+    this.rebuildSpatial();
     if (!room) this.separate(this.player);
     if (this.jump.update(this.player, this.activeMap, this.collision, dt) === 'landed') sound.play('land', 0.4);
     this.exploration.update({ position: this.worldPosition, outdoors: !this.interiors.active });
@@ -863,10 +895,52 @@ export class GameState {
     };
   }
 
+  // ---------------------------------------------------------------- streaming
+
+  /**
+   * câmera → footprint → chunks → o que existe neles. A cadeia inteira anda por aqui, uma vez
+   * por tick, e o `notifyEntityChange` só dispara quando o CONJUNTO de chunks muda — meio tile
+   * de câmera não acorda o render.
+   */
+  private updateStreaming() {
+    const changed = this.streaming.update({
+      ax: this.camera.x,
+      ay: this.camera.y,
+      zoom: this.camera.zoom,
+      viewBounds: this.fog.worldBounds(this.fog.view(this)),
+    });
+    this.streaming.stats.totalEntities =
+      this.npcs.length + this.vehicles.length + this.wildlife.animals.length +
+      this.destruction.wrecks.length;
+    if (changed) this.notifyEntityChange();
+  }
+
+  /**
+   * Recarrega a grade do que se move, no fim do tick, depois de todo mundo ter andado. É a
+   * única forma de as camadas perguntarem "quem está nesta janela?" sem varrer a cidade.
+   */
+  private rebuildSpatial() {
+    const s = this.spatial;
+    s.rebuild('npc', this.npcs, (n) => n.x, (n) => n.y);
+    s.rebuild('veh', this.vehicles, (v) => v.x, (v) => v.y);
+    s.rebuild('animal', this.wildlife.animals, (a) => a.x, (a) => a.y);
+    s.rebuild('wreck', this.destruction.wrecks, (w) => w.x, (w) => w.y);
+    const z = this.streaming.zones;
+    this.streaming.stats.activeNpcs = s.countIn('npc', z.active);
+    this.streaming.stats.simulatedEntities = this.streaming.stats.activeNpcs +
+      s.countIn('veh', z.active);
+  }
+
   // ---------------------------------------------------------------- npcs
 
   private updateNpcs(dt: number, player = this.player) {
-    for (const npc of this.npcs) {
+    // Varrer os 400 pedestres da cidade inteira a cada tick era o "todos os objetos → um por
+    // um". A grade entrega só quem está na janela ativa; o teste de distância abaixo é o de
+    // sempre e a janela é uma CIRCUNSCRIÇÃO dele (raio + margem de chunk), nunca um corte a mais.
+    const nearby = this.spatial.query('npc', this.streaming.zones.active);
+    for (const i of nearby) {
+      const npc = this.npcs[i];
+      if (!npc) continue;
       const wasDead = npc.dead;
       // cops são dirigidos pelo PoliceSystem (a pé) ou pelo carro (dentro)
       if (npc.kind === 'cop') {
@@ -1177,8 +1251,14 @@ export class GameState {
 
   private separate(player: Player) {
     if (player.currentVehicleId !== null || (player.jumpTimer > 0 && player.jumpEnd !== null)) return;
-    for (const npc of this.npcs) {
-      if (npc.dead || npc.inVehicle || npc.state === 'chasing' || npc.state === 'knocked') continue;
+    // O empurra-empurra só diz respeito a quem está a um tile de distância. Varredura da cidade
+    // inteira aqui seria trabalho de sobra: a grade responde a janela em vez disso.
+    const perto = {
+      minX: player.x - 1, minY: player.y - 1, maxX: player.x + 1, maxY: player.y + 1,
+    };
+    for (const i of this.spatial.query('npc', perto)) {
+      const npc = this.npcs[i];
+      if (!npc || npc.dead || npc.inVehicle || npc.state === 'chasing' || npc.state === 'knocked') continue;
       const dx = player.x - npc.x;
       const dy = player.y - npc.y;
       const d2 = dx * dx + dy * dy;
@@ -1193,8 +1273,17 @@ export class GameState {
       }
     }
     const body = { x: player.x, y: player.y, radius: GAME_CONFIG.PLAYER_RADIUS };
+    // O array de carro por perto é reusado de um tick para o outro: o recorte do jogador roda
+    // a 60 Hz, e um array novo por frame é lixo que o coletor cata no meio do desenho.
+    const pertoVeh = this.nearbyVehicles;
+    pertoVeh.length = 0;
+    const caixa = { minX: body.x - 4, minY: body.y - 4, maxX: body.x + 4, maxY: body.y + 4 };
+    for (const i of this.spatial.query('veh', caixa)) {
+      const v = this.vehicles[i];
+      if (v) pertoVeh.push(v);
+    }
     for (let i = 0; i < 3; i++) {
-      this.collision.resolveCircleVsVehicles(body, this.vehicles);
+      this.collision.resolveCircleVsVehicles(body, pertoVeh);
       this.collision.resolveCircle(body, this.map.queryNearby(body.x, body.y, 2));
     }
     player.x = Math.max(body.radius, Math.min(this.map.worldW - body.radius, body.x));

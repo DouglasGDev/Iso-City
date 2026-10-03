@@ -1,3 +1,29 @@
+/**
+ * Chunk = uma quadra do gerador. `data/maps/city.ts` planta a malha urbana com
+ * `SPACING = 16`, então 16 tiles é exatamente o bloco que o mapa já trata como
+ * unidade: 240×240 fecha em 15×15 = 225 chunks, a elipse visível ocupa ~2×2 deles
+ * e o raio de streaming cabe em 8×8. Escolhido medindo, não por hábito: menor que
+ * isso o jogador trocaria de chunk a cada passo e o índice viraria burocracia;
+ * maior, o prefetch deixaria de antever a câmera e o pop-in voltaria.
+ */
+const CHUNK_SIZE = 16;
+/**
+ * Raio da zona ACTIVE, em tiles: dentro dele o mundo simula por inteiro. É o mesmo
+ * teto que os pedestres já usavam (`NPC_SIM_FAR`), agora com um só dono — o número
+ * aparece uma vez aqui e todo sistema que precisa de "perto o bastante para viver"
+ * lê esta chave, em vez de manter um 40 próprio espalhado pelo código.
+ */
+const ACTIVE_RADIUS_TILES = 40;
+/**
+ * Raio da zona STREAMING. O piso não é escolha livre: é a maior distância em que uma
+ * entidade ainda pode influenciar quem está na ACTIVE. O `GRID_CELL` do trânsito é 12
+ * e a antecedência de rota é 9, então um carro a mais de 40+12+9 = 61 tiles não toca
+ * em nada que o jogador veja — e `POLICE_DESPAWN_DIST` (52) ainda cabe dentro. Com 64
+ * a borda externa nunca segura a interna: o que dorme lá fora é invisível por
+ * construção, não por sorte.
+ */
+const STREAMING_RADIUS_TILES = 64;
+
 export const GAME_CONFIG = {
   MAP_TILES_W: 240,
   MAP_TILES_H: 240,
@@ -309,7 +335,41 @@ export const GAME_CONFIG = {
 
   /** Simulação NPC: full dentro de NEAR; idle lento até FAR; congelado além. */
   NPC_SIM_NEAR: 22,
-  NPC_SIM_FAR: 40,
+  NPC_SIM_FAR: ACTIVE_RADIUS_TILES,
+
+  /** ---- Streaming do mundo (chunks) ---- */
+  CHUNK_SIZE,
+  /**
+   * Folga de consulta, em tiles. Um lote ancora no chunk do próprio pé, mas desenha
+   * para fora dele: a base de um prédio 3×3 se estende 3 tiles para o noroeste e a
+   * sombra de contato cai uns 2 para o sul. Consultar o chunk do ponto e mais esta
+   * margem é o que evita recortar sprite na borda do chunk — e é por isso que a
+   * estática pertence a UM chunk só, sem duplicar índice em vizinho.
+   */
+  CHUNK_QUERY_MARGIN: 6,
+  /** Zona de simulação completa, em tiles da âncora da câmera. */
+  ACTIVE_RADIUS_TILES,
+  /** Zona de carga/prefetch: além dela o chunk dorme e solta os nós de desenho. */
+  STREAMING_RADIUS_TILES,
+  /**
+   * Teto do cache de chunks carregados. No mapa atual o conjunto necessário (~59
+   * chunks num disco de 64) já cabe inteiro dentro disto, então o limite só faz
+   * sentido no crescimento: ele existe para o dia em que o mapa for grande o
+   * bastante de a câmera nunca mais voltar a um canto já visto.
+   */
+  CHUNK_CACHE_LIMIT: 96,
+  /**
+   * Chunks construídos por passada de render. A ordem é sempre visível → ativo →
+   * distante, então os chunks que estão na tela são os primeiros do orçamento e o
+   * teto só adia o anel de prefetch — que ainda falta minutos de caminhada.
+   */
+  CHUNK_BUILD_BUDGET: 10,
+  /**
+   * No anel entre ACTIVE e STREAMING o trânsito roda 1 a cada N ticks: os carros
+   * continuam de fato no mundo (rota, motorista, posição) mas a 15 Hz em vez de
+   * 60. Nada aqui é visível — a footprint da câmera é ~13 tiles.
+   */
+  VEHICLE_SIM_TICK_DIVISOR: 4,
   BAKE_INTERVAL_MS: 100,
   ENTITY_CULL_MS: 120,
 
