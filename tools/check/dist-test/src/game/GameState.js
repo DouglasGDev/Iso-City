@@ -283,6 +283,7 @@ class GameState {
                 wantedLevel: p.wantedLevel,
                 stamina: p.stamina,
                 char: p.char,
+                busUnit: p.busUnit,
             },
             weapons: {
                 equipped: this.weapons.equipped,
@@ -297,7 +298,8 @@ class GameState {
     }
     /**
      * Aplica um save sobre um GameState recém-criado (mesma seed, mesmo mundo).
-     * O jogador volta a pé: veículos do save não pertencem ao mundo re-simulado.
+     * O carro dirigido não volta: ele é do mundo re-simulado, não do save. O ônibus é o
+     * contrário — ele não é do mundo, é do relógio, e o relógio voltou junto.
      */
     applySave(save) {
         this.time = save.time;
@@ -316,7 +318,12 @@ class GameState {
         p.stamina = save.player.stamina;
         p.char = save.player.char;
         p.currentVehicleId = null;
-        p.state = 'idle';
+        // O assento volta porque o relógio voltou: `time` já foi restaurado logo acima, e a
+        // posição de uma unidade é função pura dele. Não é guardar onde o ônibus estava — é o
+        // próprio horário, que continua exatamente onde parou.
+        const seat = save.player.busUnit;
+        p.busUnit = typeof seat === 'number' && seat >= 0 && seat < this.transport.units.length ? seat : null;
+        p.state = p.busUnit !== null ? 'driving' : 'idle';
         p.anim = 'idle';
         p.swimming = false;
         p.crouching = false;
@@ -427,6 +434,11 @@ class GameState {
         // O horário da cidade é o relógio da cidade: o sistema recebe o tempo do jogo, não um
         // intervalo, então morrer ou entrar numa sala não atrasa nenhum ônibus.
         this.transport.update(this.time, outdoorPlayer.x, outdoorPlayer.y, this.streaming);
+        // O cola do passageiro vem logo depois da leitura do horário: o ônibus já sabe onde o
+        // tick o pôs, e o corpo tem que estar lá no mesmo tick. Fizesse isso no `handleMovement`
+        // o jogador seria arrastado um frame atrás do próprio ônibus.
+        if (!room)
+            this.transport.ride(this.player);
         this.updateNpcs(dt, outdoorPlayer);
         this.witnesses.update(dt, this.witnessContext(outdoorPlayer));
         outdoorPlayer.wantedLevel = this.player.wantedLevel;
@@ -682,38 +694,59 @@ class GameState {
     handleVehicleInput() {
         const player = this.player;
         const wasInVehicle = player.currentVehicleId !== null;
+        const wasAboard = player.busUnit !== null;
         if ((0, InputState_1.consumeEnter)()) {
-            if (!wasInVehicle && this.interiors.nearest(player) && !this.interaction.nearestVehicle(player, this.vehicles)) {
+            if (wasAboard) {
+                // Dentro do ônibus a única porta que abre é a da calçada. Sair no meio do trajeto
+                // seria um atalho sem representação no mundo — o que a rede de transporte proíbe —
+                // então o que se ouve é a porta trancada e o horário segue sem passageiro nenhum.
+                if (this.transport.alight(player, this.map, this.collision)) {
+                    this.exitLock = GameConfig_1.GAME_CONFIG.VEHICLE_EXIT_COOLDOWN;
+                }
+                else {
+                    SoundManager_1.sound.play('doorClose', 0.45);
+                }
+            }
+            else if (!wasInVehicle && this.interiors.nearest(player) && !this.interaction.nearestVehicle(player, this.vehicles)) {
                 return this.useInterior();
             }
-            if (player.currentVehicleId !== null) {
+            else if (wasInVehicle) {
                 this.interaction.tryExit(player, this.vehicles, this.map, this.collision);
                 this.exitLock = GameConfig_1.GAME_CONFIG.VEHICLE_EXIT_COOLDOWN;
             }
             else if (this.exitLock <= 0) {
-                const target = this.interaction.nearestVehicle(player, this.vehicles);
-                const stolen = this.trafficSystem.tryStealCar(player, this.vehicles, this.npcs);
-                if (stolen) {
-                    SoundManager_1.sound.play('glassBreak', 0.65);
-                    this.wanted.raise(player, GameConfig_1.GAME_CONFIG.WANTED_STEAL);
-                    this.pickups.spawnDrop(player.x, player.y, 40 + Math.floor(this.rnd() * 80));
+                // O ônibus parado na calçada tem prioridade sobre o carro estacionado ao lado: foi o
+                // que o jogador escolheu ao esperar no ponto, e o carro ele pode roubar a qualquer
+                // momento. Dentro de um ônibus não se rouba nada — ele obedece ao horário.
+                const onibus = this.transport.boarding(player);
+                if (onibus !== null) {
+                    this.transport.board(player, onibus);
                 }
-                else if (target && this.interaction.tryEnter(player, this.vehicles) && player.currentVehicleId === target.id) {
-                    // `occupied` é NPC no banco: assaltar é tirar quem dirige. O TrafficSystem devolve o
-                    // motorista do trânsito à calçada e o PoliceSystem despeja a guarnição da viatura.
-                    const police = target.def.type === 'police' || target.def.type === 'swat';
-                    if (target.occupied || police)
+                else {
+                    const target = this.interaction.nearestVehicle(player, this.vehicles);
+                    const stolen = this.trafficSystem.tryStealCar(player, this.vehicles, this.npcs);
+                    if (stolen) {
                         SoundManager_1.sound.play('glassBreak', 0.65);
-                    if (police)
-                        this.wanted.raise(player, GameConfig_1.GAME_CONFIG.WANTED_STEAL + 1);
-                    this.trafficSystem.takeOver(target.id);
+                        this.wanted.raise(player, GameConfig_1.GAME_CONFIG.WANTED_STEAL);
+                        this.pickups.spawnDrop(player.x, player.y, 40 + Math.floor(this.rnd() * 80));
+                    }
+                    else if (target && this.interaction.tryEnter(player, this.vehicles) && player.currentVehicleId === target.id) {
+                        // `occupied` é NPC no banco: assaltar é tirar quem dirige. O TrafficSystem devolve o
+                        // motorista do trânsito à calçada e o PoliceSystem despeja a guarnição da viatura.
+                        const police = target.def.type === 'police' || target.def.type === 'swat';
+                        if (target.occupied || police)
+                            SoundManager_1.sound.play('glassBreak', 0.65);
+                        if (police)
+                            this.wanted.raise(player, GameConfig_1.GAME_CONFIG.WANTED_STEAL + 1);
+                        this.trafficSystem.takeOver(target.id);
+                    }
                 }
             }
         }
-        if ((player.currentVehicleId !== null) !== wasInVehicle) {
+        if ((player.currentVehicleId !== null) !== wasInVehicle || (player.busUnit !== null) !== wasAboard) {
             this.jump.cancel(player);
             this.notifyEntityChange();
-            SoundManager_1.sound.play(player.currentVehicleId !== null ? 'doorOpen' : 'doorClose', 0.55);
+            SoundManager_1.sound.play((0, Player_1.isAboard)(player) ? 'doorOpen' : 'doorClose', 0.55);
         }
         return false;
     }
@@ -760,6 +793,14 @@ class GameState {
             player.vx = 0;
             player.vy = 0;
             player.swimming = false;
+        }
+        else if (player.busUnit !== null) {
+            // passageiro: o joystick não empurra quem está dentro de um veículo do horário.
+            player.vx = 0;
+            player.vy = 0;
+            player.speed = 0;
+            player.swimming = false;
+            this.stamina.update(player, dt, false, false);
         }
         else {
             const wantsRun = InputState_1.inputState.runHeld && !player.crouching;
@@ -832,7 +873,7 @@ class GameState {
             shake: (a) => this.shake(a),
             rng: this.rnd,
         };
-        const blocked = player.currentVehicleId !== null || player.swimming || player.health <= 0 || player.state === 'dead';
+        const blocked = (0, Player_1.isAboard)(player) || player.swimming || player.health <= 0 || player.state === 'dead';
         if (!blocked && weapon)
             this.weapons.cycle(weapon);
         // Cancel reload before its timer can finish on the vehicle/water entry tick.
@@ -1103,8 +1144,17 @@ class GameState {
     }
     ejectFromVehicle() {
         const player = this.player;
-        if (player.currentVehicleId === null)
+        // O passageiro do horário não tem carro para deixar: ele perde o assento. Onde o corpo
+        // vai parar é decisão de quem chamou — preso vai para a cela, morto para o hospital.
+        const wasAboard = player.busUnit !== null;
+        player.busUnit = null;
+        if (player.currentVehicleId === null) {
+            if (wasAboard) {
+                player.state = 'idle';
+                this.notifyEntityChange();
+            }
             return;
+        }
         const v = this.vehicles.find((x) => x.id === player.currentVehicleId);
         if (v)
             this.vehicleSystem.exitVehicle(player, v, this.map, this.collision);
@@ -1190,7 +1240,7 @@ class GameState {
         this.gpsRefresh -= 1 / 60;
         if (this.gpsRefresh <= 0) {
             this.gpsRefresh = 0.85;
-            const driving = this.player.currentVehicleId !== null;
+            const driving = (0, Player_1.isAboard)(this.player);
             useGameStore_1.useGameStore.refreshMapRoute(this.map, this.player.x, this.player.y, driving);
         }
         const st2 = useGameStore_1.useGameStore.getState();
@@ -1205,7 +1255,7 @@ class GameState {
     }
     // ---------------------------------------------------------------- helpers antigos
     separate(player) {
-        if (player.currentVehicleId !== null || (player.jumpTimer > 0 && player.jumpEnd !== null))
+        if ((0, Player_1.isAboard)(player) || (player.jumpTimer > 0 && player.jumpEnd !== null))
             return;
         // O empurra-empurra só diz respeito a quem está a um tile de distância. Varredura da cidade
         // inteira aqui seria trabalho de sobra: a grade responde a janela em vez disso.
@@ -1249,7 +1299,7 @@ class GameState {
     }
     updateAnimations(dt) {
         const p = this.player;
-        if (p.currentVehicleId !== null) {
+        if ((0, Player_1.isAboard)(p)) {
             p.frame = 0;
             p.animTimer = 0;
             return;

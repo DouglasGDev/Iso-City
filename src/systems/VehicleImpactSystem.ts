@@ -2,7 +2,7 @@ import { sound } from '../audio/SoundManager';
 import { GAME_CONFIG } from '../game/GameConfig';
 import { damage as woundAnimal, type Animal } from '../entities/Animal';
 import type { NPC } from '../entities/NPC';
-import type { Player } from '../entities/Player';
+import { isAboard, type Player } from '../entities/Player';
 import type { Vehicle } from '../entities/Vehicle';
 import type { Map as WorldMap } from '../world/Map';
 import { DIR_VECTORS } from '../world/IsoUtils';
@@ -204,7 +204,7 @@ export class VehicleImpactSystem {
 
   private runOverPlayer(ctx: ImpactContext, dt: number): boolean {
     const player = ctx.player;
-    if (player.currentVehicleId !== null || player.health <= 0 || player.state === 'dead') return false;
+    if (isAboard(player) || player.health <= 0 || player.state === 'dead') return false;
     const v = this.underneath(player.x, player.y, GAME_CONFIG.PLAYER_RADIUS);
     if (!v) return false;
     this.playerFirst = !this.playerContact;

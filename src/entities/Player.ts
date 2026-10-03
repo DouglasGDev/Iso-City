@@ -37,6 +37,14 @@ export interface Player {
   money: number;
   wantedLevel: number;
   currentVehicleId: number | null;
+  /**
+   * Índice de `TransportSystem.units` quando o jogador está dentro de um ônibus da malha.
+   * Vive separado de `currentVehicleId` porque os dois não obedecem à mesma coisa: um carro
+   * obedece ao joystick, o ônibus obedece ao horário. Para o resto do jogo — corpo escondido,
+   * câmera, quem pode ser atropelado — os dois são a mesma coisa, e é para isso que existe
+   * `isAboard`.
+   */
+  busUnit: number | null;
   state: EntityState;
   char: CharId;
   anim: CharAnim;
@@ -81,6 +89,7 @@ export function createPlayer(x: number, y: number): Player {
     money: 500,
     wantedLevel: 0,
     currentVehicleId: null,
+    busUnit: null,
     state: 'idle',
     char: GAME_CONFIG.PLAYER_CHAR,
     anim: 'idle',
@@ -108,4 +117,15 @@ export function createPlayer(x: number, y: number): Player {
 export function playerCollider(p: Player): Collider {
   const r = GAME_CONFIG.PLAYER_RADIUS;
   return { x: p.x - r, y: p.y - r, width: r * 2, height: r * 2, type: 'PLAYER' };
+}
+
+/**
+ * "A bordo" é uma coisa só: o corpo do jogador deixou de ser um pedestre na calçada e passou
+ * a ser a posição de outra coisa — um carro dirigido ou um ônibus da malha. As duas origens
+ * ficam separadas porque cada uma obedece a um dono diferente, mas toda leitura de "está
+ * dentro de algo" usa esta função, senão o pedestre volta a andar em cima do asfalto com o
+ * ônibus passando por cima dele.
+ */
+export function isAboard(p: Player): boolean {
+  return p.currentVehicleId !== null || p.busUnit !== null;
 }

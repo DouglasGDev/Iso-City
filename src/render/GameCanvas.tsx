@@ -6,6 +6,7 @@ import { getGame } from '../game/GameState';
 import { GameLoop } from '../game/GameLoop';
 import { registerCameraSV, entitySVs, animalSVs } from './SharedValues';
 import { animalVisualState } from '../entities/Animal';
+import { isAboard } from '../entities/Player';
 import { GroundLayer } from './GroundLayer';
 import { CascadeLayer } from './CascadeLayer';
 import { SortedWorldLayer, type OcclusionFocus } from './SortedWorldLayer';
@@ -187,7 +188,7 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
       const focusPoint = worldToScreen(player.x, player.y, ground);
       focus.value = { x: focusPoint.x, y: focusPoint.y,
         depth: depthOf(player.x, player.y, ground), active: !game.interiors.active };
-      const onFoot = player.health > 0 && player.currentVehicleId === null && !player.swimming;
+      const onFoot = player.health > 0 && !isAboard(player) && !player.swimming;
       const moving = inputState.magnitude > GAME_CONFIG.JOYSTICK_DEADZONE;
       const aiming = effectiveAim(player.facingAngle);
       const direction = aiming.active ? { x: aiming.x, y: aiming.y }

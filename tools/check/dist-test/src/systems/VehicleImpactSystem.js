@@ -4,6 +4,7 @@ exports.VehicleImpactSystem = void 0;
 const SoundManager_1 = require("../audio/SoundManager");
 const GameConfig_1 = require("../game/GameConfig");
 const Animal_1 = require("../entities/Animal");
+const Player_1 = require("../entities/Player");
 const IsoUtils_1 = require("../world/IsoUtils");
 const CollisionSystem_1 = require("./CollisionSystem");
 /** Célula da grade de veículos: maior que qualquer corpo atropelável, para a varredura ser exata. */
@@ -193,7 +194,7 @@ class VehicleImpactSystem {
     }
     runOverPlayer(ctx, dt) {
         const player = ctx.player;
-        if (player.currentVehicleId !== null || player.health <= 0 || player.state === 'dead')
+        if ((0, Player_1.isAboard)(player) || player.health <= 0 || player.state === 'dead')
             return false;
         const v = this.underneath(player.x, player.y, GameConfig_1.GAME_CONFIG.PLAYER_RADIUS);
         if (!v)

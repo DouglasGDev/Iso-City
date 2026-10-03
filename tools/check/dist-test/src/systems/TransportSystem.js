@@ -4,6 +4,8 @@ exports.TransportSystem = void 0;
 const GameConfig_1 = require("../game/GameConfig");
 const network_1 = require("../data/transport/network");
 const schedule_1 = require("../data/transport/schedule");
+const Player_1 = require("../entities/Player");
+const IsoUtils_1 = require("../world/IsoUtils");
 const WorldStreamingManager_1 = require("../world/streaming/WorldStreamingManager");
 /**
  * Uma sonda do portão a cada tantos tiles de polilinha. Quatro é um quarto de chunk: o
@@ -42,7 +44,7 @@ class TransportSystem {
                 const p = (0, schedule_1.sampleRoute)(route, this.network.services[route.service], 0, unit);
                 this.units.push({
                     route: route.id, unit, x: p.x, y: p.y, angle: p.angle,
-                    stopped: p.stopped, dir: p.dir, live: false,
+                    dir: (0, IsoUtils_1.angleToWorldDirStable)(p.angle, 'SE'), stopped: p.stopped, stop: p.stop, live: false,
                 });
             }
         }
@@ -87,7 +89,8 @@ class TransportSystem {
             u.y = s.y;
             u.angle = s.angle;
             u.stopped = s.stopped;
-            u.dir = s.dir;
+            u.stop = s.stop;
+            u.dir = (0, IsoUtils_1.angleToWorldDirStable)(s.angle, u.dir);
             // A zona da linha decide o que é calculado; a zona do asfalto onde o carro está decide
             // o que existe na tela e no som. Uma linha que atravessa o mapa tem unidade dos dois
             // lados da câmera, e o render não pode repetir esse recorte por conta própria.
@@ -132,6 +135,87 @@ class TransportSystem {
     /** Viagem de uma calçada a outra pelo horário. `null` é cidade sem linha entre elas. */
     trip(from, to) {
         return (0, schedule_1.planTrip)(this.network, from, to, this.time);
+    }
+    /**
+     * A unidade encostada na calçada mais perto de quem está a pé, ou `null`. É o embarque do
+     * horário, não do asfalto: um ônibus que passa sem parar não abre porta, e quem já vai a
+     * bordo de um veículo não embarca em outro. O alcance é o da porta do ônibus
+     * (`BOARDING_REACH`), não o do carro — quem espera no marco está do outro lado do asfalto.
+     */
+    boarding(player) {
+        if ((0, Player_1.isAboard)(player))
+            return null;
+        let best = -1;
+        let bestD = network_1.BOARDING_REACH ** 2;
+        for (let i = 0; i < this.units.length; i++) {
+            const u = this.units[i];
+            if (!u.live || !u.stopped)
+                continue;
+            const d = (player.x - u.x) ** 2 + (player.y - u.y) ** 2;
+            if (d < bestD) {
+                bestD = d;
+                best = i;
+            }
+        }
+        return best < 0 ? null : best;
+    }
+    /** A unidade que leva o jogador, ou `null` se ele está a pé ou num carro. */
+    aboard(player) {
+        return player.busUnit === null ? null : this.units[player.busUnit];
+    }
+    /** Embarca: a partir daqui quem manda na posição do jogador é o horário daquela unidade. */
+    board(player, index) {
+        const u = this.units[index];
+        if (!u || !u.live || !u.stopped)
+            return;
+        player.busUnit = index;
+        player.state = 'driving';
+        player.speed = 0;
+        player.vx = 0;
+        player.vy = 0;
+        player.swimming = false;
+        player.direction = u.dir;
+        player.facingAngle = u.angle;
+    }
+    /**
+     * Copia a unidade para o jogador. Chama-se depois do `update`, com o horário do tick já
+     * lido: o passageiro não tem física própria, e integrar um `dt` dele faria o corpo atrasar
+     * em relação ao ônibus um pouco a cada quadro.
+     */
+    ride(player) {
+        const u = this.aboard(player);
+        if (!u)
+            return;
+        player.x = u.x;
+        player.y = u.y;
+        player.direction = u.dir;
+        player.facingAngle = u.angle;
+        player.speed = 0;
+        player.vx = 0;
+        player.vy = 0;
+        player.swimming = false;
+    }
+    /**
+     * A porta só abre na calçada: desembarcar em movimento seria um teletransporte disfarçado,
+     * exatamente o que a rede de transporte proíbe. Quando ela abre, o corpo pisa o passeio da
+     * parada em que o ônibus encostou — não o ponto do asfalto onde ele está parado.
+     */
+    alight(player, map, collision) {
+        const u = this.aboard(player);
+        if (!u)
+            return false;
+        if (!u.stopped)
+            return false;
+        const station = this.network.stations[this.network.routes[u.route].stops[u.stop].station];
+        player.busUnit = null;
+        player.state = 'idle';
+        player.direction = u.dir;
+        player.facingAngle = u.angle;
+        const c = { x: station.x, y: station.y, radius: GameConfig_1.GAME_CONFIG.PLAYER_RADIUS };
+        collision.resolveCircle(c, map.queryNearby(c.x, c.y, 1.8));
+        player.x = Math.max(c.radius, Math.min(map.worldW - c.radius, c.x));
+        player.y = Math.max(c.radius, Math.min(map.worldH - c.radius, c.y));
+        return true;
     }
 }
 exports.TransportSystem = TransportSystem;

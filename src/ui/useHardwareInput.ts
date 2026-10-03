@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import { getGame } from '../game/GameState';
+import { isAboard } from '../entities/Player';
 import { useGameStore } from '../stores/useGameStore';
 import { sound } from '../audio/SoundManager';
 import {
@@ -271,7 +272,7 @@ export function useHardwareInput(suspended: boolean): HardwareMode {
         const ui = useGameStore.getState();
         return suspendedRef.current || ui.screen !== 'playing' || ui.paused || ui.mapOpen || ui.overlay !== null;
       },
-      isDriving: () => getGame().player.currentVehicleId !== null,
+      isDriving: () => isAboard(getGame().player),
       getCamera: getGame,
       onMode: (mode) => {
         setMode(mode);

@@ -4,6 +4,7 @@ exports.meleeMotion = meleeMotion;
 exports.crouchPose = crouchPose;
 exports.createPlayer = createPlayer;
 exports.playerCollider = playerCollider;
+exports.isAboard = isAboard;
 const GameConfig_1 = require("../game/GameConfig");
 const weapons_1 = require("../data/weapons");
 /** Three continuous phases, shared by the renderer and animation regression tests. */
@@ -43,6 +44,7 @@ function createPlayer(x, y) {
         money: 500,
         wantedLevel: 0,
         currentVehicleId: null,
+        busUnit: null,
         state: 'idle',
         char: GameConfig_1.GAME_CONFIG.PLAYER_CHAR,
         anim: 'idle',
@@ -69,4 +71,14 @@ function createPlayer(x, y) {
 function playerCollider(p) {
     const r = GameConfig_1.GAME_CONFIG.PLAYER_RADIUS;
     return { x: p.x - r, y: p.y - r, width: r * 2, height: r * 2, type: 'PLAYER' };
+}
+/**
+ * "A bordo" é uma coisa só: o corpo do jogador deixou de ser um pedestre na calçada e passou
+ * a ser a posição de outra coisa — um carro dirigido ou um ônibus da malha. As duas origens
+ * ficam separadas porque cada uma obedece a um dono diferente, mas toda leitura de "está
+ * dentro de algo" usa esta função, senão o pedestre volta a andar em cima do asfalto com o
+ * ônibus passando por cima dele.
+ */
+function isAboard(p) {
+    return p.currentVehicleId !== null || p.busUnit !== null;
 }

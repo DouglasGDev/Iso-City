@@ -77,10 +77,22 @@ function routeBounds(route) {
     }
     return { x0, y0, x1, y1 };
 }
-/** Instante absoluto em que a passada `k` de um veículo acontece depois de `time`. */
+/**
+ * Instante absoluto em que a passada `k` de um veículo acontece depois de `time`.
+ *
+ * O que define a passada é onde ela cai dentro da volta, não em qual volta ela foi escrita:
+ * `phase` mora em [0, 2·ciclo), porque é o desfaso do veículo somado à tabela. Reduzir ao
+ * relógio de `time` só para frente, como faz um `while (fase < time) fase += ciclo`, nunca
+ * traria a passada de volta — numa linha cujo ciclo é mais longo que o tempo decorrido do
+ * jogo o painel mostraria o ônibus chegando daqui a quase duas voltas. Com `game.time`
+ * crescendo sem parar, isso é questão de minutos de partida.
+ */
 function passAt(route, k, time, unit) {
-    const phase = (unit * route.cycle) / route.units + route.table[k].time;
-    return phase > time ? phase : phase + Math.ceil((time - phase) / route.cycle) * route.cycle;
+    const { cycle, units } = route;
+    const phase = (unit * cycle) / units + route.table[k].time;
+    // `|| cycle`: a passada que cai exatamente em `time` já está acontecendo, e a pergunta é
+    // pela próxima.
+    return time + (mod(phase - time, cycle) || cycle);
 }
 /**
  * Próximas passadas na calçada, na ordem em que chegam. É a conta do relógio, não uma

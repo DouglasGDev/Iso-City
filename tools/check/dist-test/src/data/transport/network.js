@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TRANSPORT_SERVICES = void 0;
+exports.BOARDING_REACH = exports.TRANSPORT_SERVICES = void 0;
 exports.buildTransportNetwork = buildTransportNetwork;
 const city_1 = require("../maps/city");
 /**
@@ -26,16 +26,36 @@ const MAX_TILES = 240;
 exports.TRANSPORT_SERVICES = [
     {
         modality: 'bus', label: 'Ônibus urbano',
-        // Medido na malha do mapa, não no gosto: uma parada a cada ~14 tiles de asfalto, então
-        // o que come o tempo do ônibus é a calçada. Cruzeiro 3,5 com 1s de porta aberta fecha a
-        // travessia do mapa em ~250s contra ~270s do mesmo caminho a pé, e é a travessia mais
-        // longa que serve de régua — o trecho curto só ganha margem. Intervalo de 24s põe um
-        // carro por linha a cada duas esquinas, que é o mínimo para a espera não comer a viagem.
-        speed: 3.5, headway: 24, dwell: 1,
+        // Medido na malha do mapa, não no gosto (régua: `check-transport.cjs`, seção 9).
+        //
+        // Cruzeiro 3,5: uma parada a cada 14,1 tiles de asfalto, então o que come o tempo do
+        // ônibus é a calçada, não o motor. A porta agora tem que ser janela de verdade, porque o
+        // §3b é embarcar: um segundo com o botão no ar não é tempo de um pedestre decidir, e o
+        // polling da HUD é de 220 ms. Dois segundos custam 0,076 s por tile (0,362 → 0,438) e
+        // deixam o ônibus ainda 19% mais barato que o pé no mesmo asfalto (0,541).
+        //
+        // O intervalo caiu de 24 para 18 s para pagar a janela: o que a travessia mais longa do
+        // mapa tem de espera são duas transbordos, e com 24 s a régua fechava em 270 s contra
+        // 271 s do mesmo caminho a pé — vantagem de um segundo não é transporte. Com 18 s fecha
+        // em 243 s, e o preço é a frota: 157 → 205 veículos na malha, 43 → 55 materializados em
+        // volta de uma câmera sobre a linha.
+        speed: 3.5, headway: 18, dwell: 2,
     },
 ];
 /** Raio em que um tile do passeio é aceito como a calçada daquela caixa. */
 const CALCADA_MAX = 2.2;
+/**
+ * Alcance da porta de um veículo do horário, em tiles. Não é o `VEHICLE_ENTER_RANGE` do
+ * carro: quem estaciona na caixa 2x2 de um cruzamento tem a porta do outro lado do asfalto,
+ * e a malha aceita passeio até `CALCADA_MAX` tiles do centro daquela caixa — medido na
+ * cidade inteira, o canto diagonal de uma esquina cai a 2,12 tiles do ônibus parado, e o
+ * alcance do carro (1,55) deixaria o ponto de ônibus sem porta em pé. Os dois números têm de
+ * falar um com o outro, senão a parada existe no mapa e não existe no jogo: é por isso que o
+ * raio é derivado do `CALCADA_MAX`, com dois decímetros de margem para quem espera no marco.
+ * O `toFixed` do valor não é enfeite: 2,2 + 0,2 é 2,4000000000000004 em binário, e é esse
+ * número que a régua da porta e o check mostram.
+ */
+exports.BOARDING_REACH = +(CALCADA_MAX + 0.2).toFixed(2);
 /**
  * Uma linha para cada tantas paradas: mantém a malha densa sem virar metrô de tudo. O
  * número é de medida, não de gosto — com 20 por linha sobravam bolsões a 46 tiles de
