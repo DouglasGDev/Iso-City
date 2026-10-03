@@ -262,6 +262,9 @@ function pincelDeTinta() {
 function drawGroundTint(canvas: SkCanvas, data: CityMapData,
   tx0: number, ty0: number, tx1: number, ty1: number) {
   if (!data.relevo && !data.copa) return;
+  // Fora do mapa a janela de bake é vazia, e vazia aqui significa invertida: `tx0` sobe acima
+  // de `tx1`, a grade fica com lado negativo e o `new Array` estoura antes de desenhar nada.
+  if (tx1 < tx0 || ty1 < ty0) return;
   const gw = tx1 - tx0 + 2;
   const gh = ty1 - ty0 + 2;
   const pos: { x: number; y: number }[] = new Array(gw * gh);
