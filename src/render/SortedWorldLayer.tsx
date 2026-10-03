@@ -134,6 +134,19 @@ function visibleItems(game: GameState, statics: StaticNode[]): DrawItem[] {
       items.push({ id: `veh:${i}`, depth: depth(v.x, v.y) + (v.altitude > 0.5 ? 1000 : 0) });
     }
   }
+  // O ônibus da malha não é um Vehicle e não mora na grade `spatial`: a lista dele é o próprio
+  // horário, curta (uma entrada por unidade de linha) e já cortada pelo portão de zona pelo
+  // `live`. O recorte fino é o mesmo dos carros — névoa, projeção e profundidade do asfalto.
+  const unidades = game.transport.units;
+  for (let i = 0; i < unidades.length; i++) {
+    const u = unidades[i];
+    if (!u.live) continue;
+    if (u.x < window.minX - 1 || u.x > window.maxX + 1) continue;
+    if (u.y < window.minY - 1 || u.y > window.maxY + 1) continue;
+    if (entityVisible(game, view, `bus:${i}`, u.x, u.y)) {
+      items.push({ id: `bus:${i}`, depth: depth(u.x, u.y) });
+    }
+  }
   for (const i of spatial.query('animal', window)) {
     const animal = game.wildlife.animals[i];
     if (!animal || !isAnimalVisible(animal)) continue;

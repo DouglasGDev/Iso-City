@@ -50,12 +50,16 @@ function entityForSprite(id: string, index: number) {
   if (id.startsWith('npc:')) return game.npcs[index];
   if (id.startsWith('inmate:')) return game.jail.byId(index);
   if (id.startsWith('people:')) return game.crowd.byId(index);
+  if (id.startsWith('bus:')) return game.transport.units[index];
   return game.vehicles[index];
 }
 
 function pollMsFor(id: string): number {
   if (id === 'player') return 16; // Sample short melee phases, not just sprite frames.
   if (id.startsWith('npc:') || id.startsWith('inmate:') || id.startsWith('people:')) return 100;
+  // O ônibus da malha cruzeira a 3,5 tiles/s: o mesmo ritmo de um carro ocupado, senão ele
+  // desliza em saltos de meio tile entre um desenho e o próximo.
+  if (id.startsWith('bus:')) return 55;
   if (id.startsWith('veh:')) {
     const idx = Number(id.split(':')[1]);
     const v = getGame().vehicles[idx];

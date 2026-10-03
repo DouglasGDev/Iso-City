@@ -229,6 +229,14 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
         }
         const [kind, idxStr] = id.split(':');
         const idx = Number(idxStr);
+        if (kind === 'bus') {
+          // O ônibus da malha não é um Vehicle: quem escreve a posição dele aqui é o horário,
+          // lido no `update` do laço. Sem este ramo o sprite nasceria na calçada e ficaria
+          // pregado nela enquanto o asfalto passa.
+          const u = game.transport.units[idx];
+          if (u) sv.value = { x: u.x, y: u.y, h: game.map.heightSmoothAt(u.x, u.y) };
+          continue;
+        }
         if (kind === 'npc') {
           const npc = game.npcs[idx];
           if (npc) sv.value = { x: npc.x, y: npc.y, h: game.map.heightSmoothAt(npc.x, npc.y) };
