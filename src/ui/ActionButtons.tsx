@@ -11,6 +11,7 @@ import { readableShadow } from './textShadow';
 import {
   IconAim,
   IconBrake,
+  IconBus,
   IconCar,
   IconExit,
   IconFist,
@@ -143,6 +144,11 @@ export function ActionButtons({ flying = false }: { flying?: boolean }) {
     () => game.player.currentVehicleId !== null,
     () => game.player.currentVehicleId !== null,
   );
+  const aboard = useSyncExternalStore(
+    (cb) => game.subscribeEntityChange(cb),
+    () => game.player.busUnit !== null,
+    () => game.player.busUnit !== null,
+  );
 
   const [near, setNear] = useState<Vehicle | null>(null);
   const [interiorPrompt, setInteriorPrompt] = useState<string | null>(null);
@@ -153,7 +159,7 @@ export function ActionButtons({ flying = false }: { flying?: boolean }) {
     return () => clearInterval(iv);
   }, [game]);
   useEffect(() => {
-    if (driving) {
+    if (driving || aboard) {
       setNear(null);
       return;
     }
@@ -161,24 +167,45 @@ export function ActionButtons({ flying = false }: { flying?: boolean }) {
     update();
     const iv = setInterval(update, 220);
     return () => clearInterval(iv);
-  }, [driving, game]);
+  }, [driving, aboard, game]);
+  // O ônibus da malha obedece ao horário, não ao joystick: o que a HUD dele oferece é uma
+  // porta e o nome da linha, nunca um pedal. `door` é o que o botão faz neste instante — a
+  // de embarque só existe com o veículo encostado, a de saída idem.
+  const [door, setDoor] = useState<'embarcar' | 'desembarcar' | null>(null);
+  const [line, setLine] = useState<string | null>(null);
+  useEffect(() => {
+    const update = () => {
+      const unit = game.transport.aboard(game.player);
+      if (unit) {
+        setLine(game.transport.network.routes[unit.route].name);
+        setDoor(unit.stopped ? 'desembarcar' : null);
+      } else {
+        setLine(null);
+        setDoor(game.transport.boarding(game.player) === null ? null : 'embarcar');
+      }
+    };
+    update();
+    const iv = setInterval(update, 220);
+    return () => clearInterval(iv);
+  }, [driving, aboard, game]);
 
   const heli = near?.def.type === 'helicopter';
+  const boardingBus = door === 'embarcar';
 
   return (
     <View
       style={[styles.container, { right: insets.right, bottom: insets.bottom, pointerEvents: 'none' }]}
     >
-      {!driving && (interiorPrompt || near) ? (
+      {!driving && !aboard && (interiorPrompt || near || boardingBus) ? (
         <View style={[styles.contextActions, { pointerEvents: 'none' }]}>
-          {interiorPrompt && (
+          {interiorPrompt && !boardingBus && (
             <View style={[styles.interiorAction, { pointerEvents: 'none' }]}>
               <Text style={styles.interiorLabel} numberOfLines={2}>{interiorPrompt}</Text>
               <ActionBtn id="interact" icon={<IconExit size={22} />} accent="rgba(80,180,150,0.95)"
                 label={game.interiors.active ? 'INTERAGIR' : 'ENTRAR'} accessibilityLabel={interiorPrompt} style={styles.enter} />
             </View>
           )}
-          {near && (
+          {near && !boardingBus && (
             <ActionBtn
               id="enter"
               icon={heli ? <IconHeli size={24} /> : near.occupied ? <IconSteal size={24} /> : <IconCar size={24} />}
@@ -186,6 +213,35 @@ export function ActionButtons({ flying = false }: { flying?: boolean }) {
               label={near.occupied ? 'TOMAR' : 'ENTRAR'}
               accessibilityLabel={heli ? 'Entrar no helicóptero' : near.occupied ? 'Tomar veículo' : 'Entrar no veículo'}
               style={styles.enter}
+            />
+          )}
+          {boardingBus && (
+            <ActionBtn
+              id="enter"
+              icon={<IconBus size={24} />}
+              accent="rgba(255,206,84,0.95)"
+              label="EMBARCAR"
+              accessibilityLabel="Entrar no ônibus"
+              style={styles.enter}
+            />
+          )}
+        </View>
+      ) : null}
+      {aboard ? (
+        <View style={[styles.exitRow, { pointerEvents: 'none' }]}>
+          {line && (
+            <View style={[styles.lineBadge, { pointerEvents: 'none' }]} accessible accessibilityLabel={`Linha ${line}`}>
+              <Text style={styles.lineLabel} numberOfLines={1}>{line}</Text>
+            </View>
+          )}
+          {door === 'desembarcar' && (
+            <ActionBtn
+              id="exit"
+              icon={<IconBus size={28} />}
+              accent="rgba(255,150,80,0.95)"
+              label="DESEMBARCAR"
+              accessibilityLabel="Descer do ônibus na calçada"
+              style={styles.exit}
             />
           )}
         </View>
@@ -229,7 +285,7 @@ export function ActionButtons({ flying = false }: { flying?: boolean }) {
             style={[styles.accel, compact && styles.compactAccel]}
           />
         </View>
-      ) : <FootActions compact={compact} />}
+      ) : aboard ? null : <FootActions compact={compact} />}
     </View>
   );
 }
@@ -253,6 +309,25 @@ const styles = StyleSheet.create({
   // `readableShadow` entrega `textShadow` ao react-native-web e as três propriedades
   // antigas ao nativo, que é a única forma que ele tem de aplicá-las.
   interiorLabel: { color: '#d4f3e4', fontSize: 10, lineHeight: 12, maxWidth: 74, ...readableShadow('#000') },
+  // O letreiro da linha: informação, não botão — por isso não tem borda de ação.
+  lineBadge: {
+    height: 40,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255,206,84,0.95)',
+    backgroundColor: 'rgba(10,14,20,0.85)',
+  },
+  lineLabel: {
+    color: '#ffe5a3',
+    fontWeight: '900',
+    fontSize: 12,
+    letterSpacing: 0.4,
+    maxWidth: 130,
+    ...readableShadow('#000'),
+  },
   footActions: { width: 198, gap: 6 },
   compactFootActions: { width: 150 },
   jumpIcon: { color: '#fff', fontSize: 20, lineHeight: 22, fontWeight: '800' },

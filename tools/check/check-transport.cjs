@@ -33,7 +33,7 @@ const { Map: CityMap } = load(path.join(root, 'src/world/Map.ts'));
 const { GAME_CONFIG } = load(path.join(root, 'src/game/GameConfig.ts'));
 const { ChunkIndex } = load(path.join(root, 'src/world/streaming/ChunkIndex.ts'));
 const { WorldStreamingManager } = load(path.join(root, 'src/world/streaming/WorldStreamingManager.ts'));
-const { buildTransportNetwork } = load(path.join(root, 'src/data/transport/network.ts'));
+const { BOARDING_REACH, buildTransportNetwork } = load(path.join(root, 'src/data/transport/network.ts'));
 const { sampleRoute, alongRoute, stopsNear } = load(path.join(root, 'src/data/transport/schedule.ts'));
 const { TransportSystem } = load(path.join(root, 'src/systems/TransportSystem.ts'));
 const { spriteKeyForVehicle, isKnownAsset } = load(path.join(root, 'src/assets/AssetRegistry.ts'));
@@ -42,6 +42,8 @@ const { VEHICLE_DEFS } = load(path.join(root, 'src/data/vehicles.ts'));
 let passed = 0;
 const failures = [];
 const medido = [];
+/** Geometria da porta por semente: a calçada mais longe do ônibus parado que ela serve. */
+const portas = [];
 function check(ok, message) {
   if (ok) passed++;
   else failures.push(message);
@@ -479,6 +481,132 @@ for (const seed of [WORLD_SEED, 42]) {
     console.log(`ônibus seed ${seed}: ${system.units.length} unidades na malha · `
       + `${system.units.filter((u) => u.live).length} materializadas com a câmera na linha ${linha.name}`);
   }
+
+  // ---- 10c. O §3b: a cadeia inteira do passageiro, do ponto de ônibus ao passeio da chegada.
+  // Nada aqui é método privado espiado de fora — é o que o `GameState` chama, na mesma ordem.
+  {
+    const { createPlayer, isAboard } = load(path.join(root, 'src/entities/Player.ts'));
+    const { CollisionSystem } = load(path.join(root, 'src/systems/CollisionSystem.ts'));
+    const collision = new CollisionSystem();
+    const player = createPlayer(12, 12);
+
+    // Sem `streaming` nenhuma linha é cortada: o que se encontra aqui é o horário da cidade
+    // inteira, não o recorte de uma tela.
+    const anchor = network.routes[0].points[Math.floor(network.routes[0].points.length / 2)];
+    let indice = -1;
+    for (let t = 0; t < 40 && indice < 0; t += 0.05) {
+      system.update(t, anchor.x, anchor.y);
+      indice = system.units.findIndex((u) => u.stopped);
+    }
+    check(indice >= 0, 'nenhum ônibus da malha encosta na calçada em quarenta segundos de relógio');
+
+    // A calçada de uma parada mora no tile do passeio, e o ônibus para no centro da caixa do
+    // cruzamento. São dois pontos que a malha escolhe por regras diferentes, e a porta tem de
+    // alcançar a distância entre eles em TODA a cidade — um ponto de ônibus sem embarque é
+    // decoração. Varredura estrutural: nenhuma simulação, só a geometria que a derivação
+    // produziu, lida caixa por caixa.
+    let piorPorta = { d: -1, nome: '' };
+    for (const s of network.stations) {
+      const caixa = network.nodes[s.node];
+      const d = Math.hypot(s.x - caixa.x, s.y - caixa.y);
+      if (d > piorPorta.d) piorPorta = { d, nome: s.name };
+      check(d <= BOARDING_REACH,
+        `parada "${s.name}" a ${d.toFixed(2)} tiles do próprio cruzamento, fora do alcance da porta`);
+    }
+    check(piorPorta.d > 1, 'a calçada mais longe da cidade está a um passo do asfalto: o passeio virou faixa');
+    portas.push({ seed, d: +piorPorta.d.toFixed(2), nome: piorPorta.nome });
+
+    if (indice >= 0) {
+      const paradaDe = (u) => network.stations[network.routes[u.route].stops[u.stop].station];
+      const estacao = paradaDe(system.units[indice]);
+      player.x = estacao.x;
+      player.y = estacao.y;
+      const embarcado = system.boarding(player);
+      check(embarcado !== null,
+        `na calçada da parada "${estacao.name}", com o ônibus parado, o embarque não viu o ônibus`);
+
+      if (embarcado !== null) {
+        const unidade = system.units[embarcado];
+        const rota = network.routes[unidade.route];
+        check(unidade.stopped && unidade.live,
+          'o embarque ofereceu um veículo que não está encostado na calçada');
+
+        system.board(player, embarcado);
+        check(isAboard(player) && player.busUnit === embarcado && player.state === 'driving',
+          'embarcou e não passou a obedecer ao horário');
+        check(system.boarding(player) === null, 'quem já vai a bordo embarca num segundo ônibus');
+
+        // O passageiro não tem física própria: a posição dele é a do horário, quadro a
+        // quadro. O horizonte do laço é uma constante local de propósito — `system.clock` é
+        // exatamente o tempo que o `update` acabou de receber, então comparar com ele dentro
+        // do laço empurra o fim um passo à frente a cada volta e o laço nunca acaba.
+        let colado = true;
+        const partida = { x: player.x, y: player.y };
+        const seisSegundos = system.clock + 6;
+        for (let t = system.clock; t < seisSegundos; t += 1 / 60) {
+          system.update(t, estacao.x, estacao.y);
+          system.ride(player);
+          const u = system.units[embarcado];
+          if (player.x !== u.x || player.y !== u.y) { colado = false; break; }
+        }
+        check(colado, 'o passageiro se descolou do ônibus durante a viagem');
+        // Sem isso, `colado` seria satisfeito por dois números congelados no mesmo lugar.
+        check(Math.hypot(player.x - partida.x, player.y - partida.y) > 1,
+          'o ônibus levou o passageiro, mas não saiu do lugar');
+
+        // A linha que se leva nas costas nunca sai do alcance: a câmera segue o jogador, e o
+        // portão de zona lê do asfalto onde o veículo está.
+        streaming.update({ ax: player.x, ay: player.y, zoom: 1,
+          viewBounds: { minX: player.x - 8, maxX: player.x + 8, minY: player.y - 8, maxY: player.y + 8 } });
+        system.update(system.clock + 1 / 60, player.x, player.y, streaming);
+        check(system.units[embarcado].live, 'a linha do passageiro saiu do alcance da própria câmera');
+
+        // Descer em movimento é um teletransporte disfarçado, então a porta não abre no asfalto.
+        let recusou = false;
+        const umaVolta = system.clock + rota.cycle;
+        for (let t = system.clock; t < umaVolta; t += 0.05) {
+          system.update(t, estacao.x, estacao.y);
+          if (system.units[embarcado].stopped) continue;
+          recusou = system.alight(player, map, collision) === false;
+          break;
+        }
+        check(recusou, 'a porta abriu com o ônibus em movimento');
+        check(isAboard(player), 'desembarcou enquanto o veículo andava');
+
+        // Na próxima calçada o corpo pisa o passeio da parada, não o ponto do asfalto.
+        let encostou = false;
+        const ateAVolta = system.clock + rota.cycle;
+        for (let t = system.clock; t < ateAVolta; t += 0.05) {
+          system.update(t, estacao.x, estacao.y);
+          if (system.units[embarcado].stopped) { encostou = true; break; }
+        }
+        check(encostou, 'a linha nunca volta a encostar numa calçada: não há para onde desembarcar');
+        if (encostou) {
+          const u = system.units[embarcado];
+          const destino = paradaDe(u);
+          check(system.alight(player, map, collision) === true, 'encostou na calçada e a porta não abriu');
+          check(!isAboard(player) && player.busUnit === null && player.state === 'idle',
+            'desembarcou mas continuou a bordo');
+          const pousou = { x: player.x, y: player.y, radius: GAME_CONFIG.PLAYER_RADIUS };
+          check(collision.resolveCircle(pousou, map.queryNearby(player.x, player.y, 1.8)) === false,
+            'quem desceu do ônibus parou dentro de um muro do passeio');
+          const doPasseio = Math.hypot(player.x - destino.x, player.y - destino.y);
+          check(doPasseio <= 1.5,
+            `o desembarque largou o corpo a ${doPasseio.toFixed(2)} tiles do passeio da parada "${destino.name}"`);
+        }
+
+        // Um ônibus que passa sem parar não abre porta para quem estende a mão no asfalto.
+        const passando = system.units.find((v) => !v.stopped &&
+          system.units.every((w) => !w.stopped || Math.hypot(w.x - v.x, w.y - v.y) > 3));
+        if (passando) {
+          const naRua = createPlayer(passando.x, passando.y);
+          check(system.boarding(naRua) === null, 'embarque aceito com o veículo passando sem parar');
+          system.board(naRua, system.units.indexOf(passando));
+          check(!isAboard(naRua), 'subiu num ônibus que estava passando');
+        }
+      }
+    }
+  }
 }
 
 // ---- 11. Determinismo: a mesma semente devolve a mesma malha, outra semente devolve outra
@@ -503,6 +631,10 @@ for (const m of medido) {
     + `cruzamento mais longe a ${m.alcance} tiles de uma parada servida · `
     + `${m.onibus_tile}s por tile de ônibus contra ${m.pe_tile}s a pé · `
     + `ponta a ponta: ${m.asfalto} tiles de asfalto em ${m.onibus}s com ${m.transferencias} transbordo(s)`);
+}
+for (const p of portas) {
+  console.log(`porta seed ${p.seed}: calçada mais longe a ${p.d} tiles do ônibus parado `
+    + `("${p.nome}") · alcance da porta ${BOARDING_REACH}`);
 }
 if (failures.length) {
   for (const f of failures) console.error(`FALHA: ${f}`);

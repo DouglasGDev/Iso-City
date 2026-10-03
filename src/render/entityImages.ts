@@ -5,6 +5,7 @@ import { solicitarSprite } from '../assets/SpriteRequests';
 import { getGame } from '../game/GameState';
 import { VEHICLE_DEFS } from '../data/vehicles';
 import { isNpcVisible } from '../entities/NPC';
+import { isAboard } from '../entities/Player';
 
 /** Anotar o arquivo que a cena acabou de procurar e não achou; o desenho segue sem ele. */
 function faltar(key: string): null {
@@ -16,7 +17,7 @@ export function resolveEntityImage(id: string): SkImage | null {
   const game = getGame();
   if (id === 'player') {
     const p = game.player;
-    if (p.currentVehicleId !== null) return null;
+    if (isAboard(p)) return null;
     const dead = p.health <= 0 || p.state === 'dead';
     const key = characterKey(p.char, dead ? 'idle' : p.anim, p.direction, dead ? 0 : p.frame);
     return spriteStore[key] ?? faltar(key);

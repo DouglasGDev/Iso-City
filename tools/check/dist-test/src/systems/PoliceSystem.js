@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PoliceSystem = void 0;
 const GameConfig_1 = require("../game/GameConfig");
+const Player_1 = require("../entities/Player");
 const NPC_1 = require("../entities/NPC");
 const Vehicle_1 = require("../entities/Vehicle");
 const vehicles_1 = require("../data/vehicles");
@@ -673,7 +674,7 @@ class PoliceSystem {
             cop.shotCooldown = 0.25;
             return false;
         }
-        if (victim !== null && victim < t && ctx.player.currentVehicleId === null) {
+        if (victim !== null && victim < t && !(0, Player_1.isAboard)(ctx.player)) {
             t = victim;
             hit = true;
             if (ctx.health.damage(ctx.player, level >= 4 ? 10 : 7, ctx.time))
@@ -696,7 +697,7 @@ class PoliceSystem {
             return npc && !npc.dead && !npc.inVehicle && npc.state !== 'knocked' &&
                 this.sees(ctx, { x: npc.x, y: npc.y, dir: npc.dir }, GameConfig_1.GAME_CONFIG.ARREST_RANGE, 1);
         });
-        if (close && player.currentVehicleId === null && Math.hypot(player.vx, player.vy) < 0.5 && player.health > 0) {
+        if (close && !(0, Player_1.isAboard)(player) && Math.hypot(player.vx, player.vy) < 0.5 && player.health > 0) {
             player.arrestTimer += dt;
             if (player.arrestTimer >= GameConfig_1.GAME_CONFIG.ARREST_STAND_STILL_S) {
                 player.arrestTimer = 0;

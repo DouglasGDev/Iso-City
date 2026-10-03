@@ -682,7 +682,9 @@ test('rendered touch jump target works alongside joystick/run and clears on canc
   stubs[path.join(root, 'src/audio/SoundManager.ts')] = { sound: { isUnlocked: true } };
   stubs[path.join(root, 'src/assets/AssetManifest.ts')] = { ASSET_FILES: {} };
   stubs[path.join(root, 'src/ui/ActionIcons.tsx')] = new Proxy({}, { get: () => () => null });
-  const game = { weapons: { equipped: 'unarmed' }, player: { currentVehicleId: null } };
+  // `busUnit` faz parte do Player de verdade (entities/Player.ts): sem ele no boneco, o
+  // leitor de "a bordo" vê `undefined !== null` e esconde os botões de pedestre.
+  const game = { weapons: { equipped: 'unarmed' }, player: { currentVehicleId: null, busUnit: null } };
   stubs[path.join(root, 'src/game/GameState.ts')].getGame = () => game;
   const { ControlTouch } = source('ui/ControlTouch.tsx');
   const { ActionButtons } = source('ui/ActionButtons.tsx');
@@ -750,6 +752,30 @@ test('rendered touch jump target works alongside joystick/run and clears on canc
   };
   assert.deepEqual(labels(false), ['Acelerar', 'Frear']);
   assert.deepEqual(labels(true), ['Subir o helicóptero', 'Descer o helicóptero']);
+
+  // A bordo de uma linha da malha o jogador não está ao volante de um `Vehicle`, então o
+  // `driving` dele é falso e a única oferta da tela é a porta. Se a whitelist de toque for a
+  // de pedestre, o retângulo do DESEMBARCAR nunca é consultado e o canto vira CORRER: o
+  // passageiro aperta a porta e não acontece nada. As duas instâncias abaixo comparam as duas
+  // situações com o MESMO retângulo no MESMO ponto, para o check ver a falha que ele guarda.
+  const porta = { x: 290, y: 600, w: 84, h: 84 };
+  const montada = (props) => {
+    const ctx = ControlTouch({ ...props, children: null }).props.value;
+    effects.splice(0).forEach((effect) => effect()); // liga o `active` da instância nova
+    touchContext.value = ctx;
+    ctx.register('exit', porta);
+    return ctx;
+  };
+  montada({ driving: false, aboard: true });
+  down(7, 332, 642);
+  assert.equal(input.consumeEnter(), true, 'a porta do ônibus abre ao toque no DESEMBARCAR');
+  assert.equal(state.runHeld, false, 'a bordo o canto é a porta, não a corrida');
+  up(7); neutral();
+  montada({ driving: false, aboard: false });
+  down(8, 332, 642);
+  assert.equal(state.runHeld, true, 'a pé o canto continua sendo CORRER');
+  assert.equal(input.consumeEnter(), false, 'a pé não há porta para abrir');
+  up(8); input.resetActionInput(); input.resetJoystickInput(); neutral();
 });
 
 test('directional weapon slot defaults forward, latest edge wins and never conflicts with E/F/R', () => {

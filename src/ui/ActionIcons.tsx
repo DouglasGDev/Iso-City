@@ -77,6 +77,11 @@ export function IconCar(props: IconProps) {
   return <VectorIcon {...props} path="M4 10 L7 4 H17 L20 10 M3 10 H21 V18 H3 Z M7 10 H17 M6 14 H8 M16 14 H18 M5 18 V21 M19 18 V21" />;
 }
 
+/** Ônibus da malha: carroceria retangular, janelas e a porta do passeio. */
+export function IconBus(props: IconProps) {
+  return <VectorIcon {...props} path="M4 3 H20 V18 H4 Z M4 9 H20 M9 3 V9 M15 3 V9 M11 12 H15 V18 M6 18 V21 M18 18 V21" />;
+}
+
 export function IconHeli(props: IconProps) {
   return <VectorIcon {...props} path="M6 3 H21 M14 3 V7 M11 7 H16 Q21 7 21 12 V14 H9 L5 10 H2 V6 M5 10 H10 M16 7 V12 H21 M11 14 V19 M18 14 V19 M7 19 H21" />;
 }

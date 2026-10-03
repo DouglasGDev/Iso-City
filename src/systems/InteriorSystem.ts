@@ -1,5 +1,5 @@
 import { Map } from '../world/Map';
-import type { Player } from '../entities/Player';
+import { isAboard, type Player } from '../entities/Player';
 import type { Collider } from '../entities/types';
 import type { CityMapData } from '../data/maps/city';
 import { GUN_STORE_STOCK, FOOD_MENUS, type MenuId, type ShopItem } from '../data/shop';
@@ -297,7 +297,7 @@ export class InteriorSystem {
   }
 
   nearest(player: Player): Entrance | null {
-    if (player.currentVehicleId !== null || player.swimming || player.health <= 0) return null;
+    if (isAboard(player) || player.swimming || player.health <= 0) return null;
     let found: Entrance | null = null;
     let distance = 0.85;
     for (const entrance of this.entrances) {
@@ -339,7 +339,7 @@ export class InteriorSystem {
 
   interact(ctx: InteriorContext): boolean {
     const player = ctx.player;
-    if (this.transitionLock > 0 || player.currentVehicleId !== null || player.swimming || player.health <= 0) return false;
+    if (this.transitionLock > 0 || isAboard(player) || player.swimming || player.health <= 0) return false;
     if (!this.active) {
       const entrance = this.nearest(player);
       if (!entrance) return false;

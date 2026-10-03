@@ -71,6 +71,16 @@ function useDriving(live: boolean): boolean {
   );
 }
 
+/** A bordo de uma linha da malha: não há volante, há porta. O toque precisa saber disso. */
+function useAboard(live: boolean): boolean {
+  const game = live ? getGame() : null;
+  return useSyncExternalStore(
+    (cb) => (game ? game.subscribeEntityChange(cb) : () => undefined),
+    () => game !== null && game.player.busUnit !== null,
+    () => game !== null && game.player.busUnit !== null,
+  );
+}
+
 function useFlying(live: boolean): boolean {
   const game = live ? getGame() : null;
   return useSyncExternalStore(
@@ -162,6 +172,7 @@ export default function App() {
   const { booted, arm, error } = useBooted(playing, gameGen);
   const driving = useDriving(booted);
   const flying = useFlying(booted);
+  const aboard = useAboard(booted);
   const prev = useRef(driving);
   const suspended = !booted || screen !== 'playing' || paused || mapOpen || shopOpen || overlay !== null;
   const inputMode = useHardwareInput(suspended);
@@ -262,7 +273,7 @@ export default function App() {
               <SpriteProvider>
                 <GameCanvas suspended={suspended} />
                 {!suspended && inputMode === 'touch' ? (
-                  <ControlTouch driving={driving} flying={flying}>
+                  <ControlTouch driving={driving} flying={flying} aboard={aboard}>
                     {driving && !flying ? <VehicleSteer /> : <VirtualJoystick />}
                     <ActionButtons flying={flying} />
                     <HUD />

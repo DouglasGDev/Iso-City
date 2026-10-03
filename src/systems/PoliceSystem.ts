@@ -1,6 +1,6 @@
 import { GAME_CONFIG, type Dir4 } from '../game/GameConfig';
 import type { Map } from '../world/Map';
-import type { Player } from '../entities/Player';
+import { isAboard, type Player } from '../entities/Player';
 import { createNPC, type NPC } from '../entities/NPC';
 import { createVehicle, type Vehicle } from '../entities/Vehicle';
 import { VEHICLE_DEFS } from '../data/vehicles';
@@ -613,7 +613,7 @@ export class PoliceSystem {
       return crossing !== null && crossing < t && (victim === null || crossing < victim);
     });
     if (friendly) { cop.fireFlash = 0; cop.shotCooldown = 0.25; return false; }
-    if (victim !== null && victim < t && ctx.player.currentVehicleId === null) {
+    if (victim !== null && victim < t && !isAboard(ctx.player)) {
       t = victim; hit = true;
       if (ctx.health.damage(ctx.player, level >= 4 ? 10 : 7, ctx.time)) ctx.shake(0.16);
     } else if (barrier?.vehicle && barrier.vehicle.id === ctx.player.currentVehicleId) {
@@ -633,7 +633,7 @@ export class PoliceSystem {
       return npc && !npc.dead && !npc.inVehicle && npc.state !== 'knocked' &&
         this.sees(ctx, { x: npc.x, y: npc.y, dir: npc.dir }, GAME_CONFIG.ARREST_RANGE, 1);
     });
-    if (close && player.currentVehicleId === null && Math.hypot(player.vx, player.vy) < 0.5 && player.health > 0) {
+    if (close && !isAboard(player) && Math.hypot(player.vx, player.vy) < 0.5 && player.health > 0) {
       player.arrestTimer += dt;
       if (player.arrestTimer >= GAME_CONFIG.ARREST_STAND_STILL_S) { player.arrestTimer = 0; ctx.onBusted(); }
     } else player.arrestTimer = 0;

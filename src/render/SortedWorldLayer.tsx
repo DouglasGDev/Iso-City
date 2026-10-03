@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Group, Image, Path } from '@shopify/react-native-skia';
 import { useDerivedValue, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import { isAboard } from '../entities/Player';
 import { depthOf, ELEVATION_PX, worldToScreen } from '../world/IsoUtils';
 import { expandRect } from '../world/streaming/StreamingBounds';
 import type { FogView } from '../systems/FogSystem';
@@ -101,7 +102,7 @@ function visibleItems(game: GameState, statics: StaticNode[]): DrawItem[] {
     }
   }
   game.streaming.stats.drawnStatics = items.length;
-  if (game.player.currentVehicleId === null) {
+  if (!isAboard(game.player)) {
     items.push({ id: 'player', depth: depth(game.player.x, game.player.y) });
   }
   // Os candidatos vêm da grade de vizinhança, nunca da lista mundial: cada tipo tem seu

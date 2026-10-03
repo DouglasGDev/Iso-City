@@ -26,6 +26,13 @@ export interface SaveGame {
     wantedLevel: number;
     stamina: number;
     char: CharId;
+    /**
+     * Assento do jogador na malha, se ele ia a bordo de um ônibus. Opcional de propósito: um
+     * save sem o campo é um pedestre, então não é mudança de formato e não pede bump de
+     * versão. E não é nem preciso guardar a posição — o horário é função pura do `time` logo
+     * acima, então a unidade salva está exatamente no asfalto de onde o save foi tirado.
+     */
+    busUnit?: number | null;
   };
   weapons: {
     equipped: WeaponId;

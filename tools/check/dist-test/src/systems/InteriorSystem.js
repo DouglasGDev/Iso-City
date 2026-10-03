@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.InteriorSystem = void 0;
 const Map_1 = require("../world/Map");
+const Player_1 = require("../entities/Player");
 const shop_1 = require("../data/shop");
 const GameConfig_1 = require("../game/GameConfig");
 const jail_1 = require("../data/jail");
@@ -237,7 +238,7 @@ class InteriorSystem {
             this.message = '';
     }
     nearest(player) {
-        if (player.currentVehicleId !== null || player.swimming || player.health <= 0)
+        if ((0, Player_1.isAboard)(player) || player.swimming || player.health <= 0)
             return null;
         let found = null;
         let distance = 0.85;
@@ -285,7 +286,7 @@ class InteriorSystem {
     }
     interact(ctx) {
         const player = ctx.player;
-        if (this.transitionLock > 0 || player.currentVehicleId !== null || player.swimming || player.health <= 0)
+        if (this.transitionLock > 0 || (0, Player_1.isAboard)(player) || player.swimming || player.health <= 0)
             return false;
         if (!this.active) {
             const entrance = this.nearest(player);

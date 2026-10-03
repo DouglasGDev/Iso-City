@@ -130,10 +130,12 @@ function fallbackDriving(
 export function ControlTouch({
   driving,
   flying = false,
+  aboard = false,
   children,
 }: {
   driving: boolean;
   flying?: boolean;
+  aboard?: boolean;
   children: ReactNode;
 }) {
   const insets = useControlInsets();
@@ -182,11 +184,17 @@ export function ControlTouch({
 
   const hitTest = useCallback(
     (px: number, py: number): HitId | null => {
+      // A whitelist é o que a tela oferece: um id fora dela não é consultado no `boxes` e o
+      // toque escapa para o fallback. Por isso a bordo precisa da própria lista — o passageiro
+      // tem `driving` falso (ele não está ao volante de um `Vehicle`), mas o botão que ele vê
+      // é o DESEMBARCAR, e sem 'exit' aqui o toque caía no canto de CORRER.
       const order: HitId[] = flying
         ? ['pause', 'map', 'brake', 'accel', 'exit', 'horn']
         : driving
           ? ['pause', 'map', 'brake', 'accel', 'exit', 'horn', 'left', 'right']
-          : ['pause', 'map', 'interact', 'enter', 'weaponPrev', 'weapon', 'reload', 'crouch', 'jump', 'aim', 'attack', 'run'];
+          : aboard
+            ? ['pause', 'map', 'exit']
+            : ['pause', 'map', 'interact', 'enter', 'weaponPrev', 'weapon', 'reload', 'crouch', 'jump', 'aim', 'attack', 'run'];
       let best: HitId | null = null;
       let bestD = Infinity;
       for (const id of order) {
@@ -203,14 +211,15 @@ export function ControlTouch({
       if (best) return best;
       if (!driving || flying) {
         const { width, height } = Dimensions.get('window');
-        // fallback CORRER (canto inferior direito) se o hitbox não registrou
-        if (px > width - insets.right - 130 && py > height - insets.bottom - 130) return 'run';
+        // fallback CORRER (canto inferior direito) se o hitbox não registrou. A bordo não há
+        // para que correr — o corpo é do ônibus —, então o canto é só do DESEMBARCAR.
+        if (!aboard && px > width - insets.right - 130 && py > height - insets.bottom - 130) return 'run';
         if (px < width * 0.48 && py > height * 0.16) return 'joy';
         return null;
       }
       return fallbackDriving(px, py, insets.left, insets.right, insets.bottom);
     },
-    [driving, flying, insets.left, insets.right, insets.bottom],
+    [driving, flying, aboard, insets.left, insets.right, insets.bottom],
   );
 
   const activate = useCallback(
@@ -361,6 +370,10 @@ export function ControlTouch({
     [dispatchDown, dispatchMove, dispatchUp, dispatchCancel],
   );
 
+  // Só a troca de superfície (a pé ↔ volante ↔ voo) libera os dedos: ela monta outro conjunto
+  // de controles. `aboard` não entra aqui de propósito — passageiro e pedestre usam o mesmo
+  // joystick, e com ele na lista o notify do streaming ao virar a esquina derrubava o
+  // empurrão no instante em que a porta abria, congelando quem acabou de descer do ônibus.
   useEffect(() => {
     const currentPointers = pointers.current;
     active.current = true;
