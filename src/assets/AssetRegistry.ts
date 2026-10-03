@@ -114,3 +114,38 @@ export function isUsableAsset(key: string): boolean {
 }
 
 export const ASSETS_TO_LOAD: string[] = Object.keys(ASSET_FILES).filter(isUsableAsset);
+
+/**
+ * Ordem do carregamento na tela de espera. O chão está sob tudo o que o primeiro quadro
+ * desenha, o personagem é quem anda em cima dele, e a arma só aparece quando alguém atira:
+ * na ordem do manifesto os últimos arquivos seriam justamente os que a câmera mais cedo
+ * precisa, e a espera é pelos 543 inteiros.
+ */
+export function cargaPrioridade(key: string): number {
+  if (key.startsWith('Roads and Grounds/')) return 0;
+  if (key.startsWith('Characters/')) return 1;
+  if (key.startsWith('Buildings/')) return 2;
+  if (key.startsWith('Vehicles/')) return 3;
+  if (key.startsWith('Props/')) return 4;
+  return 5;
+}
+
+/**
+ * A fila ordenada: é a ordem do `SpriteProvider`, e o desempate por nome deixa a sequência
+ * estável entre duas aberturas do mesmo jogo.
+ */
+export const CARREGAMENTO: string[] = ASSETS_TO_LOAD
+  .map((key) => [key, cargaPrioridade(key)] as const)
+  .sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1))
+  .map(([key]) => key);
+
+/** O conjunto que a tela de espera ainda segura: o chão e os personagens. */
+export const CARREGAMENTO_ESSENCIAL: string[] =
+  CARREGAMENTO.filter((key) => cargaPrioridade(key) <= 1);
+
+/**
+ * Posição de cada arquivo na fila. É como o `SpriteProvider` sabe se um pedido da cena já
+ * estava no lote em voo — e só desconta do lote o que realmente ainda não saiu.
+ */
+export const RANGO_NA_FILA: Map<string, number> =
+  new Map(CARREGAMENTO.map((key, i) => [key, i]));
