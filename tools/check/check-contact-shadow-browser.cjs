@@ -122,6 +122,13 @@ async function test(name, fn) {
   await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...botao, id: 1 }] });
   await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await until('document.body.innerText.includes("HP 100")', 'HUD', 60000);
+  // O mundo abre com a fila de sprites ainda correndo, e esta medição é pixel por pixel contra
+  // o frame exato do player: sem a fila pousada, a ponte não acharia a arte e o quadro sairia
+  // sem sombra por motivo nenhum. A espera é da fila, não do jogo.
+  await until(`(()=>{const ms=[...__r.getModules().values()].filter(m=>m.isInitialized)
+      .map(m=>m.publicModule.exports);const store=ms.find(m=>m?.spriteStore).spriteStore;
+    return ms.find(m=>m?.CARREGAMENTO).CARREGAMENTO.every((k)=>!!store[k])})()`,
+    'fila de sprites fechada', 180000);
 
   // Ponte: o jogo, a projeção iso e a ARTE do player — tudo do bundle que está desenhando.
   // Refazer a conta da sombra no arquivo do teste seria provar outra coisa.

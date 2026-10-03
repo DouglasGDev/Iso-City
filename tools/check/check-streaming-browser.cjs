@@ -199,7 +199,25 @@ function caixa(png, cx, cy, rx, ry) {
       for (const v of g.vehicles) if (v.state !== 'destroyed') { afasta(v); v.speed = 0; }
     };
     q.devolve = () => { for (const s of q.guardado || []) { s.o.x = s.x; s.o.y = s.y; } q.guardado = []; };
-    q.tudoCarregado = () => g.streaming.stats.loadedChunks >= g.streaming.neededChunks.length;
+    // Três armadilhas no "o anel fechou", cada uma medida numa corrida desta sessão:
+    // 1) depois de um teleporte o visibleChunks AINDA é o do lugar anterior — o tick de streaming é
+    //    quem refaz a conta, ~125 ms depois. Consultado nesse intervalo, o oráculo conta o anel
+    //    velho, não acha nó faltando nenhum e devolve verde antes de a quadra nova entrar na
+    //    medição (medido: 42 carregados de 56 necessários e 101 nós fora da tela logo depois).
+    //    Exigir que o chunk sob a câmera esteja no anel fecha essa janela.
+    // 2) comparar só contadores de cache não prova nada: loadedChunks é o tamanho do LRU, que chega
+    //    ao salto ainda cheio de chunks de outro lugar. O oráculo nó por nó é o que fecha a conta.
+    // 3) mas "nada falta" é verdade por vacuidade quando ainda não chegou sprite nenhum do anel: o
+    //    esperado cresce conforme a fila, e numa leitura 2,5 s depois os prédios que chegaram estão
+    //    em chunks que ainda adiam (medido: esperado 12, falta 12, carregados 0). Então se espera
+    //    também o bake de cada chunk necessário, com conteúdo de verdade na tela.
+    q.tudoCarregado = () => {
+      const s = g.streaming;
+      if (s.visibleChunks.indexOf(s.index.at(g.camera.x, g.camera.y)) < 0) return false;
+      if (s.stats.loadedChunks < s.neededChunks.length) return false;
+      const o = q.oraculo();
+      return o.esperado > 0 && o.falta === 0;
+    };
   })()`);
 
   const cfg = await evaluate('({chunk:qa.cfg.CHUNK_SIZE, ativo:qa.cfg.ACTIVE_RADIUS_TILES, '
@@ -213,6 +231,11 @@ function caixa(png, cx, cy, rx, ry) {
   // ---- 1. A tela cheia de cidade desenha uma fração dela -------------------------------
   await evaluate('qa.cena()');
   const centro = await evaluate('({x:qa.g.player.x,y:qa.g.player.y})');
+  // O mundo agora abre com a fila de sprites ainda correndo, então o anel pode levar alguns
+  // segundos a mais para assar na primeira leitura. Se espera o anel fechar de propósito: o que
+  // se quer provar aqui é "parado, nada falta", não "parado, ainda está chegando" — a chegada
+  // rápida é o que o check-boot mede.
+  await until('qa.tudoCarregado()', 'anel completo na partida', 40000);
   await delay(2500);
   const parado = await evaluate('qa.oraculo()');
   assert.ok(parado.chunks > 0 && parado.esperado > 0, `a câmera precisa ter o que ver: ${JSON.stringify(parado)}`);
@@ -475,7 +498,21 @@ function caixa(png, cx, cy, rx, ry) {
   assert.ok(vivo.npcs > 20 && vivo.carros > 20, `o mundo esvaziou: ${JSON.stringify(vivo)}`);
   await delay(900);
   // Só os pedestres da vizinhança valem como prova: o que dorme longe da câmera NÃO anda, e é
-  // exatamente assim que a §5 funciona.
+  // exatamente assim que a §5 funciona. E a vizinhança se busca como na §7: o miolo denso é denso
+  // de prédios, não de gente, e medir um raio de 26 tiles em cima do lote mais cheio do mapa
+  // cobraria IA acordada onde nunca houve calçada. Encosta a câmera no pedestre vivo mais perto,
+  // mas exige que ele ainda esteja na região do miolo — multidão espalhada do outro lado do mundo
+  // não seria "o mundo acordado aqui".
+  const vizinho = await evaluate(`(() => {const g=qa.g; let best=null;
+    for (const n of g.npcs) { if (n.dead || n.inVehicle) continue;
+      const d = Math.hypot(n.x-g.camera.x, n.y-g.camera.y);
+      if (!best || d<best.d) best={x:n.x,y:n.y,d}; }
+    if (best && best.d > 20) { qa.parar(best.x,best.y); qa.cena(); qa.g.paused=false; }
+    return best;})()`);
+  assert.ok(vizinho, 'o mundo terminou sem um único pedestre vivo');
+  assert.ok(vizinho.d <= 60, `o pedestre vivo mais perto estava a ${vizinho.d.toFixed(0)} tiles do miolo denso: `
+    + 'a multidão não acompanhou a câmera até o fim da corrida');
+  await delay(400);
   const mexeu = await evaluate(`(() => {const g=qa.g;
     const andam=g.npcs.filter((n)=>!n.dead&&!n.inVehicle&&Math.hypot(n.x-g.camera.x,n.y-g.camera.y)<26).slice(0,40);
     const antes=andam.map((n)=>n.x+','+n.y);
@@ -485,7 +522,8 @@ function caixa(png, cx, cy, rx, ry) {
     `nenhum pedestre se mexeu perto da câmera no fim da corrida (${JSON.stringify(mexeu)}): a simulação parou de acordar`);
   console.log(`OK mundo vivo: ${vivo.npcs} pedestres, ${vivo.carros} carros, ${vivo.bichos} bichos, `
     + `${vivo.coletaveis} coletáveis, missão ${vivo.missao}, procurado ${vivo.procurado}, clima ${vivo.clima}, `
-    + `hora ${vivo.dia}, tempo ${vivo.tempo}s — ${mexeu.mexidos}/${mexeu.total} pedestres vizinhos andaram`);
+    + `hora ${vivo.dia}, tempo ${vivo.tempo}s — ${mexeu.mexidos}/${mexeu.total} pedestres vizinhos andaram `
+    + `(o mais perto estava a ${vizinho.d.toFixed(0)} tiles do miolo)`);
 
   assert.deepEqual(errors, [], `erros de página: ${errors.slice(0, 3).join(' | ')}`);
   console.log('Streaming browser checks passed; screenshots in tools/tmp/qa-streaming-*.png');
