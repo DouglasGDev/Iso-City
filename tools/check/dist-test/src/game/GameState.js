@@ -40,6 +40,7 @@ const WeatherSystem_1 = require("../systems/WeatherSystem");
 const SnowSystem_1 = require("../systems/SnowSystem");
 const HazardSystem_1 = require("../systems/HazardSystem");
 const CascadeSystem_1 = require("../systems/CascadeSystem");
+const TransportSystem_1 = require("../systems/TransportSystem");
 const DestructionSystem_1 = require("../systems/DestructionSystem");
 const FogSystem_1 = require("../systems/FogSystem");
 const AmbientSystem_1 = require("../systems/AmbientSystem");
@@ -160,12 +161,15 @@ class GameState {
             onReload: () => SoundManager_1.sound.play('weaponReload', 0.4),
             onEmpty: () => SoundManager_1.sound.play('weaponEmpty', 0.4),
         };
-        this.map = new Map_1.Map((0, city_1.generateCity)());
+        this.map = new Map_1.Map((0, city_1.generateCity)(city_1.WORLD_SEED));
         // O índice dos estáticos nasce do mapa pronto e nunca mais muda: é ele que responde
         // "o que esta quadra tem?" sem percorrer as 4.451 estáticas da cidade inteira.
         this.streaming = new WorldStreamingManager_1.WorldStreamingManager(new ChunkIndex_1.ChunkIndex(this.map.data));
         this.spatial = new SpatialIndex_1.SpatialIndex(this.map.data.worldW, this.map.data.worldH);
         this.cascade = new CascadeSystem_1.CascadeSystem(this.map.data);
+        // A malha de transporte é lida do mapa pronto, do mesmo jeito que o índice de chunks:
+        // derives do que o gerador pôs no chão, nunca de uma lista de pontos no código.
+        this.transport = new TransportSystem_1.TransportSystem(this.map, city_1.WORLD_SEED);
         this.wildlife.init(this.map);
         this.interiors = new InteriorSystem_1.InteriorSystem(this.map);
         // A cadeia fala pela sala, mas quem decide é o JailSystem — laço de função, não de import.
@@ -420,6 +424,9 @@ class GameState {
             ? { ...this.player, x: this.worldPosition.x, y: this.worldPosition.y, vx: 0, vy: 0, speed: 0, invulnUntil: Infinity }
             : this.player;
         this.trafficSystem.update(this.map, this.npcs, this.vehicles, dt, outdoorPlayer, this.streaming);
+        // O horário da cidade é o relógio da cidade: o sistema recebe o tempo do jogo, não um
+        // intervalo, então morrer ou entrar numa sala não atrasa nenhum ônibus.
+        this.transport.update(this.time, outdoorPlayer.x, outdoorPlayer.y, this.streaming);
         this.updateNpcs(dt, outdoorPlayer);
         this.witnesses.update(dt, this.witnessContext(outdoorPlayer));
         outdoorPlayer.wantedLevel = this.player.wantedLevel;
