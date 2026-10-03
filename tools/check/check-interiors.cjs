@@ -221,6 +221,7 @@ interiors.leave(p); interiors.update(0.6);
 const food = interiors.entrances.find((e) => e.service === 'food');
 assert.ok(food, 'accessible food establishment');
 p.x = food.x; p.y = food.y; p.health = 50; p.money = 100; p.stamina = 0.2;
+p.facingAngle = food.facing;
 assert.ok(interiors.interact(ctx));
 const restaurant = interiors.active;
 assert.ok(restaurant.furniture.some((f) => f.id === 'seat-a'));
@@ -241,6 +242,16 @@ assert.equal(interiors.buy(dish.id, ctx), false, 'sem fome não se vende prato')
 assert.equal(interiors.message, 'Sem fome');
 interiors.leave(p); interiors.update(0.6);
 assert.equal(p.facingAngle, food.facing);
+// A âncora devolve a orientação com que o jogador pediu a porta, não a do batente: quem
+// entra de costas para a calçada sai de costas. Antes isto só passava por coincidência —
+// a orientação do teste vinha em cadeia da última sala fechada, e um mapa novo trocava o
+// azar de passar ou não.
+p.facingAngle = food.facing + Math.PI;
+p.x = food.x; p.y = food.y;
+assert.ok(interiors.interact(ctx));
+interiors.leave(p); interiors.update(0.6);
+assert.equal(p.facingAngle, food.facing + Math.PI, 'sair devolve a orientação de quem entrou');
+assert.equal(p.x, food.x); assert.equal(p.y, food.y);
 p.x = interiors.entrances[0].x; p.y = interiors.entrances[0].y;
 for (const patch of [{ currentVehicleId: 0 }, { swimming: true }, { health: 0 }]) {
   Object.assign(p, { currentVehicleId: null, swimming: false, health: 100 }, patch);
