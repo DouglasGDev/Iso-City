@@ -11,6 +11,7 @@ import { terrain } from './TerrainSystem';
 import { sound } from '../audio/SoundManager';
 import { TrafficSignalSystem, type TrafficSignal } from './TrafficSignalSystem';
 import { pedestrianCrossingIntent } from './NPCSystem';
+import { TIER, type WorldStreamingManager } from '../world/streaming/WorldStreamingManager';
 
 interface TrafficVehicle {
   vehicle: Vehicle;
@@ -46,7 +47,8 @@ export class TrafficSystem {
   readonly signalSystem = new TrafficSignalSystem();
   private vehicleGrid = new Map<number, Vehicle[]>();
   private npcGrid = new Map<number, NPC[]>();
-  private simulated = new Set<Vehicle>();
+  /** Carimbo do tick: é o relógio que escalona o anel distante do trânsito. */
+  private frame = 0;
   /** Renderer data; advanced once per traffic update, never by the renderer/NPCs. */
   get signals() { return this.signalSystem.signals; }
   private rng: () => number;
@@ -55,9 +57,17 @@ export class TrafficSystem {
     this.rng = this.mulberry32(seed);
   }
 
-  private static rebuild<T>(grid: Map<number, T[]>, items: T[], x: (item: T) => number, y: (item: T) => number) {
+  private static rebuild<T>(
+    grid: Map<number, T[]>,
+    items: T[],
+    x: (item: T) => number,
+    y: (item: T) => number,
+    /** Pula o item na hora do empurrão: quem chama não precisa criar array filtrado antes. */
+    skip?: (item: T) => boolean,
+  ) {
     for (const bucket of grid.values()) bucket.length = 0;
     for (const item of items) {
+      if (skip?.(item)) continue;
       const key = cellKey(cellOf(x(item)), cellOf(y(item)));
       const bucket = grid.get(key);
       if (bucket) bucket.push(item); else grid.set(key, [item]);
@@ -187,32 +197,59 @@ export class TrafficSystem {
   /** Rebuilds the proximity indexes once per frame; every look-ahead is shorter than GRID_CELL. */
   private syncGrids(vehicles: Vehicle[], npcs: NPC[]) {
     TrafficSystem.rebuild(this.vehicleGrid, vehicles, (v) => v.x, (v) => v.y);
-    TrafficSystem.rebuild(this.npcGrid, npcs.filter((n) => !n.dead && !n.inVehicle), (n) => n.x, (n) => n.y);
-    this.simulated.clear();
-    for (const v of vehicles) this.simulated.add(v);
+    // O filtro de quem está a pé vivia num `npcs.filter` que criava um array de 400 posições
+    // a cada tick. Agora o `rebuild` pula o item na hora do empurrão: mesma grade, zero lixo.
+    TrafficSystem.rebuild(this.npcGrid, npcs, (n) => n.x, (n) => n.y, (n) => n.dead || n.inVehicle);
   }
 
-  update(map: WorldMap, npcs: NPC[], vehicles: Vehicle[], dt: number, player: Player) {
+  update(
+    map: WorldMap,
+    npcs: NPC[],
+    vehicles: Vehicle[],
+    dt: number,
+    player: Player,
+    /** As zonas do mundo. Sem ela (testes, mapa pequeno) todo carro dirige como antes. */
+    streaming?: WorldStreamingManager,
+  ) {
     if (!Number.isFinite(dt) || dt <= 0) return;
     this.syncGrids(vehicles, npcs);
     this.signalSystem.update(map, dt);
+    this.frame++;
+    // Compacta no lugar: `filter` devolvia um array novo de até 56 motoristas por tick, que é
+    // exatamente o tipo de lixo que o coletor ia catar no meio do frame.
+    let kept = 0;
     for (const tv of this.traffic) {
       if (tv.state === 'stolen' || tv.state === 'parked') continue;
       const v = tv.vehicle;
-      if (!this.simulated.has(v) || v.state === 'destroyed' || v.health <= 0) {
+      if (v.state === 'destroyed' || v.health <= 0) {
         tv.state = 'parked';
         v.speed = 0;
         if (tv.driver) { tv.driver.inVehicle = false; tv.driver.vehicleId = null; tv.driver = null; }
         continue;
       }
       if (player.currentVehicleId === v.id) { this.takeOver(v.id); continue; }
-      this.updateTrafficVehicle(tv, map, dt, player);
-      if (tv.driver) {
-        tv.driver.x = v.x; tv.driver.y = v.y;
-        tv.driver.lastX = v.x; tv.driver.lastY = v.y;
+      // Quem está fora da área de streaming para de receber decisão, mas NÃO é estacionado nem
+      // esvaziado: posição, rota, motorista e dano ficam exatamente onde estavam, para o carro
+      // voltar a andar quando o jogador cruzar a zona de novo. O anel de pedestre congela na
+      // mesma distância (ACTIVE_RADIUS), então quem dirige e quem anda continuam no mesmo mundo.
+      const tier = streaming ? streaming.tierOf(v.x, v.y) : TIER.ACTIVE;
+      // No anel distante o motorista continua dirigindo, só que a cada poucos frames: o passo é
+      // o dt de sempre, então ele anda mais devagar em vez de saltar um tile inteiro por vez.
+      // O `+ v.id` desencala a frota — um frame dado atualiza um quarto de cada carro, não um
+      // quarto dos carros todos de uma vez.
+      const dirige = tier === TIER.OUTSIDE ? false
+        : tier === TIER.DISTANT
+          ? (this.frame + v.id) % GAME_CONFIG.VEHICLE_SIM_TICK_DIVISOR === 0 : true;
+      if (dirige) {
+        this.updateTrafficVehicle(tv, map, dt, player);
+        if (tv.driver) {
+          tv.driver.x = v.x; tv.driver.y = v.y;
+          tv.driver.lastX = v.x; tv.driver.lastY = v.y;
+        }
       }
+      this.traffic[kept++] = tv;
     }
-    this.traffic = this.traffic.filter((tv) => tv.state !== 'stolen' && tv.state !== 'parked');
+    this.traffic.length = kept;
   }
 
   private signalStopDistance(tv: TrafficVehicle, map: WorldMap): number {

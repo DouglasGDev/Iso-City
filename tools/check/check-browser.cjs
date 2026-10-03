@@ -300,12 +300,21 @@ async function exposeGame() {
   await evaluate('qa.plays=[];qa.origPlay=qa.sound.play;qa.sound.play=function(k,v){qa.plays.push([k,v]);return qa.origPlay.call(qa.sound,k,v)}');
   assert.ok(await evaluate('!!document.querySelector("[data-testid=control-horn]")'), 'the horn button must mount while driving');
   const loudHorns = () => evaluate('qa.plays.filter(([k,v])=>k==="carHorn"&&v>0.8).length');
-  await tap('[data-testid="control-horn"]');
-  await delay(140);
-  assert.equal(await loudHorns(), 1, 'the driver horn must sound once per tap');
-  await tap('[data-testid="control-horn"]');
+  const pontoBuzina = await center('[data-testid="control-horn"]');
+  await tapPoint(pontoBuzina);
+  await until('qa.plays.filter(([k,v])=>k==="carHorn"&&v>0.8).length===1', 'a buzina soa no toque', 5000);
+  assert.ok(await evaluate('qa.g.hornCooldown > 0'), 'a buzina precisa de cooldown ou o martelo do volante vira sirene');
+  // O re-toque é medido no relógio do jogo, não no de parede. Os 70+180ms do `tapPoint` somados ao
+  // round-trip do CDP caiam em ~570ms depois da primeira buzina, contra um cooldown de 550ms: a
+  // margem era de 20ms e o teste acusava o produto de não ter cooldown nenhum. Um par
+  // start/end sem espera chega ~40ms depois, e a espera do cooldown vira uma asserção.
+  await touches('touchStart', [{ ...pontoBuzina, id: 1 }]);
+  await touches('touchEnd', []);
   await delay(140);
   assert.equal(await loudHorns(), 1, 'the horn cooldown must swallow an instant re-tap');
+  await until('qa.g.hornCooldown <= 0', 'o cooldown da buzina expira', 5000);
+  await tapPoint(pontoBuzina);
+  await until('qa.plays.filter(([k,v])=>k==="carHorn"&&v>0.8).length===2', 'a buzina volta depois do cooldown', 5000);
   await evaluate('qa.sound.play=qa.origPlay');
   await tap('[data-testid="control-exit"]');
   await until('qa.g.player.currentVehicleId===null', 'vehicle exit');
@@ -559,30 +568,32 @@ async function exposeGame() {
   await evaluate('qa.pad=null');
   await until('qa.input.magnitude===0 && !qa.input.runHeld','gamepad disconnect reset');
   console.log('OK emulated Xbox Standard mapping: left stick walks, LT+right stick aims, RT fires, sprint, pause/resume and disconnect; no physical controller tested');
-  // #156: `pointerEvents` e `style.tintColor` passaram a viver no lugar certo, e o `clock.value`
-  // do WildlifeSprite saiu do render. O único aviso que fica é o do `textShadow*`: o
-  // react-native-web pede `textShadow`, propriedade que o RN 0.81 não tem — trocá-la deixaria o
-  // texto sem sombra no aparelho.
-  const proibidos = avisos.filter((a) => /pointerEvents|Reading from `value`|style\.tintColor/.test(a));
+  // #156: `pointerEvents` e `style.tintColor` passaram a viver no lugar certo, o `clock.value`
+  // do WildlifeSprite saiu do render, e a sombra de texto migrou para `readableShadow`, que dá
+  // `textShadow` ao react-native-web e as três propriedades antigas ao nativo. Não sobra nenhum
+  // aviso de estilo: cada lado recebe a API que ele de fato aplica.
+  const proibidos = avisos.filter((a) => /pointerEvents|Reading from `value`|style\.tintColor|textShadow/.test(a));
   // Um console "limpo" também é o que um listener morto imprime. Injeta um aviso conhecido e
   // exige que ele chegue: sem esta prova a contagem zero não significaria nada.
   await evaluate('console.warn("PROVA-156 listener vivo")');
   await delay(120);
   assert.ok(avisos.some((a) => a.includes('PROVA-156')), 'o harness precisa captar console.warn — listener morto fingiria console limpo');
   assert.deepEqual(proibidos, [], `avisos que não podem existir: ${proibidos.slice(0, 3).join(' | ')}`);
-  const sombras = avisos.filter((a) => /textShadow/.test(a));
-  assert.ok(sombras.length >= 1, `textShadow deveria aparecer (o aviso que decidimos manter): ${sombras.length}`);
-  assert.ok(sombras.length <= 2, `textShadow é warnOnce por carga de página, não pode repetir: ${sombras.length}`);
-  // A régua é total, não de três olhos: qualquer aviso que não seja o textShadow mantido de
-  // propósito (nem o da própria prova) precisa aparecer aqui, senão um novo passa mudo.
-  const novidades = [...new Set(avisos.filter((a) => !/textShadow|PROVA-156/.test(a)))];
+  // A sombra trocou de API, não desapareceu: o relógio do HUD continua com text-shadow no CSS
+  // final, com o mesmo desvio e o mesmo desfoque de antes da migração.
+  const sombra = await evaluate('(() => {const e=document.querySelector("[data-testid=hud-clock]");'
+    + 'return e ? getComputedStyle(e).textShadow : "sem elemento";})()');
+  assert.ok(/3px/.test(sombra) && !/none/.test(sombra), `a sombra do texto precisa continuar aplicada: ${sombra}`);
+  // A régua é total: todo aviso que não seja o da própria prova precisa aparecer aqui, senão um
+  // novo passa mudo.
+  const novidades = [...new Set(avisos.filter((a) => !/PROVA-156/.test(a)))];
   const culpadas = pilhas.filter((p) => novidades.some((a) => p.startsWith(a.slice(0, 60))));
   // Sem correspondência, a última pilha captada ainda é a pista mais próxima do aviso.
   const mostradas = culpadas.length ? culpadas : pilhas.slice(-3);
   const onde = novidades.map((a) => `após [${fases[avisos.indexOf(a)] || 'boot'}] ${a.slice(0, 90)}`);
   assert.deepEqual(novidades, [], `avisos novos no console:\n${onde.join('\n')}\n`
     + `pilha do componente:\n${mostradas.join('\n---\n')}`);
-  console.log(`OK console: ${avisos.length} avisos, listener provado, nenhum de pointerEvents/shared value/tintColor, ${sombras.length} de textShadow (mantido de propósito, uma carga por vez)`);
+  console.log(`OK console: ${avisos.length} avisos, listener provado, nenhum de pointerEvents/shared value/tintColor/textShadow, sombra do relógio aplicada (${sombra})`);
   assert.deepEqual(errors.filter(e=>!e.includes('favicon.ico')), []);
   console.log('Browser checks passed; screenshots in tools/tmp/qa-*.png');
 })().catch(async (error) => {

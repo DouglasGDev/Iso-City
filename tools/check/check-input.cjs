@@ -842,6 +842,9 @@ test('cash bundles share cached 3D paths; simulation clock rotates and floats wi
   const { MarkerLayer } = source('render/MarkerLayer.tsx');
   const clock = { value: 0 };
   const game = { fog: { view: () => ({}), intersects: () => true },
+    // O marcador só desenha coletável dentro da área visível; aqui a névoa é "sempre", e o
+    // que se mede é o caminho 3D emprestado, não o recorte.
+    streaming: { isInView: () => true, zones: { visible: { minX: -1e3, minY: -1e3, maxX: 1e3, maxY: 1e3 } } },
     map: { heightAt: () => 0, heightSmoothAt: () => 0 },
     pickups: { items: [{ id: 0, active: true, kind: 'cash', x: 1, y: 1 }] },
     missions: { state: { phase: 'break' } }, destruction: { wrecks: [] } };

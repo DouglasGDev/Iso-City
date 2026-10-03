@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { useGameStore } from '../stores/useGameStore';
 import { getGame } from '../game/GameState';
+import { readableShadow } from './textShadow';
 
 export function RoundOverlay() {
   const overlay = useGameStore((s) => s.overlay);
@@ -42,9 +43,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 10,
     color: '#fff',
-    textShadowColor: 'rgba(0,0,0,0.9)',
-    textShadowOffset: { width: 0, height: 3 },
-    textShadowRadius: 12,
+    ...readableShadow('rgba(0,0,0,0.9)', 0, 3, 12),
   },
   bustedText: {
     color: '#8ab4ff',
@@ -57,8 +56,6 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.85)',
     fontSize: 13,
     fontWeight: '700',
-    textShadowColor: 'rgba(0,0,0,0.8)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    ...readableShadow('rgba(0,0,0,0.8)', 0, 1, 3),
   },
 });

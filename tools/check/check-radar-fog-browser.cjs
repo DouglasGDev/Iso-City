@@ -58,15 +58,27 @@ async function test(name, fn) {
   catch (error) { falhou++; process.exitCode = 1; console.error('FAIL ' + name + '\n' + (error.stack || error.message)); }
 }
 
-/** Fração do recorte que é exatamente o vazio do mapa: #15212c (não explorado) e #0c141d. */
+/**
+ * As cores do vazio vêm lidas do produto (MAP_COLORS), nunca escritas aqui. O que o quadro
+ * devolve é a paleta do canvas transformada pelo Chrome: o buffer de desenho do Skia web nasce
+ * em `display-p3` (medido com `gl.drawingBufferColorSpace` na página), então a captura converte
+ * cada pixel P3 para sRGB e #15212c chega como rgb(17,33,45) — 4 de vermelho acima. A DOM do
+ * painel (o ponto da legenda) continua exata, o que prova que o desvio é do canvas, não do mapa.
+ * Comparar por canal com folga é o que `check-browser.cjs` já faz (`nearPixel`); igualar bytes
+ * era comparar com a sorte do perfil de cor de quem ligou o Chrome.
+ */
+const FOLGA_COR = 8;
+let PALETA = { ne: [21, 33, 44], bg: [12, 20, 29] };
+const perto = (png, k, alvo) => alvo.every((canal, i) => Math.abs(png.data[k + i] - canal) <= FOLGA_COR);
+
+/** Fração do recorte que é o vazio do mapa: terra não explorada (#15212c) e o fundo dele. */
 function vazio(png, rect) {
   const x0 = Math.round(rect.x), y0 = Math.round(rect.y), total = rect.width * rect.height;
   let ne = 0, bg = 0;
   for (let y = 0; y < rect.height; y++) {
     for (let x = 0; x < rect.width; x++) {
       const k = (png.width * (y0 + y) + x0 + x) << 2;
-      const c = [png.data[k], png.data[k + 1], png.data[k + 2]].join(',');
-      if (c === '21,33,44') ne++; else if (c === '12,20,29') bg++;
+      if (perto(png, k, PALETA.ne)) ne++; else if (perto(png, k, PALETA.bg)) bg++;
     }
   }
   return { ne: ne / total, bg: bg / total, frac: (ne + bg) / total };
@@ -95,8 +107,7 @@ function pingo(png, rect) {
       if (dx * dx + dy * dy > 100) continue;
       total++;
       const k = (png.width * py + px) << 2;
-      const c = [png.data[k], png.data[k + 1], png.data[k + 2]].join(',');
-      if (c === '21,33,44' || c === '12,20,29') escuro++;
+      if (perto(png, k, PALETA.ne) || perto(png, k, PALETA.bg)) escuro++;
     }
   }
   return { n, cx: +cx.toFixed(1), cy: +cy.toFixed(1),
@@ -227,6 +238,11 @@ function pingo(png, rect) {
     })()`);
 
   const box = await evaluate('qa.box()');
+  // A paleta é lida do módulo que pinta o mapa: se o produto trocar o cinza da névoa, o check
+  // acompanha — e continua impossível ele passar com um quadro que não tem névoa nenhuma.
+  PALETA = await evaluate(`(()=>{const hex=(h)=>[0,2,4].map((i)=>parseInt(h.slice(i+1,i+3),16));
+    return{ne:hex(qa.pres.MAP_COLORS.unknown),bg:hex(qa.pres.MAP_COLORS.background)}})()`);
+  console.log('paleta do vazio (MAP_COLORS):', JSON.stringify(PALETA));
   assert.ok(box.width >= 78 && box.width <= 92, `o painel do radar não é o quadrado esperado: ${box.width}x${box.height}`);
   // O miolo, fora da moldura de 1,5px: é aí que a cor do mapa é lida. O centro do painel é o
   // mesmo dos dois jeitos, porque a moldura é simétrica.

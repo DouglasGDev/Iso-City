@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, memo } from 'react';
-import { Platform } from 'react-native';
 import {
   BlendMode, ClipOp, Picture, Skia, VertexMode,
   type SkCanvas, type SkColor, type SkImage, type SkMatrix, type SkPaint, type SkPath, type SkPicture,
@@ -13,26 +12,10 @@ import { vertexHeight } from '../world/Map';
 import type { GameState } from '../game/GameState';
 import type { CityMapData } from '../data/maps/city';
 import { drawRoad } from './RoadPainter';
-
-/**
- * Devolve o objeto ao CanvasKit depois de ele já estar registrado na picture. Só na web: lá o
- * `SkVertices`/`SkPicture` é memória wasm que o coletor do JS não enxerga, e o bake repete até
- * dez vezes por segundo enquanto o carro anda — foi assim que o heap estourou com `Aborted()`.
- * No aparelho o mesmo objeto é refcountado pelo C++ da picture, e descartar daqui seria
- * uso-after-free na thread de raster que ninguém tem como testar: lá deixamos o ciclo de vida
- * seguir o caminho de sempre.
- *
- * O `WeakSet` não é frescura: em desenvolvimento o React monta, desmonta e monta de novo cada
- * efeito, e sem a trava o segundo `dispose()` cairia sobre uma alça já morta — o CanvasKit responde
- * com `BindingError`, exatamente o erro que se queria apagar.
- */
-const devolvidas = new WeakSet<object>();
-function liberarWeb(obj: { dispose?: () => void } | null | undefined): void {
-  if (Platform.OS !== 'web' || !obj) return;
-  if (devolvidas.has(obj)) return;
-  devolvidas.add(obj);
-  obj.dispose?.();
-}
+// O `liberarWeb` e o `devolverNoTempoDoDesenho` moram em `SkiaLifetime` porque o chunk de
+// estática do mundo passou a devolver caminhos de sombra pelo mesmo motivo: dois donos para
+// um ciclo de vida é como se nasce um uso-after-free.
+import { devolverNoTempoDoDesenho, liberarWeb } from './SkiaLifetime';
 
 function cameraCellKey(game: GameState): string {
   const cx = Math.round(game.camera.x * 2);
@@ -553,42 +536,6 @@ function bakeVisibleTiles(game: GameState): SkPicture {
   return picture;
 }
 
-/**
- * Devolve a picture ao CanvasKit no tempo do desenho, não no tempo do React.
- *
- * O `<Canvas>` da web regrava a lista de comandos a cada quadro — a câmera é um shared value,
- * então o mapper repassa o replay sem parar, e cada replay chama `drawPicture` sobre a picture
- * que o nó `<Picture>` apontava *naquele* instante. Um `dispose()` no efeito passivo cai depois
- * do commit, mas a fila de desenhos ainda tem o quadro anterior dentro, e ele lê uma alça morta:
- * `Cannot pass deleted object as a pointer of type sk_sp<Picture>`. Contar frames no relógio que
- * desenha (o mesmo `requestAnimationFrame` do `<Canvas>`) é a única margem que existe: quando o
- * último passo dispara, todo desenho enfileirado antes da troca já rodou e pelo menos um já
- * rodou com a picture nova.
- *
- * A checagem do `entregue` não é paranoia: em desenvolvimento o React desmonta e monta cada efeito
- * de novo, e a picture da falsa saída é exatamente a que voltou para a tela. Nesse caso o adiamento
- * desiste e a liberação fica para a próxima troca real.
- */
-const QUADROS_DE_MARGEM = 3;
-function devolverNoTempoDoDesenho(
-  picture: SkPicture,
-  entregue: { current: SkPicture | null },
-): void {
-  // No aparelho a picture é refcountada pelo C++ e `liberarWeb` não faz nada; aqui não há
-  // motivo para adiar um nada.
-  if (Platform.OS !== 'web') return;
-  let faltam = QUADROS_DE_MARGEM;
-  const passo = () => {
-    if (entregue.current === picture) return;
-    if (--faltam > 0) {
-      requestAnimationFrame(passo);
-      return;
-    }
-    liberarWeb(picture);
-  };
-  requestAnimationFrame(passo);
-}
-
 export const GroundLayer = memo(function GroundLayer({ game }: { game: GameState }) {
   const [picture, setPicture] = useState<SkPicture | null>(null);
   const lastKey = useRef('');
@@ -599,14 +546,16 @@ export const GroundLayer = memo(function GroundLayer({ game }: { game: GameState
   useEffect(() => {
     const anterior = entregue.current;
     entregue.current = picture;
-    if (anterior && anterior !== picture) devolverNoTempoDoDesenho(anterior, entregue);
+    if (anterior && anterior !== picture) {
+      devolverNoTempoDoDesenho(anterior, () => entregue.current === anterior);
+    }
   }, [picture]);
 
   useEffect(() => {
     return () => {
       const atual = entregue.current;
       entregue.current = null;
-      if (atual) devolverNoTempoDoDesenho(atual, entregue);
+      if (atual) devolverNoTempoDoDesenho(atual);
     };
   }, []);
 

@@ -27,11 +27,17 @@ export class GameLoop {
       if (dt > GAME_CONFIG.MAX_DT) dt = GAME_CONFIG.MAX_DT;
       this.acc += dt;
       let steps = 0;
+      // O tempo da simulação é medido no próprio laço: é o número que o painel de métricas
+      // mostra como "GameLoop", e contá-lo fora daqui seria contar outra coisa.
+      let updateMs = 0;
       while (this.acc >= GAME_CONFIG.FIXED_DT && steps < 4) {
+        const t0 = performance.now();
         this.game.update(GAME_CONFIG.FIXED_DT);
+        updateMs += performance.now() - t0;
         this.acc -= GAME_CONFIG.FIXED_DT;
         steps++;
       }
+      this.game.streaming.noteFrame(dt, updateMs);
       this.onFrame?.(dt);
       this.rafId = requestAnimationFrame(tick);
     };

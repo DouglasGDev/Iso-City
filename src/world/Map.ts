@@ -532,16 +532,17 @@ export class Map {
     const gx1 = Math.min(this.colliderGridCols - 1, Math.floor(maxX / cs));
     const gy1 = Math.min(this.colliderGridRows - 1, Math.floor(maxY / cs));
     const out: Collider[] = [];
-    const seen = new Set<Collider>();
     for (let gy = gy0; gy <= gy1; gy++) {
       for (let gx = gx0; gx <= gx1; gx++) {
         const cell = this.colliderGrid[gy * this.colliderGridCols + gx];
         for (let i = 0; i < cell.length; i++) {
           const c = cell[i];
-          if (seen.has(c)) continue;
           if (c.x + c.width < minX || c.x > maxX || c.y + c.height < minY || c.y > maxY) continue;
-          seen.add(c);
-          out.push(c);
+          // Um colisor grande é registrado em cada célula que ele toca, então a mesma peça
+          // pode vir de duas varreduras. O `Set` que fazia isso custava um objeto de hash por
+          // chamada — e são ~250 chamadas por tick. O repetido só aparece na borda da célula,
+          // numa lista de meia dúzia de itens: procurar nela é mais barato do que hashear.
+          if (out.indexOf(c) < 0) out.push(c);
         }
       }
     }

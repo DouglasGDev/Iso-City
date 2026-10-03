@@ -115,7 +115,9 @@ export function MarkerLayer({ game, clock }: { game: GameState; clock: SharedVal
   const ringA = useDerivedValue(() => 0.75 - pulse.value * 0.35, [pulse]);
 
   const view = game.fog.view(game);
-  const pickups = game.pickups.items.filter((p) => p.active);
+  // Pré-filtro pela zona visível: a névoa continua decidindo o que é desenhado, mas o
+  // coletável do outro lado da cidade não chega nem perto da projeção em tela.
+  const pickups = game.pickups.items.filter((p) => p.active && game.streaming.isInView(p.x, p.y));
   const ms = game.missions.state;
   const missionTarget = ms.phase !== 'break' ? ms.target : null;
 

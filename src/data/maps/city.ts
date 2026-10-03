@@ -59,6 +59,22 @@ export interface Cascade {
   queda: number;
 }
 
+/**
+ * O vão por onde se entra numa caverna. A sala não está aqui — isto é só o pé da porta
+ * pregado na encosta, do lado de fora, exatamente como a fachada de um prédio guarda a
+ * porta de uma sala que o mapa nunca viu.
+ */
+export interface CaveMouth {
+  id: number;
+  /** Centro do vão, em coordenadas de mundo: é onde a pedra escurece. */
+  x: number;
+  y: number;
+  /** Para onde quem sai da caverna olha: o sentido por onde a encosta desce. */
+  facing: number;
+  /** Cota do chão sob a boca, em tiles. Serve de régua para a porta não nascer no vale. */
+  cota: number;
+}
+
 export interface MapTile {
   kind: TileKind;
   key: string;
@@ -109,6 +125,12 @@ export interface CityMapData {
    * quem lê precisa tratar a ausência, não o zero.
    */
   cascatas?: Cascade[];
+  /**
+   * Boca da caverna: o vão de uma sala que não está no mapa. É o avesso da porta de
+   * prédio — a fachada fica na encosta e o que tem dentro é um plano à parte, como em
+   * todo interior. Só o pé da porta é mundo; a travessia inteira se passa dentro.
+   */
+  cavernas?: CaveMouth[];
   npcSpawns: { x: number; y: number }[];
   playerSpawn: { x: number; y: number };
   worldW: number;
@@ -1856,6 +1878,84 @@ export function generateCity(seed = 20260909): CityMapData {
       p.x + 0.5 + (serraRng() - 0.5) * 0.7, p.y + 0.5 + (serraRng() - 0.5) * 0.7, 'serra');
   }
 
+  // ---- Bocas de caverna --------------------------------------------------
+  // Vem antes da sombra de propósito: arrancar a árvore do pé da porta tem de arrancar
+  // a copa dela junto, e a copa é carimbada logo abaixo.
+  // A porta nasce onde o morro já é morro: cota alta, encosta atrás, descida na frente.
+  // Uma boca em platô é um buraco no chão, e uma boca no vale é uma porta de loja.
+  const cavernas: CaveMouth[] = [];
+  {
+    /** O mundo acaba antes da borda: porta a dois tiles do fim do mapa não tem o que explorar. */
+    const BORDA = 7;
+    /** Só a serra alta recebe boca — o pé do morro é onde a cidade começa a existir. */
+    const COTA_MIN = 1.6;
+    /** O quanto a encosta tem de cair à frente da porta para o vão se ler como entrada. */
+    const DESCIDA_MIN = 0.08;
+    /** Bocas não podem ser vizinhas: uma caverna por região, senão o mapa vira queijo. */
+    const DISTANCIA = 40;
+    const MAX_BOCAS = 3;
+    // Onde o corpo humano já construiu: prédio, passeio e asfalto não têm porta por cima.
+    const obra = new Uint8Array(W * H);
+    for (const b of buildings) {
+      const s = b.footprintW;
+      for (let y = Math.floor(b.y - s); y <= Math.ceil(b.y); y++) {
+        for (let x = Math.floor(b.x - s); x <= Math.ceil(b.x); x++) {
+          if (x >= 0 && y >= 0 && x < W && y < H) obra[y * W + x] = 1;
+        }
+      }
+    }
+    for (let i = 0; i < W * H; i++) if (walkway[i] === 1) obra[i] = 1;
+    const chão = (x: number, y: number) => {
+      if (x < BORDA || y < BORDA || x >= W - BORDA || y >= H - BORDA) return false;
+      const i = y * W + x;
+      return !flatTile(i) && obra[i] === 0 && tiles[i].kind !== 'water';
+    };
+    // Cachoeira lava a porta: o jato e a bacia ficam fora da escolha de propósito, para
+    // a entrada da caverna ser atravessável e não um caldo de espuma.
+    const caiPerto = (x: number, y: number) => cascatas.some((c) => c.bacia.raio + 4 > Math.hypot(c.bacia.x - x, c.bacia.y - y)
+      || c.curso.some((p) => Math.hypot(p.x - x, p.y - y) < 6));
+    type Candidato = { x: number; y: number; cota: number; dx: number; dy: number; nota: number };
+    const candidatos: Candidato[] = [];
+    for (let y = BORDA; y < H - BORDA; y++) {
+      for (let x = BORDA; x < W - BORDA; x++) {
+        const i = y * W + x;
+        if (!chão(x, y) || toCity[i] < 4 || heights[i] < COTA_MIN || caiPerto(x, y)) continue;
+        let dx = 0;
+        let dy = 0;
+        let maisBaixo = heights[i];
+        for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const v = heights[(y + oy) * W + (x + ox)];
+          if (v < maisBaixo) { maisBaixo = v; dx = ox; dy = oy; }
+        }
+        if (heights[i] - maisBaixo < DESCIDA_MIN) continue;
+        // Atrás da porta tem de subir, e na frente tem de haver dois passos de descida
+        // limpos: é por ali que o jogador chega andando, e é para lá que quem sai olha.
+        if (heights[(y - dy) * W + (x - dx)] <= heights[i]) continue;
+        if (!chão(x + dx, y + dy) || !chão(x + dx * 2, y + dy * 2)) continue;
+        candidatos.push({ x, y, cota: heights[i], dx, dy, nota: heights[i] + toCity[i] * 0.08 });
+      }
+    }
+    // Primeiro as mais altas e mais afastadas do asfalto; o empate se desfaz pela varredura,
+    // então o mesmo seed devolve sempre as mesmas bocas.
+    candidatos.sort((a, b) => b.nota - a.nota || a.y * W + a.x - (b.y * W + b.x));
+    for (const c of candidatos) {
+      if (cavernas.length >= MAX_BOCAS) break;
+      if (cavernas.some((m) => Math.hypot(m.x - c.x, m.y - c.y) < DISTANCIA)) continue;
+      const x = c.x + 0.5;
+      const y = c.y + 0.5;
+      cavernas.push({ id: cavernas.length, x, y, facing: Math.atan2(c.dy, c.dx), cota: c.cota });
+      // A árvore que nasce em cima do vão entope a entrada: tira a pedra e o mato do pé
+      // da porta e dos dois passos que descem dela, e deixa o resto do talude plantado.
+      for (let k = props.length - 1; k >= 0; k--) {
+        const p = props[k];
+        const naPorta = Math.hypot(p.x - x, p.y - y) < 2.2;
+        const naDescida = Math.hypot(p.x - (x + c.dx), p.y - (y + c.dy)) < 1.6
+          || Math.hypot(p.x - (x + c.dx * 2), p.y - (y + c.dy * 2)) < 1.6;
+        if (naPorta || naDescida) props.splice(k, 1);
+      }
+    }
+  }
+
   // ---- Sombra de copa ------------------------------------------------------
   // É isto que separa "morro" de "mata" na tela. A tinta de forma do GroundLayer diz em
   // que direção a encosta olha; o escuro de verdade tem de vir de alguma coisa que está
@@ -2001,5 +2101,5 @@ export function generateCity(seed = 20260909): CityMapData {
   for (let i = 0; i < W * H; i++) relevo[i] = flatTile(i) ? 0 : varrido[i];
 
   return { tilesW: W, tilesH: H, tiles, heights, shades, relevo, copa, buildings, props, vehicles,
-    cascatas, npcSpawns, playerSpawn, worldW: W, worldH: H };
+    cascatas, cavernas, npcSpawns, playerSpawn, worldW: W, worldH: H };
 }

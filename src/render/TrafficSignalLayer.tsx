@@ -114,6 +114,10 @@ export function TrafficSignalLayer({ game }: { game: GameState }) {
   return (
     <Group>
       {signals.map((s: TrafficSignal) => {
+        // Zona antes da névoa: o ferro-velho de sinal do outro lado da cidade não precisa
+        // nem ser projetado. Os dois cantos são testados porque a caixa do cruzamento é
+        // diagonal em tela — um deles sempre cai dentro de uma janela que cobre o poste.
+        if (!game.streaming.isInView(s.minX, s.minY) && !game.streaming.isInView(s.maxX, s.maxY)) return null;
         if (!s.controlled) {
           if (!s.yields) return null;
           const corner = worldToScreen(s.minX, s.minY, game.map.heightSmoothAt(s.minX, s.minY));
