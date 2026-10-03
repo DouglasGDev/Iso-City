@@ -2,7 +2,7 @@ import { GAME_CONFIG, type Biome } from './GameConfig';
 import { consumeAttack, consumeCrouch, consumeEnter, consumeHorn, consumeInteract, consumeJump, consumeReload, consumeWeapon, effectiveAim, inputState, resetActionInput, resetJoystickInput, setRunHeld } from './InputState';
 import { WeaponSystem, type WeaponContext } from '../systems/WeaponSystem';
 import { Map } from '../world/Map';
-import { generateCity } from '../data/maps/city';
+import { generateCity, WORLD_SEED } from '../data/maps/city';
 import { createCamera, cameraFollow, clampToMap, clampToRoom, indoorZoom, type CameraState } from '../world/Camera';
 import { angleToWorldDir, screenToWorld, worldToScreen } from '../world/IsoUtils';
 import { createPlayer, type Player } from '../entities/Player';
@@ -35,6 +35,7 @@ import { WeatherSystem } from '../systems/WeatherSystem';
 import { SnowSystem } from '../systems/SnowSystem';
 import { HazardSystem, type HazardContext, type HazardSweepContext } from '../systems/HazardSystem';
 import { CascadeSystem, type CascadeSweepContext } from '../systems/CascadeSystem';
+import { TransportSystem } from '../systems/TransportSystem';
 import { DestructionSystem } from '../systems/DestructionSystem';
 import { FogSystem } from '../systems/FogSystem';
 import { AmbientSystem } from '../systems/AmbientSystem';
@@ -136,6 +137,8 @@ export class GameState {
   hazard = new HazardSystem();
   /** Correnteza das cachoeiras do relevo: nasce do mapa, por isso é montada no construtor. */
   cascade: CascadeSystem;
+  /** Malha de transporte derivada das ruas do mapa: nasce dele, então também monta no construtor. */
+  transport: TransportSystem;
   destruction = new DestructionSystem();
   fog = new FogSystem();
   ambient = new AmbientSystem(sound);
@@ -186,12 +189,15 @@ export class GameState {
       onReload: () => sound.play('weaponReload', 0.4),
       onEmpty: () => sound.play('weaponEmpty', 0.4),
     };
-    this.map = new Map(generateCity());
+    this.map = new Map(generateCity(WORLD_SEED));
     // O índice dos estáticos nasce do mapa pronto e nunca mais muda: é ele que responde
     // "o que esta quadra tem?" sem percorrer as 4.451 estáticas da cidade inteira.
     this.streaming = new WorldStreamingManager(new ChunkIndex(this.map.data));
     this.spatial = new SpatialIndex(this.map.data.worldW, this.map.data.worldH);
     this.cascade = new CascadeSystem(this.map.data);
+    // A malha de transporte é lida do mapa pronto, do mesmo jeito que o índice de chunks:
+    // derives do que o gerador pôs no chão, nunca de uma lista de pontos no código.
+    this.transport = new TransportSystem(this.map, WORLD_SEED);
     this.wildlife.init(this.map);
     this.interiors = new InteriorSystem(this.map);
     // A cadeia fala pela sala, mas quem decide é o JailSystem — laço de função, não de import.
@@ -453,6 +459,9 @@ export class GameState {
       : this.player;
 
     this.trafficSystem.update(this.map, this.npcs, this.vehicles, dt, outdoorPlayer, this.streaming);
+    // O horário da cidade é o relógio da cidade: o sistema recebe o tempo do jogo, não um
+    // intervalo, então morrer ou entrar numa sala não atrasa nenhum ônibus.
+    this.transport.update(this.time, outdoorPlayer.x, outdoorPlayer.y, this.streaming);
     this.updateNpcs(dt, outdoorPlayer);
 
     this.witnesses.update(dt, this.witnessContext(outdoorPlayer));
