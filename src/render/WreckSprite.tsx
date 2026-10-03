@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Circle, Group, Image, Oval, Path, RoundedRect, Skia } from '@shopify/react-native-skia';
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
 import { spriteStore } from '../assets/SpriteStore';
+import { solicitarSprite } from '../assets/SpriteRequests';
 import { worldToScreen } from '../world/IsoUtils';
 import type { Dir4 } from '../game/GameConfig';
 import type { Wreck } from '../systems/DestructionSystem';
@@ -43,6 +44,8 @@ export function WreckSprite({ wreck, clock, smoking, h }: {
 }) {
   const s = worldToScreen(wreck.x, wreck.y, h);
   const image = wreck.key ? spriteStore[wreck.key] ?? null : null;
+  // A carcaça nasce de uma explosão, no meio da partida: o casco queimado dela é pedido agora.
+  if (wreck.key && !image) solicitarSprite(wreck.key);
   const w = image ? image.width() : 0;
   const hh = image ? image.height() : 0;
   const shards = useMemo(() => {

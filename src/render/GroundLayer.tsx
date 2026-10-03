@@ -5,6 +5,7 @@ import {
 } from '@shopify/react-native-skia';
 import { tileKey } from '../assets/AssetRegistry';
 import { spriteStore } from '../assets/SpriteStore';
+import { solicitarSprite } from '../assets/SpriteRequests';
 import { ELEVATION_PX, worldToScreen } from '../world/IsoUtils';
 import { FOG } from '../systems/FogSystem';
 import { GAME_CONFIG } from '../game/GameConfig';
@@ -517,7 +518,14 @@ function bakeVisibleTiles(game: GameState): SkPicture {
       if (t.kind === 'road') {
         drawRoad(canvas, data, tx, ty, vA, vB, vC, vD);
       } else {
-        const img = spriteStore[tileKey(t.key)] || fallback;
+        const chave = tileKey(t.key);
+        let img = spriteStore[chave];
+        if (!img) {
+          // O tile do chão é o que a câmera mais cedo precisa: pedido nomeado, não a volta
+          // do carrossel da fila.
+          solicitarSprite(chave);
+          img = fallback;
+        }
         if (!img) continue;
         // Cidade e água são planas por contrato, e é o caminho rápido: sem matriz nem
         // máscara por tile, o bake da malha urbana custa o que custava antes do relevo.

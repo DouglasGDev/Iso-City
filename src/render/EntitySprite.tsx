@@ -6,6 +6,7 @@ import { resolveEntityImage } from './entityImages';
 import { getGame } from '../game/GameState';
 import { weaponKey } from '../assets/AssetRegistry';
 import { spriteStore } from '../assets/SpriteStore';
+import { solicitarSprite } from '../assets/SpriteRequests';
 import { isGunId, type GunId } from '../data/weapons';
 import type { Dir4 } from '../game/GameConfig';
 import { MeleeSwing, type MeleeVisualState } from './WeaponEffects';
@@ -291,7 +292,10 @@ export function EntitySprite({ id }: Props) {
     { translateX: hand.value.x },
     { translateY: hand.value.y + posture.value.torsoOffsetY },
   ], [screen, hand, stride, jumpLift, posture]);
-  const heldImage = weapon ? spriteStore[weaponKey(weapon.id, weapon.direction)] : null;
+  const armaKey = weapon ? weaponKey(weapon.id, weapon.direction) : null;
+  const heldImage = armaKey ? spriteStore[armaKey] ?? null : null;
+  // A arma que o jogador acabou de pegar é a última da fila: é a cena que pede o arquivo.
+  if (armaKey && !heldImage) solicitarSprite(armaKey);
   const weaponW = weapon ? ({
     pistol: 16, revolver: 19, smg: 21, micro: 19, rifle: 30, sniper: 38, shotgun: 29,
   } as Record<GunId, number>)[weapon.id] : 0;

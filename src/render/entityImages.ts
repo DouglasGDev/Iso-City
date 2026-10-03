@@ -1,8 +1,15 @@
 import type { SkImage } from '@shopify/react-native-skia';
 import { characterKey, policeCharacterKey, spriteKeyForVehicle } from '../assets/AssetRegistry';
 import { spriteStore } from '../assets/SpriteStore';
+import { solicitarSprite } from '../assets/SpriteRequests';
 import { getGame } from '../game/GameState';
 import { isNpcVisible } from '../entities/NPC';
+
+/** Anotar o arquivo que a cena acabou de procurar e não achou; o desenho segue sem ele. */
+function faltar(key: string): null {
+  solicitarSprite(key);
+  return null;
+}
 
 export function resolveEntityImage(id: string): SkImage | null {
   const game = getGame();
@@ -10,7 +17,8 @@ export function resolveEntityImage(id: string): SkImage | null {
     const p = game.player;
     if (p.currentVehicleId !== null) return null;
     const dead = p.health <= 0 || p.state === 'dead';
-    return spriteStore[characterKey(p.char, dead ? 'idle' : p.anim, p.direction, dead ? 0 : p.frame)] ?? null;
+    const key = characterKey(p.char, dead ? 'idle' : p.anim, p.direction, dead ? 0 : p.frame);
+    return spriteStore[key] ?? faltar(key);
   }
   const [kind, idxStr] = id.split(':');
   const idx = Number(idxStr);
@@ -26,7 +34,7 @@ export function resolveEntityImage(id: string): SkImage | null {
     const frame = npc.dead ? 0 : npc.frame;
     const key = npc.kind === 'cop' ? policeCharacterKey(anim, npc.dir, frame)
       : characterKey(npc.char, anim, npc.dir, frame);
-    return spriteStore[key] ?? null;
+    return spriteStore[key] ?? faltar(key);
   }
   if (kind === 'veh') {
     const v = game.vehicles[idx];
@@ -34,11 +42,8 @@ export function resolveEntityImage(id: string): SkImage | null {
     const rotor =
       v.def.type === 'helicopter' ? ((v.animFrame === 1 || v.animFrame === 2 ? v.animFrame : 1) as 1 | 2) : 0;
     const key = spriteKeyForVehicle(v.def, v.color, v.dir, rotor);
-    return (
-      spriteStore[key] ??
-      spriteStore[spriteKeyForVehicle(v.def, v.color, v.dir, 0)] ??
-      null
-    );
+    const base = spriteKeyForVehicle(v.def, v.color, v.dir, 0);
+    return spriteStore[key] ?? spriteStore[base] ?? faltar(key);
   }
   return null;
 }

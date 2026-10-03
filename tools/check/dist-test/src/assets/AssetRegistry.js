@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ASSETS_TO_LOAD = void 0;
+exports.RANGO_NA_FILA = exports.CARREGAMENTO_ESSENCIAL = exports.CARREGAMENTO = exports.ASSETS_TO_LOAD = void 0;
 exports.weaponKey = weaponKey;
 exports.tileKey = tileKey;
 exports.characterKey = characterKey;
@@ -12,6 +12,7 @@ exports.propKey = propKey;
 exports.spriteKeyForVehicle = spriteKeyForVehicle;
 exports.isKnownAsset = isKnownAsset;
 exports.isUsableAsset = isUsableAsset;
+exports.cargaPrioridade = cargaPrioridade;
 const AssetManifest_1 = require("./AssetManifest");
 function weaponKey(weapon, direction) {
     return `Weapons/${weapon}_${direction}.png`;
@@ -112,3 +113,37 @@ function isUsableAsset(key) {
     return !IGNORE_PATTERNS.some((re) => re.test(key));
 }
 exports.ASSETS_TO_LOAD = Object.keys(AssetManifest_1.ASSET_FILES).filter(isUsableAsset);
+/**
+ * Ordem do carregamento na tela de espera. O chão está sob tudo o que o primeiro quadro
+ * desenha, o personagem é quem anda em cima dele, e a arma só aparece quando alguém atira:
+ * na ordem do manifesto os últimos arquivos seriam justamente os que a câmera mais cedo
+ * precisa, e a espera é pelos 543 inteiros.
+ */
+function cargaPrioridade(key) {
+    if (key.startsWith('Roads and Grounds/'))
+        return 0;
+    if (key.startsWith('Characters/'))
+        return 1;
+    if (key.startsWith('Buildings/'))
+        return 2;
+    if (key.startsWith('Vehicles/'))
+        return 3;
+    if (key.startsWith('Props/'))
+        return 4;
+    return 5;
+}
+/**
+ * A fila ordenada: é a ordem do `SpriteProvider`, e o desempate por nome deixa a sequência
+ * estável entre duas aberturas do mesmo jogo.
+ */
+exports.CARREGAMENTO = exports.ASSETS_TO_LOAD
+    .map((key) => [key, cargaPrioridade(key)])
+    .sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1))
+    .map(([key]) => key);
+/** O conjunto que a tela de espera ainda segura: o chão e os personagens. */
+exports.CARREGAMENTO_ESSENCIAL = exports.CARREGAMENTO.filter((key) => cargaPrioridade(key) <= 1);
+/**
+ * Posição de cada arquivo na fila. É como o `SpriteProvider` sabe se um pedido da cena já
+ * estava no lote em voo — e só desconta do lote o que realmente ainda não saiu.
+ */
+exports.RANGO_NA_FILA = new Map(exports.CARREGAMENTO.map((key, i) => [key, i]));
