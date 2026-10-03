@@ -3,6 +3,7 @@ import { characterKey, policeCharacterKey, spriteKeyForVehicle } from '../assets
 import { spriteStore } from '../assets/SpriteStore';
 import { solicitarSprite } from '../assets/SpriteRequests';
 import { getGame } from '../game/GameState';
+import { VEHICLE_DEFS } from '../data/vehicles';
 import { isNpcVisible } from '../entities/NPC';
 
 /** Anotar o arquivo que a cena acabou de procurar e não achou; o desenho segue sem ele. */
@@ -44,6 +45,14 @@ export function resolveEntityImage(id: string): SkImage | null {
     const key = spriteKeyForVehicle(v.def, v.color, v.dir, rotor);
     const base = spriteKeyForVehicle(v.def, v.color, v.dir, 0);
     return spriteStore[key] ?? spriteStore[base] ?? faltar(key);
+  }
+  if (kind === 'bus') {
+    // A linha terrestre usa o ônibus que o jogo já tem: a arte existe, é licenciada e já entra
+    // na fila de boot. O que a malha acrescenta é o horário, não um veículo novo.
+    const u = game.transport.units[idx];
+    if (!u || !u.live) return null;
+    const key = spriteKeyForVehicle(VEHICLE_DEFS.bus_school, '', u.dir, 0);
+    return spriteStore[key] ?? faltar(key);
   }
   return null;
 }

@@ -36,6 +36,8 @@ const { WorldStreamingManager } = load(path.join(root, 'src/world/streaming/Worl
 const { buildTransportNetwork } = load(path.join(root, 'src/data/transport/network.ts'));
 const { sampleRoute, alongRoute, stopsNear } = load(path.join(root, 'src/data/transport/schedule.ts'));
 const { TransportSystem } = load(path.join(root, 'src/systems/TransportSystem.ts'));
+const { spriteKeyForVehicle, isKnownAsset } = load(path.join(root, 'src/assets/AssetRegistry.ts'));
+const { VEHICLE_DEFS } = load(path.join(root, 'src/data/vehicles.ts'));
 
 let passed = 0;
 const failures = [];
@@ -420,6 +422,62 @@ for (const seed of [WORLD_SEED, 42]) {
       check(Math.hypot(esperado.x - vivo.x, esperado.y - vivo.y) < 1e-6,
         'linha congelada voltou fora do horário');
     }
+  }
+
+  // ---- 10b. O ônibus que aparece na tela: quadrante dentro do ângulo, nenhum volteio em reta
+  // e a arte que o sprite vai pedir existe de verdade nos quatro sentidos.
+  {
+    const CENTRO = { SE: 0, SW: Math.PI / 2, NW: Math.PI, NE: -Math.PI / 2 };
+    const angDist = (a, b) => Math.abs(((a - b + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI);
+    check(system.units.length > 0 && system.units.length <= 400,
+      `a varredura de unidades do render saiu do tamanho de uma lista curta: ${system.units.length}`);
+
+    // Sem `streaming` a câmera não gating nada: todo horário é amostrado no mesmo instante, e
+    // o que se compara é a arte escolhida contra o ângulo que acabou de ser lido do relógio.
+    const linha = network.routes[0];
+    const doMeio = linha.points[Math.floor(linha.points.length / 2)];
+    system.update(system.clock + 1 / 60, doMeio.x, doMeio.y);
+    let quadranteOk = true;
+    for (const u of system.units) {
+      if (!CENTRO.hasOwnProperty(u.dir) || angDist(u.angle, CENTRO[u.dir]) > Math.PI / 4 + 0.16) {
+        quadranteOk = false;
+        break;
+      }
+    }
+    check(quadranteOk, 'unidade desenhada num quadrante que não é o do seu ângulo de viagem');
+
+    const passo = 0.15;
+    const minhas = system.units.filter((u) => u.route === linha.id);
+    const ultimoAngulo = new Map(minhas.map((u) => [u.unit, null]));
+    const dirNaReta = new Map(minhas.map((u) => [u.unit, null]));
+    let trepidação = false;
+    for (let t = 0; t < linha.cycle; t += passo) {
+      system.update(t, doMeio.x, doMeio.y);
+      for (const u of minhas) {
+        const anterior = ultimoAngulo.get(u.unit);
+        if (anterior !== null && Math.abs(u.angle - anterior) < 1e-9) {
+          // Reta de verdade: o mesmo ângulo por dois passos seguidos não pode trocar de arte.
+          if (dirNaReta.get(u.unit) === null) dirNaReta.set(u.unit, u.dir);
+          else if (dirNaReta.get(u.unit) !== u.dir) trepidação = true;
+        } else {
+          dirNaReta.set(u.unit, u.dir);
+        }
+        ultimoAngulo.set(u.unit, u.angle);
+      }
+    }
+    check(!trepidação, `o sprite do ônibus troca de quadrante no meio de uma reta (linha ${linha.name})`);
+
+    const arteOk = ['SE', 'SW', 'NW', 'NE'].every((d) =>
+      isKnownAsset(spriteKeyForVehicle(VEHICLE_DEFS.bus_school, '', d, 0)));
+    check(arteOk, 'a linha terrestre pede um ônibus que não está no catálogo de artes');
+
+    // O que a varredura do render paga por quadro: o tamanho da lista, e o que o portão de
+    // zona deixa existir com a câmera plantada no meio de uma linha.
+    streaming.update({ ax: doMeio.x, ay: doMeio.y, zoom: 1,
+      viewBounds: { minX: doMeio.x - 8, maxX: doMeio.x + 8, minY: doMeio.y - 8, maxY: doMeio.y + 8 } });
+    system.update(system.clock + 1 / 60, doMeio.x, doMeio.y, streaming);
+    console.log(`ônibus seed ${seed}: ${system.units.length} unidades na malha · `
+      + `${system.units.filter((u) => u.live).length} materializadas com a câmera na linha ${linha.name}`);
   }
 }
 

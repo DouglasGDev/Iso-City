@@ -1,4 +1,4 @@
-import { GAME_CONFIG } from '../game/GameConfig';
+import { GAME_CONFIG, type Dir4 } from '../game/GameConfig';
 import { buildTransportNetwork } from '../data/transport/network';
 import {
   nextArrivals,
@@ -8,6 +8,7 @@ import {
 } from '../data/transport/schedule';
 import type { RoadGraph, TransportNetwork, TransportStation } from '../data/transport/types';
 import type { TransportArrival, TransportTrip } from '../data/transport/schedule';
+import { angleToWorldDirStable } from '../world/IsoUtils';
 import type { WorldStreamingManager, StreamingTier } from '../world/streaming/WorldStreamingManager';
 import { TIER } from '../world/streaming/WorldStreamingManager';
 
@@ -28,9 +29,14 @@ export interface TransportUnit {
   x: number;
   y: number;
   angle: number;
+  /**
+   * Quadrante do sprite. Derivado do `angle` com a mesma histerese do jogador a pé, porque
+   * uma linha que contorna uma caixa faz o ângulo cruzar a fronteira do quadrante no meio
+   * do gesto — sem folga o ônibus piscaria entre duas artes a cada curva.
+   */
+  dir: Dir4;
   /** Encostado na calçada, embarcando. */
   stopped: boolean;
-  dir: 1 | -1;
   /**
    * A linha desta unidade está no alcance da câmera, então o horário dela é calculado. É o
    * portão da linha inteira: uma rota que atravessa a cidade tem carro nos dois cantos, e o
@@ -79,7 +85,7 @@ export class TransportSystem {
         const p = sampleRoute(route, this.network.services[route.service], 0, unit);
         this.units.push({
           route: route.id, unit, x: p.x, y: p.y, angle: p.angle,
-          stopped: p.stopped, dir: p.dir, live: false,
+          dir: angleToWorldDirStable(p.angle, 'SE'), stopped: p.stopped, live: false,
         });
       }
     }
@@ -123,7 +129,7 @@ export class TransportSystem {
       u.y = s.y;
       u.angle = s.angle;
       u.stopped = s.stopped;
-      u.dir = s.dir;
+      u.dir = angleToWorldDirStable(s.angle, u.dir);
       // A zona da linha decide o que é calculado; a zona do asfalto onde o carro está decide
       // o que existe na tela e no som. Uma linha que atravessa o mapa tem unidade dos dois
       // lados da câmera, e o render não pode repetir esse recorte por conta própria.
