@@ -202,6 +202,12 @@ async function exposeGame() {
   nearPixel(pixel(fogDay, 8, 8), dayFog.rgb, 'opaque fog must cover unloaded corners');
   assert.deepEqual(pixel(fogDay, 8, 8), pixel(fogDay, 836, 382));
   assert.equal(await evaluate('qa.g.weapons.equipped'), 'unarmed');
+  // O mundo abre com a fila de sprites ainda correndo, então cobrar chave do depósito aqui sem
+  // esperar a fila fechar mediria pressa de carregamento, não asset faltando.
+  await until(`(()=>{const mods=[...__r.getModules().values()].filter(m=>m.isInitialized)
+      .map(m=>m.publicModule.exports);
+    return mods.find(m=>m?.CARREGAMENTO).CARREGAMENTO.every((k)=>!!qa.sprites[k])})()`,
+    'fila de sprites fechada', 180000);
   for (const key of ['rifle', 'shotgun', 'bat']) {
     for (const dir of ['NE', 'NW', 'SE', 'SW']) {
       assert.ok(await evaluate(`!!qa.sprites['Weapons/${key}_${dir}.png']`), `missing sprite Weapons/${key}_${dir}.png`);
@@ -462,13 +468,13 @@ async function exposeGame() {
   await screenshot('qa-mobile-touch-only');
   console.log('OK mobile: hardware events never hide touch controls or display keyboard/gamepad hints');
 
-  const duskFog = await fogState();
-  // A cor da névoa é um lerp: `FogSystem.update` persegue o alvo e nem roda com `dt<=0`. Pausar
-  // congelava o meio do caminho (o canto saía mais escuro que a cor publicada) e deixar o relógio
-  // livre fazia a leitura correr à frente do screenshot. A amarra prende `t` e o clima a cada
-  // quadro enquanto o update roda: o lerp chega no alvo, para de se mover, e aí a medição é a
-  // mesma sempre. Prende em `clear` porque a tempestade sorteada escurece a névoa e o empurrão do
-  // perfil de cor do Chrome passa da tolerância — o check mede a névoa, não a roleta do tempo.
+  // O dia inteiro dura 300 s de relógio real, e as seções acima consomem minutos: ler a névoa do
+  // relógio livre entregava um referencial em fase sorteada (numa corrida caía em pleno crepúsculo
+  // quente, cujo azul fica ABAIXO do azul da noite, e a comparação de todos os canais quebrava sem
+  // que nada na névoa tivesse mudado). As duas pontas se amarram, como a medição noturna já fazia.
+  await amarrar('qa.g.dayNight.t=0.5');
+  await delay(2600);
+  const diaFog = await fogState();
   await amarrar('qa.g.dayNight.t=0.05');
   await delay(2600);
   const antesDaNoite = await fogState();
@@ -477,8 +483,8 @@ async function exposeGame() {
   await soltar();
   assert.deepEqual(nightFog.rgb, antesDaNoite.rgb, 'a cor da névoa não pode mudar durante a medição noturna');
   nearPixel(pixel(fogNight, 8, 8), nightFog.rgb, 'night fog must still seal the corners');
-  assert.ok(pixel(fogNight, 8, 8).every((channel, i) => channel < duskFog.rgb[i]),
-    `night must also darken fog: ${pixel(fogNight, 8, 8)} vs ${duskFog.rgb}`);
+  assert.ok(pixel(fogNight, 8, 8).every((channel, i) => channel < diaFog.rgb[i]),
+    `night must also darken fog: ${pixel(fogNight, 8, 8)} vs ${diaFog.rgb}`);
   await evaluate('qa.g.weather.force("rain",120);qa.g.weather.intensity=0.8');
   await delay(650);
   await screenshot('qa-fog-rain');

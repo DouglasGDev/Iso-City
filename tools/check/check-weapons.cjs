@@ -1124,6 +1124,9 @@ async function checkMeleeRender() {
         if (id === '../entities/NPC') return load('src/entities/NPC.ts');
         if (id === '../game/GameState') return { getGame: () => game };
         if (id === '../assets/SpriteStore') return { spriteStore };
+        // A fila de demanda só conversa com o `SpriteProvider`, que não existe neste sandbox:
+        // aqui o sprite é montado à mão pelo `asset()`, então pedir nunca tem consequência.
+        if (id === '../assets/SpriteRequests') return { solicitarSprite() {}, promoverDemandas: () => [] };
         if (id === '../assets/AssetRegistry') return load('src/assets/AssetRegistry.ts');
         if (id === '../world/IsoUtils') return load('src/world/IsoUtils.ts');
         if (id === './AssetManifest') return { ASSET_FILES: {} };
