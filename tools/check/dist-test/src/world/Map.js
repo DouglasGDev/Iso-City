@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Map = void 0;
 exports.vertexHeight = vertexHeight;
+const Lugares_1 = require("../data/maps/Lugares");
 const GameConfig_1 = require("../game/GameConfig");
 const Frontier_1 = require("./Frontier");
 const IsoUtils_1 = require("./IsoUtils");
@@ -559,6 +560,24 @@ class Map {
         if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH)
             return null;
         return this.data.tiles[ty * this.data.tilesW + tx].biome;
+    }
+    /**
+     * O lugar nomeado desta coordenada: o bairro (ou a zona, ou o rio) e a via em cima da qual
+     * se está. Os retângulos de bairro são disjoint e cobrem a grade inteira por construção,
+     * então dentro do mapa sempre há uma resposta; fora dela é `null`, e é a fronteira quem dá
+     * o nome dali. Consulta geométrica de propósito — dezenas de retângulos e poucas dezenas de
+     * fachos, lidos uma vez por quadro de HUD, sem índice de um array por tile.
+     */
+    lugarEm(x, y) {
+        const lugares = this.data.lugares;
+        if (!lugares)
+            return { distrito: null, via: null };
+        const tx = Math.floor(x);
+        const ty = Math.floor(y);
+        if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH) {
+            return { distrito: null, via: null };
+        }
+        return { distrito: (0, Lugares_1.distritoEm)(lugares, tx, ty), via: (0, Lugares_1.viaEm)(lugares, tx, ty) };
     }
     /**
      * Altura do chão em tiles, losango a losango: é a cota das REGRAS — quem pode subir,

@@ -3,6 +3,8 @@ import type { Biome, Dir4, TileKind } from '../../game/GameConfig';
 import { BUILDING_CATALOG } from '../buildings';
 import type { BuildingCatalogEntry } from '../buildings';
 import { CIVILIAN_VEHICLES, VEHICLE_DEFS } from '../vehicles';
+import { distritosDasQuadras, viasDasTravessas, viasDoGrid } from './Lugares';
+import type { Lugares } from './Lugares';
 
 export interface PlacedBuilding {
   key: string;
@@ -155,6 +157,13 @@ export interface CityMapData {
    * todo interior. Só o pé da porta é mundo; a travessia inteira se passa dentro.
    */
   cavernas?: CaveMouth[];
+  /**
+   * Bairros, zonas, o rio e as vias nomeadas — o mapa respondendo "onde você está" em vez
+   * de só "do que você é feito". É derivado da malha, não guardado: a mesma semente dá os
+   * mesmos nomes para sempre e nada disso entra no save. Interior não tem bairro nenhum,
+   * por isso o campo é opcional e quem lê trata a ausência.
+   */
+  lugares?: Lugares;
   npcSpawns: { x: number; y: number }[];
   playerSpawn: { x: number; y: number };
   worldW: number;
@@ -1140,6 +1149,12 @@ export function generateCity(seed = WORLD_SEED): CityMapData {
     ['bld_policestation_a', 'downtown', 0.44, 0.35],
     ['bld_policestation_a', 'downtown', 0.44, 0.73],
     ['bld_policestation_a', 'suburb', 0.85, 0.73],
+    // Bombeiros: o catálogo já tinha o prédio, a arte e o `kind` no Map, mas nenhuma reserva o
+    // plantava — o glifo existia no registro de pontos de interesse e o mundo nunca tinha o
+    // lugar. O alvo é o lado leste da faixa baixa ao sul do rio, a mesma margem da esquadra de
+    // 0,44 mas a uma quadra dela, porque serviço de emergência colado no outro emerge um prédio
+    // só na leitura do mapa.
+    ['bld_firestation_a', 'downtown', 0.62, 0.73],
     ['bld_gunshop_a', 'commercial', 0.66, 0.35],
     // Rodoviária: o lote cívico do ônibus. O alvo é a franja oeste da faixa comercial ao
     // norte do rio, longe do hospital e da loja de armas, para a quadra sorteada não ser a
@@ -2360,6 +2375,22 @@ export function generateCity(seed = WORLD_SEED): CityMapData {
   // tinta da serra não pode subir na rua nem contornar o quarteirão.
   for (let i = 0; i < W * H; i++) relevo[i] = flatTile(i) ? 0 : varrido[i];
 
+  // O nome dos lugares é a última coisa do mapa, e não por preguiça de ordem: a partição lê
+  // as quadras que o gerador planejou, o facho de cada via lê o asfalto já pintado e o posto
+  // já carimbado, e a travessa só sabe o próprio nome depois que o bairro existe. Antes disso
+  // seria nome de rua que ninguém asfaltou.
+  const nomeadora = mulberry32(seed ^ 0x6e6f6d61);
+  const partição = distritosDasQuadras(blocks, xs, ys, W, H, nomeadora,
+    { x0: 0, y0: northQuay + 2, x1: W, y1: southQuay });
+  const vias = [
+    ...viasDoGrid(tiles, W, H, xs, ys, [northQuay, southQuay], nomeadora),
+    ...viasDasTravessas(ruas, partição.distritos, partição.porQuadra, nomeadora),
+  ];
+  // Um só índice para as duas listas: o nome da via é o que se mostra, e o id é o que o check
+  // cobra sem depender de ordem de concatenação.
+  vias.forEach((v, i) => { v.id = i; });
+  const lugares: Lugares = { distritos: partição.distritos, vias };
+
   return { tilesW: W, tilesH: H, tiles, heights, shades, relevo, copa, buildings, props, vehicles,
-    cascatas, cavernas, npcSpawns, playerSpawn, worldW: W, worldH: H };
+    cascatas, cavernas, npcSpawns, playerSpawn, worldW: W, worldH: H, lugares };
 }

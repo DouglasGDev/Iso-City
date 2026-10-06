@@ -11,7 +11,9 @@ import { sound } from '../audio/SoundManager';
 import { useUiInputKind, useUiSurface } from './useUiNav';
 import { readableShadow } from './textShadow';
 import { remainingRouteDistance, type GpsPoint, buildGpsRoute } from '../world/Gps';
-import { MAP_COLORS as C, BIOME_LABEL, makeProjectors, mapPolygon, explorationPaths, radarPixels } from '../world/MapPresentation';
+import { MAP_COLORS as C, makeProjectors, mapPolygon, explorationPaths, radarPixels } from '../world/MapPresentation';
+import { PontosDeInteresse } from './PontosDeInteresse';
+import { RótulosDeLugares } from './RótulosDeLugares';
 import { InteriorPlan } from './InteriorPlan';
 import type { VisionCone } from '../systems/PoliceSystem';
 
@@ -147,6 +149,7 @@ function MapCanvas({ mapW, mapH, zoom, panX, panY, detailed }: {
       </Group>
       <Path path={outline} color={C.border} style="stroke" strokeWidth={1 / scale} />
     </Group>
+    <PontosDeInteresse mapW={mapW} mapH={mapH} zoom={zoom} panX={panX} panY={panY} detailed={detailed} />
     {game.police.searchArea && (() => {
       const area = game.police.searchArea;
       const points = Array.from({ length: 49 }, (_, i) => ({ x: area.x + Math.cos(i / 48 * Math.PI * 2) * area.radius,
@@ -377,7 +380,6 @@ export function FullMap({ onClose }: { onClose: () => void }) {
   });
   const composed = Gesture.Race(Gesture.Simultaneous(fingerGesture, pinchGesture), tapGesture);
   const position = game.worldPosition;
-  const tile = game.map.data.tiles[Math.floor(position.y) * W + Math.floor(position.x)];
   const rem = mapMarker ? mapRoute.length >= 2 ? remainingRouteDistance(mapRoute, position.x, position.y)
     : Math.hypot(position.x - mapMarker.x, position.y - mapMarker.y) : null;
   const discovered = game.exploration.percent;
@@ -397,6 +399,7 @@ export function FullMap({ onClose }: { onClose: () => void }) {
     <GestureDetector gesture={composed}>
       <View style={StyleSheet.absoluteFill} collapsable={false} testID="full-map-surface">
         <MapCanvas mapW={mapW} mapH={mapH} zoom={zoom} panX={pan.x} panY={pan.y} detailed />
+        <RótulosDeLugares mapW={mapW} mapH={mapH} zoom={zoom} panX={pan.x} panY={pan.y} />
       </View>
     </GestureDetector>
     {hardware && (
@@ -412,7 +415,7 @@ export function FullMap({ onClose }: { onClose: () => void }) {
         <Text style={[styles.fullTitle, compact && styles.titleCompact]}>{inside ? 'Plano do interior' : 'Mapa da cidade'}</Text>
         <Text style={styles.subtle}>{inside
           ? `${inside.label} · ${inside.map.worldW}×${inside.map.worldH} tiles, fora do mapa da cidade`
-          : BIOME_LABEL[tile?.biome] ?? 'Cidade'}</Text>
+          : game.lugarDoJogador()}</Text>
       </View>
       <View style={styles.headerRight}>
         <View style={[styles.progressCard, compact && styles.progressCompact, { pointerEvents: 'none' }]}>

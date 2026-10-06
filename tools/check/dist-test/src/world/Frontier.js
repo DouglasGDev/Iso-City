@@ -14,6 +14,7 @@ exports.empurraDoTronco = empurraDoTronco;
 exports.luzDoDossel = luzDoDossel;
 exports.tintaDoChão = tintaDoChão;
 exports.chãoDaFronteira = chãoDaFronteira;
+exports.biomaDaFronteira = biomaDaFronteira;
 exports.rioDaFronteira = rioDaFronteira;
 exports.chaveDoTile = chaveDoTile;
 exports.tilesDaFronteira = tilesDaFronteira;
@@ -344,6 +345,17 @@ function beira(W, H, tx, ty) {
  */
 function chãoDaFronteira(tiles, W, H, tx, ty) {
     return tiles[beira(W, H, tx, ty)]?.key || exports.GRAMA_DA_CIDADE;
+}
+/**
+ * O bioma de fora, pela mesma razão do chão: fora da grade não há tile, mas há vizinho.
+ *
+ * Quem lê `biome` é a névoa (e o áudio do lugar). Sem esta função, a terra sem nome caía no
+ * `?? 'residential'` de quem consulta o mapa, e a parede da moldura vestia o azul-cinza do asfalto
+ * sobre um chão que continua o material da beira — a fronteira inteira ficava com a cor de uma
+ * cidade que não está ali, e numa manhã de névoa isso é a única coisa que sobra do quadro.
+ */
+function biomaDaFronteira(tiles, W, H, tx, ty) {
+    return tiles[beira(W, H, tx, ty)]?.biome ?? 'forest';
 }
 /**
  * O rio sem fim: onde a beira do mapa é água, o tile de fora é água, e o canal continua para

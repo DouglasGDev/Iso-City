@@ -6,6 +6,7 @@ exports.generateCity = generateCity;
 const GameConfig_1 = require("../../game/GameConfig");
 const buildings_1 = require("../buildings");
 const vehicles_1 = require("../vehicles");
+const Lugares_1 = require("./Lugares");
 const GRASS = 'tile_ground_grass';
 const DIRT = 'tile_ground_dirt';
 const CONCRETE = 'tile_ground_concrete';
@@ -1029,6 +1030,12 @@ function generateCity(seed = exports.WORLD_SEED) {
         ['bld_policestation_a', 'downtown', 0.44, 0.35],
         ['bld_policestation_a', 'downtown', 0.44, 0.73],
         ['bld_policestation_a', 'suburb', 0.85, 0.73],
+        // Bombeiros: o catálogo já tinha o prédio, a arte e o `kind` no Map, mas nenhuma reserva o
+        // plantava — o glifo existia no registro de pontos de interesse e o mundo nunca tinha o
+        // lugar. O alvo é o lado leste da faixa baixa ao sul do rio, a mesma margem da esquadra de
+        // 0,44 mas a uma quadra dela, porque serviço de emergência colado no outro emerge um prédio
+        // só na leitura do mapa.
+        ['bld_firestation_a', 'downtown', 0.62, 0.73],
         ['bld_gunshop_a', 'commercial', 0.66, 0.35],
         // Rodoviária: o lote cívico do ônibus. O alvo é a franja oeste da faixa comercial ao
         // norte do rio, longe do hospital e da loja de armas, para a quadra sorteada não ser a
@@ -2330,6 +2337,20 @@ function generateCity(seed = exports.WORLD_SEED) {
     // tinta da serra não pode subir na rua nem contornar o quarteirão.
     for (let i = 0; i < W * H; i++)
         relevo[i] = flatTile(i) ? 0 : varrido[i];
+    // O nome dos lugares é a última coisa do mapa, e não por preguiça de ordem: a partição lê
+    // as quadras que o gerador planejou, o facho de cada via lê o asfalto já pintado e o posto
+    // já carimbado, e a travessa só sabe o próprio nome depois que o bairro existe. Antes disso
+    // seria nome de rua que ninguém asfaltou.
+    const nomeadora = mulberry32(seed ^ 0x6e6f6d61);
+    const partição = (0, Lugares_1.distritosDasQuadras)(blocks, xs, ys, W, H, nomeadora, { x0: 0, y0: northQuay + 2, x1: W, y1: southQuay });
+    const vias = [
+        ...(0, Lugares_1.viasDoGrid)(tiles, W, H, xs, ys, [northQuay, southQuay], nomeadora),
+        ...(0, Lugares_1.viasDasTravessas)(ruas, partição.distritos, partição.porQuadra, nomeadora),
+    ];
+    // Um só índice para as duas listas: o nome da via é o que se mostra, e o id é o que o check
+    // cobra sem depender de ordem de concatenação.
+    vias.forEach((v, i) => { v.id = i; });
+    const lugares = { distritos: partição.distritos, vias };
     return { tilesW: W, tilesH: H, tiles, heights, shades, relevo, copa, buildings, props, vehicles,
-        cascatas, cavernas, npcSpawns, playerSpawn, worldW: W, worldH: H };
+        cascatas, cavernas, npcSpawns, playerSpawn, worldW: W, worldH: H, lugares };
 }

@@ -389,6 +389,10 @@ function fixture(empty = false) {
     },
     // O radar pergunta o que a polícia vê; o fixture devolve o que o teste quiser desenhar.
     visionCones: [], policeVisionCones() { return this.visionCones; },
+    // Idem a linha de lugar do cabeçalho: `lugarDoJogador` é método do GameState, e este
+    // fixture é um GameState de mentirinha com mapa de 64×40 e nenhum bairro. O valor é
+    // escolhido à mão para os testes de cabeçalho cobrarem ESTA string.
+    lugarDoJogador() { return 'Jardim Aurora · Rua Acácia'; },
   };
   for (const method of ['isExplored', 'isVisited']) {
     const original = e[method].bind(e);
@@ -673,6 +677,7 @@ test('FullMap dentro de uma sala anuncia o plano, e o destino continua medido da
   assert.ok(text.includes('ISO CITY / INTERIOR'), 'o cabeçalho diz que é interior');
   assert.ok(text.includes(`${room.label} · 7×5 tiles`), 'o cabeçalho descreve a planta da sala');
   assert.ok(!text.includes('Praia'), 'o bioma da rua não empresta o nome da sala');
+  assert.ok(!text.includes('Jardim Aurora'), 'a linha de lugar continua sendo da rua, não da sala');
   assert.ok(text.includes(`DESTINO MARCADO · ${Math.round(remainingRouteDistance(ui.mapRoute, roomEntrance.x, roomEntrance.y))}m`),
     'o destino continua medido do pé da porta');
 });
@@ -682,6 +687,100 @@ test('new natural region labels are distinct and localized', () => {
   assert.equal(BIOME_LABEL.pinewood, 'Pinhal');
   assert.equal(BIOME_LABEL.savanna, 'Savana');
   assert.equal(new Set(Object.values(biomeRgb).map(String)).size, Object.keys(biomeRgb).length);
+});
+
+// ---- os rótulos de lugar ----
+// O nome só vale se aparecer na tela. As duas sementes geométricas de `Lugares` já são
+// provadas em `check-lugares.cjs`; o que se cobra aqui é a outra metade, a que o check de
+// dados não alcança: quando um nome vira tinta, e quando ele não vira.
+
+const { RótulosDeLugares } = source('ui/RótulosDeLugares.tsx');
+// A inclinação da rua não vem do componente: é `atan(1/2)` da projeção 2:1, deduzida aqui de
+// propósito. Se um dia alguém trocar a constante por um número bonito, este check briga.
+const ÂNGULO_DA_RUA = Math.atan(0.5) * 180 / Math.PI;
+
+const distritoDe = (id, nome, x0, y0, x1, y1, especie = 'bairro') => ({
+  id, nome, apelido: nome, biome: 'residential', especie, x0, y0, x1, y1,
+  cx: (x0 + x1) / 2, cy: (y0 + y1) / 2,
+});
+const viaDe = (id, nome, eixo, faixa, de, ate, rank = 'avenue') => ({
+  id, nome, rank, eixo, faixa0: faixa, faixa1: faixa + 1, de, ate,
+});
+
+function rótulos(zoom, distritos, vias = []) {
+  const game = fixture();
+  game.map.data.lugares = { distritos, vias };
+  return game;
+}
+function placas(zoom) {
+  return walk(RótulosDeLugares({ mapW: 390, mapH: 844, zoom, panX: 0, panY: 0 }))
+    .filter(({ node }) => node.type === 'Text')
+    .map(({ node }) => ({ texto: textOf(node), node }));
+}
+// `fixture()` amarra `e.update` exatamente para provar que desenhar não descobre nada. Revelar
+// terreno é o oposto: entra aqui pelo método da classe, antes do render, fora da vigilância.
+const revelar = (game, x, y) => ExplorationSystem.prototype.update.call(
+  game.exploration, { position: { x, y }, outdoors: true });
+
+test('um bairro sem nome nenhum não desenha nada', () => {
+  rótulos(2.2, []);
+  assert.deepEqual(placas(2.2), [], 'sem `lugares` a camada inventou um lugar');
+});
+
+test('o nome do lugar só acende onde o jogador já pisou', () => {
+  const visitado = distritoDe(0, 'Jardim Aurora', 0, 0, 32, 24);
+  const virgem = distritoDe(1, 'Jardim Bonança', 32, 0, 64, 24);
+  const game = rótulos(2.2, [visitado, virgem]);
+  revelar(game, visitado.cx, visitado.cy);
+  assert.deepEqual(placas(2.2).map((p) => p.texto), ['Jardim Aurora'],
+    'o mapa entregou de graça o nome de um bairro nunca visitado');
+});
+
+test('nome que não cabe no próprio losango fica para o próximo zoom', () => {
+  const apertado = distritoDe(0, 'Jardim Aurora', 20, 12, 30, 18);
+  const game = rótulos(1, [apertado]);
+  revelar(game, apertado.cx, apertado.cy);
+  assert.deepEqual(placas(1).map((p) => p.texto), [], 'coube nome onde não havia tela para ele');
+  assert.deepEqual(placas(6).map((p) => p.texto), ['Jardim Aurora'],
+    'no zoom fundo o nome continuou escondido');
+});
+
+test('placa de rua entra no zoom de endereço, inclinada com a rua', () => {
+  const norte = distritoDe(0, 'Jardim Aurora', 0, 0, 64, 40);
+  const game = rótulos(1, [norte], [viaDe(7, 'Avenida Brasil', 'ns', 24, 6, 34)]);
+  revelar(game, 24, 20);
+  assert.deepEqual(placas(1).map((p) => p.texto), ['Jardim Aurora'],
+    'a cidade inteira saiu placa a placa');
+  const comPlaca = placas(4);
+  assert.ok(comPlaca.some((p) => p.texto === 'Avenida Brasil'), 'sumiu a placa da avenida');
+  // O RN só aceita `transform` com ângulo em STRING com unidade, e é isso que vai para a tela.
+  // O teste cobra a string inteira: número certo sem `deg` é um transform que o RN descarta.
+  const graus = (node) => node.props.style
+    .flatMap((s) => s?.transform ?? []).map((t) => Number.parseFloat(t.rotate));
+  const ns = comPlaca.find((p) => p.texto === 'Avenida Brasil').node;
+  assert.ok(ns.props.style.flatMap((s) => s?.transform ?? []).every((t) => /deg$/.test(t.rotate)),
+    'a placa saiu do RN sem unidade de giro');
+  assert.ok(graus(ns).some((g) => Math.abs(g - -ÂNGULO_DA_RUA) < 0.01),
+    `a placa norte-sul saiu torta da rua: ${graus(ns).join(',')}`);
+  // O outro eixo é o espelho: uma rua leste-oeste desce para a direita, e uma placa torta do
+  // lado errado é o erro que este teste existe para pegar.
+  const game2 = rótulos(1, [norte], [viaDe(9, 'Rua Santana', 'ew', 12, 6, 40)]);
+  revelar(game2, 20, 12);
+  const ew = placas(4).find((p) => p.texto === 'Rua Santana');
+  assert.ok(ew !== undefined, 'sumiu a placa da rua leste-oeste');
+  assert.ok(graus(ew.node).some((g) => Math.abs(g - ÂNGULO_DA_RUA) < 0.01),
+    `a placa leste-oeste inclinou contra a rua: ${graus(ew.node).join(',')}`);
+});
+
+test('duas placas não se escrevem uma sobre a outra', () => {
+  const grande = distritoDe(0, 'Jardim Aurora', 0, 0, 64, 40);
+  const pequeno = distritoDe(1, 'Vila Bonança', 24, 14, 40, 26);
+  const game = rótulos(1, [grande, pequeno]);
+  revelar(game, grande.cx, grande.cy);
+  revelar(game, pequeno.cx, pequeno.cy);
+  const textos = placas(4).map((p) => p.texto);
+  assert.ok(textos.length === 1 && textos[0] === 'Jardim Aurora',
+    `sobrou tinta atropelada: ${textos.join(' | ')}`);
 });
 
 console.log(`Map presentation checks: ${passed} passed, ${failed} failed.`);

@@ -1,5 +1,6 @@
 import type { Collider } from '../entities/types';
 import type { CityMapData, PlacedBuilding, PlacedProp } from '../data/maps/city';
+import { distritoEm, viaEm, type Distrito, type Via } from '../data/maps/Lugares';
 import { GAME_CONFIG, type Biome, type Dir4 } from '../game/GameConfig';
 import { rioDaFronteira } from './Frontier';
 import { deltaToDir } from './IsoUtils';
@@ -595,6 +596,24 @@ export class Map {
     const ty = Math.floor(y);
     if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH) return null;
     return this.data.tiles[ty * this.data.tilesW + tx].biome;
+  }
+
+  /**
+   * O lugar nomeado desta coordenada: o bairro (ou a zona, ou o rio) e a via em cima da qual
+   * se está. Os retângulos de bairro são disjoint e cobrem a grade inteira por construção,
+   * então dentro do mapa sempre há uma resposta; fora dela é `null`, e é a fronteira quem dá
+   * o nome dali. Consulta geométrica de propósito — dezenas de retângulos e poucas dezenas de
+   * fachos, lidos uma vez por quadro de HUD, sem índice de um array por tile.
+   */
+  lugarEm(x: number, y: number): { distrito: Distrito | null; via: Via | null } {
+    const lugares = this.data.lugares;
+    if (!lugares) return { distrito: null, via: null };
+    const tx = Math.floor(x);
+    const ty = Math.floor(y);
+    if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH) {
+      return { distrito: null, via: null };
+    }
+    return { distrito: distritoEm(lugares, tx, ty), via: viaEm(lugares, tx, ty) };
   }
 
   /**

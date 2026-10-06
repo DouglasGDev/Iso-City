@@ -3,6 +3,7 @@ import { consumeAttack, consumeCrouch, consumeEnter, consumeHorn, consumeInterac
 import { WeaponSystem, type WeaponContext } from '../systems/WeaponSystem';
 import { Map } from '../world/Map';
 import { generateCity, WORLD_SEED } from '../data/maps/city';
+import { fraseDoLugar } from '../data/maps/Lugares';
 import { createCamera, cameraFollow, clampToMap, clampToRoom, indoorZoom, type CameraState } from '../world/Camera';
 import { angleToWorldDir, dirToAngle, screenToWorld, worldToScreen } from '../world/IsoUtils';
 import { biomaDaFronteira, faceDaFronteira, nomeDaTerra, profundidade, seguraNaFronteira } from '../world/Frontier';
@@ -942,6 +943,23 @@ export class GameState {
       + `${face ? ` · ${face}` : ''} · `
       + (semMotor ? 'SEM MOTOR' : aldeia ? 'ALDEIA ACORDADA'
         : caçado ? 'CAÇADO' : perigo >= 0.5 ? 'aviso' : 'quieta');
+  }
+
+  /**
+   * O nome do lugar debaixo do pé, na frase que a tela mostra: "Jardim Aurora · Rua Acácia" na
+   * cidade, "Mata do Ipê" na reserva, "Rio Capivara" sobre a água.
+   *
+   * Dentro de uma sala não há bairro nenhum — a sala é um plano à parte do mapa — e é por isso
+   * que a leitura é pelo `worldPosition`, o pé da porta na rua, a mesma fonte que o trânsito, a
+   * polícia, o radar e o save já obedecem. Fora da grade o mapa não tem nome a dar, e quem nomeia
+   * a terra é a fronteira: a mata sem fim já tem a sua escala própria de distância.
+   */
+  lugarDoJogador(): string {
+    const p = this.worldPosition;
+    const { distrito, via } = this.map.lugarEm(p.x, p.y);
+    if (distrito || via) return fraseDoLugar(distrito, via);
+    const { tilesW: W, tilesH: H } = this.map.data;
+    return nomeDaTerra(profundidade(p.x, p.y, W, H));
   }
 
   /**

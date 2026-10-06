@@ -217,16 +217,21 @@ class AltitudeSystem {
         // A névoa da manhã é um andar embaixo de tudo: fecha no chão e acaba uma hora depois do
         // telhado. Subir acima dela e ver a cidade reaparecer é a prova mais barata que existe de que a
         // altura é de verdade — e era impossível de notar enquanto altura só movia sprite.
-        const bruma = Math.max(dentro, env.nevoia * rampa(env.chao + GameConfig_1.GAME_CONFIG.BRUMA_DO_CHAO, env.chao - 0.4, env.cota));
+        const nevoa = clamp01(env.nevoia) * rampa(env.chao + GameConfig_1.GAME_CONFIG.BRUMA_DO_CHAO, env.chao - 0.4, env.cota);
+        // O que a coluna entrega para a tela é SÓ a nuvem. A névoa do chão fecha o ALCANCE do olhar, e
+        // quem desenha alcance é a parede da moldura — `FogSystem` já recebe o mesmo número do clima e
+        // com ele clareia e encolhe a beira. Deixar os dois pintarem o quadro era pagar duas vezes pelo
+        // mesmo fenômeno, e a segunda cópia é a pior: um lavado chapado sobre 100% da tela, centro
+        // incluso, apagando a rua inteira numa manhã que deveria só ter o horizonte mais perto.
         // Histerese de um terço de segundo: na borda mastigada do campo o casco entra e sai a cada
         // quadro, e sem memória a tela esbranaça e volta em vez de fechar.
-        this.brumaSuavizada += (clamp01(bruma) - this.brumaSuavizada) * (1 - Math.exp(-dt * 3.2));
-        // Duas coisas tapam a cidade lá de baixo e a mais forte vence: a manta no meio do caminho do
+        this.brumaSuavizada += (clamp01(dentro) - this.brumaSuavizada) * (1 - Math.exp(-dt * 3.2));
+        // Três coisas tapam a cidade lá de baixo e a mais forte vence: a manta no meio do caminho do
         // olhar (não adianta haver buraco no meu ponto se o teto de nuvem inteiro está entre mim e o
-        // chão) e a parede em que eu mesmo estou metido. Depois vem a distância: a 46 tiles o bairro é
-        // uma ficha, e ficha nenhuma se lê.
+        // chão), a parede em que eu mesmo estou metido e a névoa do andar de baixo. Depois vem a
+        // distância: a 46 tiles o bairro é uma ficha, e ficha nenhuma se lê.
         const fechamento = this.fechada * rampa(this.base - ONDE, this.base + ONDE * 2, env.cota);
-        const tapado = Math.max(fechamento, this.brumaSuavizada);
+        const tapado = Math.max(fechamento, this.brumaSuavizada, nevoa);
         const next = {
             cota: env.cota,
             chao: env.chao,

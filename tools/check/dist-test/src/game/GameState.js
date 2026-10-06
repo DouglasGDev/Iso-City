@@ -9,6 +9,7 @@ const InputState_1 = require("./InputState");
 const WeaponSystem_1 = require("../systems/WeaponSystem");
 const Map_1 = require("../world/Map");
 const city_1 = require("../data/maps/city");
+const Lugares_1 = require("../data/maps/Lugares");
 const Camera_1 = require("../world/Camera");
 const IsoUtils_1 = require("../world/IsoUtils");
 const Frontier_1 = require("../world/Frontier");
@@ -900,6 +901,23 @@ class GameState {
                 : caçado ? 'CAÇADO' : perigo >= 0.5 ? 'aviso' : 'quieta');
     }
     /**
+     * O nome do lugar debaixo do pé, na frase que a tela mostra: "Jardim Aurora · Rua Acácia" na
+     * cidade, "Mata do Ipê" na reserva, "Rio Capivara" sobre a água.
+     *
+     * Dentro de uma sala não há bairro nenhum — a sala é um plano à parte do mapa — e é por isso
+     * que a leitura é pelo `worldPosition`, o pé da porta na rua, a mesma fonte que o trânsito, a
+     * polícia, o radar e o save já obedecem. Fora da grade o mapa não tem nome a dar, e quem nomeia
+     * a terra é a fronteira: a mata sem fim já tem a sua escala própria de distância.
+     */
+    lugarDoJogador() {
+        const p = this.worldPosition;
+        const { distrito, via } = this.map.lugarEm(p.x, p.y);
+        if (distrito || via)
+            return (0, Lugares_1.fraseDoLugar)(distrito, via);
+        const { tilesW: W, tilesH: H } = this.map.data;
+        return (0, Frontier_1.nomeDaTerra)((0, Frontier_1.profundidade)(p.x, p.y, W, H));
+    }
+    /**
      * A dívida da barra e a fera que a está cobrando. É a mesma leitura da linha de texto, e é por
      * isso que existe um método em vez de o HUD ler `game.gorilas.perigo`: no rio quem cobra não é o
      * gigante, e uma barra que mostra o rancor errado ensinaria o jogador a não confiar nela.
@@ -1527,7 +1545,14 @@ class GameState {
     }
     updateEnvironment(dt) {
         const position = this.worldPosition;
-        const biome = this.map.data.tiles[Math.floor(position.y) * this.map.data.tilesW + Math.floor(position.x)]?.biome ?? 'residential';
+        // Fora da grade o tile não existe, mas a beira existe: a névoa da terra sem nome é a do bioma
+        // que o limite do mapa tinha, pela mesma regra que veste o chão sem fim. O `?? 'residential'`
+        // cru fazia duas coisas erradas de uma vez — o índice linear atravessava para a linha vizinha
+        // quando x ou y saíam da grade, e onde ele acertava um tile de verdade vestia a parede da
+        // moldura com a cor do asfalto sobre um chão de pinheiro. Num dia fechado a moldura é quase
+        // tudo o que se vê, e era ela que mentia.
+        const biome = this.map.biomeAt(position.x, position.y)
+            ?? (0, Frontier_1.biomaDaFronteira)(this.map.data.tiles, this.map.data.tilesW, this.map.data.tilesH, Math.floor(position.x), Math.floor(position.y));
         this.biomeAtCamera = biome;
         const environment = { timeOfDay: this.dayNight.t, rain: this.weather.intensity + this.hazard.wet,
             cover: this.weather.cover, mist: this.weather.mist, dark: this.hazard.dark, biome };
