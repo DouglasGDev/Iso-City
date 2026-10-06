@@ -51,6 +51,14 @@ export interface Animal extends AnimalPoint {
   /** Private-to-simulation bookkeeping, published poses exclude these fields. */
   randomState: number;
   deathNotified: boolean;
+  /**
+   * Carimbo do último `update` do WildlifeSystem: este corpo foi movido neste tick? Longe da
+   * câmera, ou além das 48 fichas de atualização, o bicho congela com a velocidade do último
+   * quadro ainda escrita nele — 3,15 tile por segundo no banco, parado no asfalto. A rua tem de
+   * saber disso: lataria nenhuma, nem ônibus, pode esperar para sempre por um corpo que o mundo
+   * não está mais simulando e portanto jamais vai sair do caminho.
+   */
+  simulated: boolean;
 }
 
 export function createAnimal(id: number, species: AnimalSpecies, x: number, y: number, seed = id + 1): Animal {
@@ -60,6 +68,7 @@ export function createAnimal(id: number, species: AnimalSpecies, x: number, y: n
     speed: 0, dead: false, deathTimer: -1, animTime: 0,
     moveX: 1, moveY: 0, decisionTimer: 1, fleeTimer: 0, callTimer: 8,
     randomState: seed >>> 0, deathNotified: false,
+    simulated: false,
   };
 }
 

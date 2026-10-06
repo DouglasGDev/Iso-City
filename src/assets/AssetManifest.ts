@@ -16,6 +16,8 @@ export const ASSET_FILES: Record<string, number> = {
   "Buildings/bld_autoshop_b_damaged.png": require("../../assets/sprites/Buildings/bld_autoshop_b_damaged.png"),
   "Buildings/bld_beach_bungalow_a.png": require("../../assets/sprites/Buildings/bld_beach_bungalow_a.png"),
   "Buildings/bld_beach_bungalow_b.png": require("../../assets/sprites/Buildings/bld_beach_bungalow_b.png"),
+  "Buildings/bld_busstation_a.png": require("../../assets/sprites/Buildings/bld_busstation_a.png"),
+  "Buildings/bld_busstation_b.png": require("../../assets/sprites/Buildings/bld_busstation_b.png"),
   "Buildings/bld_cabin_log_a.png": require("../../assets/sprites/Buildings/bld_cabin_log_a.png"),
   "Buildings/bld_cabin_log_b.png": require("../../assets/sprites/Buildings/bld_cabin_log_b.png"),
   "Buildings/bld_cafe_a.png": require("../../assets/sprites/Buildings/bld_cafe_a.png"),
@@ -712,4 +714,4 @@ export const ASSET_FILES: Record<string, number> = {
 };
 
 export const ASSET_KEYS: string[] = Object.keys(ASSET_FILES);
-export const ASSET_COUNT = 706;
+export const ASSET_COUNT = 708;

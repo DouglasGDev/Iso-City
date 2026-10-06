@@ -14,9 +14,12 @@ import { VehicleSteer } from './src/ui/VehicleSteer';
 import { ActionButtons } from './src/ui/ActionButtons';
 import { ControlTouch } from './src/ui/ControlTouch';
 import { HUD } from './src/ui/HUD';
+import { AltitudeGauge } from './src/ui/AltitudeGauge';
+import { AltitudeAudioSystem } from './src/systems/AltitudeAudioSystem';
 import { MiniMap, FullMap } from './src/ui/MiniMap';
 import { RoundOverlay } from './src/ui/RoundOverlay';
 import { ShopMenu } from './src/ui/ShopMenu';
+import { DeparturesMenu } from './src/ui/DeparturesMenu';
 import { PauseMenu } from './src/ui/PauseMenu';
 import { MainMenu } from './src/ui/MainMenu';
 import { getGame, peekGame, resetGame } from './src/game/GameState';
@@ -166,6 +169,7 @@ export default function App() {
   const paused = useGameStore((s) => s.paused);
   const mapOpen = useGameStore((s) => s.mapOpen);
   const shopOpen = useGameStore((s) => s.shopOpen);
+  const departuresOpen = useGameStore((s) => s.departuresOpen);
   const overlay = useGameStore((s) => s.overlay);
   const gameGen = useGameStore((s) => s.gameGen);
   const playing = screen === 'playing';
@@ -174,7 +178,8 @@ export default function App() {
   const flying = useFlying(booted);
   const aboard = useAboard(booted);
   const prev = useRef(driving);
-  const suspended = !booted || screen !== 'playing' || paused || mapOpen || shopOpen || overlay !== null;
+  const suspended = !booted || screen !== 'playing' || paused || mapOpen || shopOpen || departuresOpen
+    || overlay !== null;
   const inputMode = useHardwareInput(suspended);
 
   useEffect(() => {
@@ -233,6 +238,10 @@ export default function App() {
         useGameStore.closeShop();
         return true;
       }
+      if (s.departuresOpen) {
+        useGameStore.closeDepartures();
+        return true;
+      }
       if (s.paused) {
         useGameStore.resume();
         return true;
@@ -253,6 +262,49 @@ export default function App() {
   }, [driving]);
 
   const live = playing && booted;
+
+  /**
+   * O ouvido da coluna de ar. Dez hertz, e não o laço de simulação: a cota, o vento e a nuvem já
+   * estão resolvidos dentro do passo fixo, e um volume que muda ao longo de segundos é apresentação
+   * — não precisa de mais fidelidade que o ouvido tem. Amostrado do instantâneo publicado, o leito
+   * continua exato sem pedir nada ao simulador. O `dt` é o relógio de parede entre duas amostras,
+   * não o nominal — é o que mantém a velocidade de subida honesta depois de um frame longo.
+   */
+  const audioDaAltura = useRef<AltitudeAudioSystem | null>(null);
+  useEffect(() => {
+    if (!live) {
+      audioDaAltura.current = null;
+      return;
+    }
+    let sys = audioDaAltura.current;
+    if (!sys) {
+      sys = new AltitudeAudioSystem({
+        rotor: (v) => sound.rotorLoop(v),
+        ar: (v) => sound.arLoop(v),
+      });
+      audioDaAltura.current = sys;
+    }
+    if (suspended) {
+      sys.suspend();
+      return;
+    }
+    const game = getGame();
+    const antes = { t: Date.now() };
+    const iv = setInterval(() => {
+      const agora = Date.now();
+      const dt = Math.min(0.5, (agora - antes.t) / 1000);
+      antes.t = agora;
+      const id = game.player.currentVehicleId;
+      const v = id === null ? null : game.vehicles.find((x) => x.id === id) ?? null;
+      sys.update(dt, {
+        pilotando: !!v && v.def.type === 'helicopter' && !v.motorDead,
+        velocidade: v ? Math.abs(v.speed) : 0,
+        aoArLivre: !game.interiors.active,
+        ar: game.altitude.snapshot,
+      });
+    }, 100);
+    return () => clearInterval(iv);
+  }, [live, suspended]);
 
   return (
     <SafeAreaProvider>
@@ -284,6 +336,9 @@ export default function App() {
                   <MiniMap />
                   {!suspended && inputMode !== 'touch' && <HardwareHints mode={inputMode} driving={driving} flying={flying} />}
                 </>}
+                {/* Um só ponto de montagem para os dois modos de entrada: o aparelho é do
+                    helicóptero, não do toque. */}
+                <AltitudeGauge visible={flying && !suspended} />
                 <RoundOverlay />
                 <PauseMenu
                   visible={paused && !mapOpen}
@@ -295,6 +350,7 @@ export default function App() {
                 />
                 {mapOpen && <FullMap onClose={() => useGameStore.closeMap()} />}
                 <ShopMenu />
+                <DeparturesMenu />
               </SpriteProvider>
             )}
             {screen === 'menu' && (

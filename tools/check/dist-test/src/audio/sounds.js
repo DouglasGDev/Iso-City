@@ -89,6 +89,28 @@ exports.SFX = {
     thunder: require('../../assets/Audio/generated/thunder.wav'),
     // Aviso de clima severo (gerado por tools/generate-sfx.js --hazards)
     weatherAlert: require('../../assets/Audio/generated/weather_alert.wav'),
+    // Fronteira: a voz e o peso do gorila (gerado por tools/generate-sfx.js --frontier)
+    gorillaRoar: require('../../assets/Audio/generated/gorilla_roar.wav'),
+    gorillaStep: require('../../assets/Audio/generated/gorilla_step.wav'),
+    // Fronteira pelo ar: o torque que some (rotor_fail) e o que volta depois de cinco segundos
+    // parado no chão da mata (engine_catch). São os dois únicos sinais audíveis de que a máquina
+    // não está com defeito — ela está fora do que é dela.
+    rotorFail: require('../../assets/Audio/generated/rotor_fail.wav'),
+    engineCatch: require('../../assets/Audio/generated/engine_catch.wav'),
+    // Fronteira pelo rio: o aviso é a superfície deslizando (piranha_threat) e a rotura dela é o
+    // corpo saindo d'água (piranha_splash). O splash toca em três volumes diferentes — 0,85 na
+    // subida, 0,24 na esteira a cada tile e meio, 0,8 na dentada — porque é o mesmo gesto físico
+    // medido por distâncias diferentes, e um som próprio para a esteira faria a fera parecer três.
+    piranhaThreat: require('../../assets/Audio/generated/piranha_threat.wav'),
+    piranhaSplash: require('../../assets/Audio/generated/piranha_splash.wav'),
+    // Tribo: as duas vozes do bando (gerado por tools/generate-sfx.js --tribo). O grito é curto e
+    // toca três vezes em três volumes (0,85 quando um deles te vê de longe, 0,7 no chamado do bando,
+    // 0,4 quando o porrete sobe a dois passos) — é sempre a mesma garganta, o que muda é a distância.
+    // O tambor é outra função: não anuncia perigo nenhum, ele anuncia o acampamento, e por isso é o
+    // único som daqui que toca com o bando ainda calmo, crescido pelo alerta e pelo quão perto você
+    // está da fogueira. Sem ele a tribo só existiria no instante em que você é visto.
+    triboGrito: require('../../assets/Audio/generated/tribo_grito.wav'),
+    triboTambor: require('../../assets/Audio/generated/tribo_tambor.wav'),
     // Pickups / missões (Kenney rpg + jingles)
     coin: [
         require('../../assets/Audio/rpg/handleCoins.mp3'),
@@ -133,4 +155,11 @@ exports.LOOPS = {
     engine: require('../../assets/Audio/generated/engine_loop.wav'),
     siren: require('../../assets/Audio/generated/siren_loop.wav'),
     cascade: require('../../assets/Audio/generated/cascade_loop.wav'),
+    // O corte das pás do casco que você pilota. É o mesmo um-segundo do apoio aéreo, mas em leito
+    // contínuo: o aparelho da polícia PASSA e um one-shot serve; o seu fica, e precisa de volume
+    // próprio, que sobe com o passo e emagrece no teto.
+    rotor: require('../../assets/Audio/generated/heli_rotor.wav'),
+    // O ar passando por cima da lataria. Não é o vento do clima na rua — é o sopro de altitude, que
+    // vale zero no voo raso de propósito para não duplicar o leito da região.
+    ar: require('../../assets/Audio/generated/wind_loop.wav'),
 };

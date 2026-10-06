@@ -49,7 +49,7 @@ function cameraCellKey(game: GameState): string {
  * muda de um tile para o outro é só a matriz. Nela entra o 2% de folga em volta do
  * losango, para a ponta de um vizinho cobrir a do outro em vez de deixar fio de fundo.
  */
-const TILE_OVER = 1.006;
+export const TILE_OVER = 1.006;
 const CANTO = [
   { x: 64, y: 0 },
   { x: 128, y: 32 },
@@ -85,7 +85,13 @@ function matrizDeApara(p1: { x: number; y: number }, p2: { x: number; y: number 
   return Skia.Matrix([a, b, q1.x - (a * p1.x + b * p1.y), c, d, q1.y - (c * p1.x + d * p1.y), 0, 0, 1]);
 }
 
-function drawTiltedTile(canvas: SkCanvas, img: SkImage,
+/**
+ * Um tile de chão entortado no relevo. Exportado porque a fronteira sem fim precisa dele: o
+ * chão além da grade é o MESMO tile da cidade (grama), e um tile desses sobre morro só fecha
+ * com o vizinho de dentro se for pelas mesmas duas máscaras e as mesmas duas matrizes. Duas
+ * implementações de losango inclinado é a emenda que o contrato do relevo proíbe.
+ */
+export function drawTiltedTile(canvas: SkCanvas, img: SkImage,
   A: { x: number; y: number }, B: { x: number; y: number },
   C: { x: number; y: number }, D: { x: number; y: number }) {
   const [t1, t2] = tris ??= [faceDaImagem(0, 1, 2), faceDaImagem(0, 2, 3)];

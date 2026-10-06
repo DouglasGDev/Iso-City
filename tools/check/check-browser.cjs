@@ -162,6 +162,7 @@ async function exposeGame() {
   });
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve); socket.addEventListener('error', reject); });
   await send('Page.enable');
+  await require('./bundle-identity.cjs').attach(socket, send);
   await send('Page.navigate', { url: 'about:blank' });
   await until('location.href === "about:blank"', 'clean browser context');
   await send('Runtime.enable');

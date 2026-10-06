@@ -167,6 +167,7 @@ const LER = `(()=>{const m=window.__m,g=qa.g;const vivo={};`
   };
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = () => reject(new Error('CDP falhou')); });
   await send('Runtime.enable'); await send('Page.enable');
+  await require('./bundle-identity.cjs').attach(socket, send);
   // Abort() e estouro de memória aparecem no console da página; guardar tudo é a única forma
   // de a régua não virar verde por ler só o que deu certo.
   socket.on('message', (raw) => {

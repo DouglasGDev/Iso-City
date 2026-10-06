@@ -7,13 +7,14 @@ const ts = require('typescript');
 const root = path.resolve(__dirname, '../..');
 const srcPath = (name) => path.join(root, 'src', name);
 const cache = new Map();
-const ui = { paused: false, mapOpen: false, shopOpen: false, overlay: null, mapMarker: null, mapRoute: [] };
+const ui = { paused: false, mapOpen: false, shopOpen: false, departuresOpen: false, overlay: null, mapMarker: null, mapRoute: [] };
 const stubs = {
   [srcPath('audio/SoundManager.ts')]: { sound: { play() {}, ambient() {}, weather() {}, setLoop() {}, stopLoops() {}, isUnlocked: true, unlock: async () => {} } },
   [srcPath('assets/AssetRegistry.ts')]: { spriteKeyForVehicle: () => '' },
   [srcPath('stores/useGameStore.ts')]: { useGameStore: {
     getState: () => ui, clearMapMarker() {}, refreshMapRoute() {}, showOverlay(kind) { ui.overlay = kind; },
     openShop() { ui.shopOpen = true; }, closeShop() { ui.shopOpen = false; },
+    openDepartures() { ui.departuresOpen = true; }, closeDepartures() { ui.departuresOpen = false; },
   } },
 };
 function load(filename) {

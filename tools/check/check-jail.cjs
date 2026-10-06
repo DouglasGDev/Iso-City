@@ -11,13 +11,14 @@ const root = path.resolve(__dirname, '../..');
 execFileSync(process.execPath, [path.join(root, 'node_modules/typescript/bin/tsc'), '-p', path.join(__dirname, 'tsconfig.json')], { stdio: 'inherit' });
 const compiled = path.join(__dirname, 'dist-test/src');
 const load = (file) => require(path.join(compiled, file));
-const ui = { paused: false, mapOpen: false, shopOpen: false, overlay: null, mapMarker: null, mapRoute: [] };
+const ui = { paused: false, mapOpen: false, shopOpen: false, departuresOpen: false, overlay: null, mapMarker: null, mapRoute: [] };
 const sfx = [];
 for (const [file, exports] of [
   ['audio/SoundManager.js', { sound: { play: (key) => sfx.push(key), ambient() {}, weather() {}, setLoop() {}, stopLoops() {} } }],
   ['assets/AssetRegistry.js', { spriteKeyForVehicle: () => '' }],
   ['stores/useGameStore.js', { useGameStore: { getState: () => ui, clearMapMarker() {}, refreshMapRoute() {},
-    showOverlay: (kind) => { ui.overlay = kind; }, openShop: () => { ui.shopOpen = true; }, closeShop: () => { ui.shopOpen = false; } } }],
+    showOverlay: (kind) => { ui.overlay = kind; }, openShop: () => { ui.shopOpen = true; }, closeShop: () => { ui.shopOpen = false; },
+    openDepartures: () => { ui.departuresOpen = true; }, closeDepartures: () => { ui.departuresOpen = false; } } }],
 ]) {
   const filename = path.join(compiled, file);
   require.cache[filename] = { id: filename, filename, loaded: true, exports };

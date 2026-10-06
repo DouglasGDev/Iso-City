@@ -158,6 +158,7 @@ const meiaTela = (c, t, zoom) => c.largura * 0.5 * (0.72 + 0.56 * t) * 64 * Math
   };
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = () => reject(new Error('CDP falhou')); });
   await send('Runtime.enable'); await send('Page.enable'); await send('Log.enable');
+  await require('./bundle-identity.cjs').attach(socket, send);
 
   await send('Page.navigate', { url: 'about:blank' });
   await send('Emulation.setDeviceMetricsOverride', { width: VW, height: VH, deviceScaleFactor: 1, mobile: true });

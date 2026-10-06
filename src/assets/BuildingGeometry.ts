@@ -13,6 +13,8 @@ export const BUILDING_GEOMETRY: Record<string, { anchorX: number; anchorY: numbe
   "bld_autoshop_b_damaged": { anchorX: 44.5, anchorY: 85, span: 66.5 },
   "bld_beach_bungalow_a": { anchorX: 58.5, anchorY: 64, span: 33.5 },
   "bld_beach_bungalow_b": { anchorX: 69.5, anchorY: 64, span: 33.5 },
+  "bld_busstation_a": { anchorX: 128, anchorY: 104, span: 68 },
+  "bld_busstation_b": { anchorX: 128, anchorY: 104, span: 68 },
   "bld_cabin_log_a": { anchorX: 59, anchorY: 63, span: 34 },
   "bld_cabin_log_b": { anchorX: 69, anchorY: 63, span: 34 },
   "bld_cafe_a": { anchorX: 72, anchorY: 92, span: 66 },

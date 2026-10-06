@@ -6,12 +6,13 @@ const root = path.resolve(__dirname, '../..');
 execFileSync(process.execPath, [path.join(root, 'node_modules/typescript/bin/tsc'), '-p', path.join(__dirname, 'tsconfig.json')], { stdio: 'inherit' });
 const compiled = path.join(__dirname, 'dist-test/src');
 const load = (file) => require(path.join(compiled, file));
-const ui = { paused: false, mapOpen: false, shopOpen: false, overlay: null, mapMarker: null, mapRoute: [] };
+const ui = { paused: false, mapOpen: false, shopOpen: false, departuresOpen: false, overlay: null, mapMarker: null, mapRoute: [] };
 for (const [file, exports] of [
   ['audio/SoundManager.js', { sound: { play() {}, ambient() {}, weather() {}, setLoop() {}, stopLoops() {} } }],
   ['assets/AssetRegistry.js', { spriteKeyForVehicle: () => '' }],
   ['stores/useGameStore.js', { useGameStore: { getState: () => ui, clearMapMarker() {}, refreshMapRoute() {},
-    showOverlay: (kind) => { ui.overlay = kind; }, openShop: () => { ui.shopOpen = true; }, closeShop: () => { ui.shopOpen = false; } } }],
+    showOverlay: (kind) => { ui.overlay = kind; }, openShop: () => { ui.shopOpen = true; }, closeShop: () => { ui.shopOpen = false; },
+    openDepartures: () => { ui.departuresOpen = true; }, closeDepartures: () => { ui.departuresOpen = false; } } }],
 ]) {
   const filename = path.join(compiled, file);
   require.cache[filename] = { id: filename, filename, loaded: true, exports };
@@ -29,6 +30,7 @@ let transitions = 0;
 let used = 0;
 let records = 0;
 let shopsOpened = 0;
+let boardsOpened = 0;
 const owned = new Set(['unarmed', 'bat']);
 const ctx = {
   player: p,
@@ -40,6 +42,7 @@ const ctx = {
   onTransition: () => transitions++,
   onUse: () => used++,
   onOpenShop: () => shopsOpened++,
+  onOpenDepartures: () => boardsOpened++,
 };
 function clearAt(map, x, y) {
   return !map.queryNearby(x, y, 0.5).some((c) => x > c.x - 0.17 && x < c.x + c.width + 0.17 && y > c.y - 0.17 && y < c.y + c.height + 0.17);
@@ -65,9 +68,9 @@ const entranceDensity = interiors.entrances.length / (world.worldW * world.world
 assert.ok(entranceDensity > 10 / (160 * 160) && entranceDensity < 100 / (160 * 160), `entrance density: ${entranceDensity}`);
 assert.equal(new Set(interiors.entrances.map((e) => `${e.x},${e.y}`)).size, interiors.entrances.length);
 // A porta da cadeia é a calçada da esquadra, não a fachada de uma loja: ver check-jail.
-// A delegacia também é calçada (ver o bloco próprio mais abaixo), então as duas
-// escapam da regra da fachada — e do espaçamento de 8 tiles, que é uma regra de comércio.
-const storefront = (e) => e.kind !== 'jail' && e.kind !== 'precinct';
+// A delegacia e a rodoviária também são calçada (ver o bloco próprio de cada uma), então as
+// três escapam da regra da fachada — e do espaçamento de 8 tiles, que é uma regra de comércio.
+const storefront = (e) => e.kind !== 'jail' && e.kind !== 'precinct' && e.kind !== 'terminal';
 for (const e of interiors.entrances.filter(storefront)) {
   assert.ok(clearAt(world, e.x, e.y), `blocked entrance ${e.id}`);
   const b = world.data.buildings[e.id];
@@ -184,6 +187,61 @@ for (const e of precincts) {
   assert.equal(p.x, door.x); assert.equal(p.y, door.y);
   interiors.update(0.6);
 }
+// ---------------------------------------------------------------------- rodoviária
+// A rodoviária é o mesmo caso da delegacia: a porta está na calçada porque o prédio está lá,
+// não porque o jogador precisa de um menu. Quem entra encontra um hall com telão, e o telão
+// planeja viagem — não teleporta (ver check-transport para a malha e os horários).
+const busStations = world.landmarksOf('busstation');
+assert.ok(busStations.length >= 1, 'a cidade tem rodoviária');
+const terminals = interiors.entrances.filter((e) => e.kind === 'terminal');
+assert.equal(terminals.length, busStations.length, 'cada rodoviária tem porta de hall');
+for (const e of terminals) {
+  assert.equal(e.label, 'Rodoviária');
+  assert.equal(e.service, 'departures');
+  assert.equal(e.counter === null, true, 'o hall da rodoviária não vende nada no balcão');
+  assert.ok(clearAt(world, e.x, e.y), 'porta da rodoviária bloqueada');
+  assert.ok(busStations.some((s) => Math.hypot(s.front.x - e.x, s.front.y - e.y) < 3), 'porta longe da rodoviária');
+  for (const other of interiors.entrances) if (other !== e) {
+    assert.ok(Math.hypot(e.x - other.x, e.y - other.y) >= 2.5, 'duas portas no mesmo endereço');
+  }
+  p.x = e.x - Math.cos(e.facing) * 0.6; p.y = e.y - Math.sin(e.facing) * 0.6;
+  assert.equal(interiors.nearest(p), null, 'não se entra pelas costas da porta da rodoviária');
+  p.x = e.x; p.y = e.y;
+  assert.equal(interiors.nearest(p), e, 'a calçada da rodoviária abre o hall');
+}
+{
+  const door = terminals[0];
+  Object.assign(p, { currentVehicleId: null, swimming: false, health: 100, money: 500 });
+  p.x = door.x; p.y = door.y;
+  assert.ok(interiors.interact(ctx), 'o hall abre a pé, na calçada');
+  const hall = interiors.active;
+  assert.equal(hall.kind, 'terminal');
+  assert.equal(hall.shop, null, 'o telão não é uma loja');
+  assert.ok(hall.furniture.length >= 5, 'o hall é mobiliado');
+  assert.ok(hall.furniture.some((f) => f.kind === 'shelf'), 'o telão ocupa a parede do fundo');
+  assert.ok(hall.furniture.some((f) => f.kind === 'counter'), 'tem bilheteria');
+  assert.ok(hall.furniture.some((f) => f.kind === 'sofa'), 'tem banco de espera');
+  assert.ok(clearAt(hall.map, p.x, p.y), 'você não nasce dentro de um móvel do hall');
+  assert.ok(reachable(hall.map, p, hall.service), 'telão da rodoviária inacessível');
+  assert.ok(reachable(hall.map, p, hall.exit), 'saída do hall inacessível');
+  assert.equal(hall.service.label, 'Painel de partidas');
+  assert.equal(hall.service.cost, 0, 'consultar o telão é grátis');
+  interiors.update(0.6);
+  p.x = hall.service.x; p.y = hall.service.y;
+  assert.equal(interiors.prompt(p), 'Painel de partidas');
+  const opened = boardsOpened;
+  assert.ok(interiors.interact(ctx));
+  assert.equal(boardsOpened, opened + 1, 'o telão abre o itinerário em vez de vender um trecho');
+  assert.equal(p.money, 500, 'o telão não cobra nada antes da viagem');
+  assert.equal(interiors.interact(ctx), false, 'o telão não reabre no mesmo toque');
+  interiors.update(0.6);
+  p.x = hall.exit.x; p.y = hall.exit.y;
+  assert.ok(interiors.interact(ctx));
+  assert.equal(interiors.active, null);
+  assert.equal(p.x, door.x); assert.equal(p.y, door.y);
+  interiors.update(0.6);
+}
+console.log(`OK rodoviária: ${terminals.length} hall${terminals.length === 1 ? '' : 's'} na calçada, telão de partidas grátis e sem teleporte`);
 // Armaria: comprar arma, não comprar de novo, e munição só para quem já tem fogo.
 owned.clear(); owned.add('unarmed'); owned.add('bat');
 const armaria = interiors.entrances.find((e) => e.counter === 'armaria');
@@ -303,6 +361,20 @@ const time = g.time;
 g.update(0.5);
 assert.equal(g.time, time);
 ui.paused = false;
+// O telão é uma tela de menu: enquanto ele está na frente, a rua não anda — a mesma
+// regra da loja, senão o ônibus partia enquanto o jogador escolhia o destino.
+ui.departuresOpen = true;
+const timeBoards = g.time;
+g.update(0.5);
+assert.equal(g.time, timeBoards, 'o telão aberto não deixa o mundo andar');
+ui.departuresOpen = false;
+// Do lado de fora do hall não existe telão: as três entradas da viagem têm de recusar
+// em vez de inventar uma plataforma longe da rodoviária.
+assert.equal(g.departureRows().length, 0, 'fora do hall não há partidas');
+// A linha do telão é o ônibus do plano: do lado de fora do hall não há calçada nenhuma, e
+// tocar numa partida, com placa e passada na mão, tem de recusar em vez de inventar uma.
+assert.equal(g.chooseDeparture(0, 1), false, 'sem hall não há viagem para planejar');
+assert.equal(g.journeyStatus(), null, 'sem telão não há viagem em andamento');
 g.missions.state.phase = 'toDeliver';
 g.missions.state.timeLeft = 1;
 g.missions.state.target = { x: g.player.x, y: g.player.y };
@@ -360,7 +432,7 @@ console.log('OK indoor camera clamps to the room on every edge and centres on ov
 // pé da porta por onde se entrou, e o chão do jogador vem do plano dele — nunca do relevo.
 {
   // O round anterior fechou com overlay aberto: sem tela limpa o update não roda.
-  Object.assign(ui, { paused: false, mapOpen: false, shopOpen: false, overlay: null });
+  Object.assign(ui, { paused: false, mapOpen: false, shopOpen: false, departuresOpen: false, overlay: null });
   const door = g.interiors.entrances.find((e) => e.kind === 'home') ?? g.interiors.entrances[0];
   // Meio tile do lado de fora do vão, de propósito: a volta tem que ser este ponto exato,
   // não o centro do lote nem a coordenada da porta.

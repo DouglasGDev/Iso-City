@@ -72,6 +72,7 @@ async function goTo(x, y, settle = 1200) {
   };
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
   await send('Page.enable');
+  await require('./bundle-identity.cjs').attach(socket, send);
   await send('Runtime.enable');
 
   for (const [tag, width, height, mobile] of [['phone', 844, 390, true], ['desktop', 1440, 900, false]]) {

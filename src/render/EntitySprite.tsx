@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useDerivedValue, useSharedValue } from 'react-native-reanimated';
 import { Circle, FilterMode, Group, Image, Oval, Skia, type SkImage, type SkPath } from '@shopify/react-native-skia';
-import { entitySVs } from './SharedValues';
+import { entitySVs, type EntitySV } from './SharedValues';
 import { resolveEntityImage } from './entityImages';
 import { getGame } from '../game/GameState';
 import { weaponKey } from '../assets/AssetRegistry';
@@ -12,7 +12,7 @@ import type { Dir4 } from '../game/GameConfig';
 import { MeleeSwing, type MeleeVisualState } from './WeaponEffects';
 import { BLOOD_POOL_STAINS, deathPose, type BloodStain } from '../entities/NPC';
 import { crouchPose } from '../entities/Player';
-import { dirToWorldVec, ELEVATION_PX, worldToScreen } from '../world/IsoUtils';
+import { dirToWorldVec, worldToScreen } from '../world/IsoUtils';
 import { contactShadow, entityShadowWidth, SHADOW_FLATTEN } from './ContactShadow';
 
 interface Props {
@@ -75,16 +75,19 @@ export function EntitySprite({ id }: Props) {
   const game = getGame();
   const index = Number(id.split(':')[1]);
   const entity = entityForSprite(id, index);
-  const sv = useSharedValue({
+  // Tipado por `EntitySV`, não pelo literal: quem publica a folga é o laço de simulação
+  // (`GameCanvas`), e ela deixou de ser `altitude * ELEVATION_PX` quando o voo passou da
+  // mão-de-passagem. Aqui no sprite só resta ler o que o laço mediu.
+  const sv = useSharedValue<EntitySV>({
     x: entity?.x ?? 0, y: entity?.y ?? 0,
     h: entity ? game.map.heightSmoothAt(entity.x, entity.y) : 0,
   });
+  const liftSV = useDerivedValue(() => sv.value.lift ?? 0, [sv]);
   const swimSV = useSharedValue(0);
   const swimAngleSV = useSharedValue(0);
   const [sprite, setSprite] = useState(() => readSpriteFrame(id));
   const { image } = sprite;
   const [swimming, setSwimming] = useState(false);
-  const [lift, setLift] = useState(0);
   const [weapon, setWeapon] = useState<{ id: GunId; direction: Dir4 } | null>(null);
   const [batImage, setBatImage] = useState<SkImage | null>(null);
   const hand = useSharedValue({ x: 0, y: -18 });
@@ -195,13 +198,6 @@ export function EntitySprite({ id }: Props) {
           };
         }
       }
-      if (id.startsWith('veh:')) {
-        const v = getGame().vehicles[Number(id.split(':')[1])];
-        // A folga vira elevação na mesma escala do relevo: um tile de ar é um tile de
-        // chão. Com outro fator, o helicóptero ficava enterrado na face da montanha
-        // exatamente quando a cota dele era a cota do platô.
-        setLift(v && v.def.type === 'helicopter' ? v.altitude * ELEVATION_PX : 0);
-      }
     }, ms);
     return () => clearInterval(iv);
   }, [id, index, swimSV, swimAngleSV, game, hand, stride, melee, death, jumpLift, crouching]);
@@ -265,7 +261,7 @@ export function EntitySprite({ id }: Props) {
     if (swimSV.value < 0.5) {
       return [
         { translateX: cx },
-        { translateY: cy - lift - jumpLift.value + stride.value.bob },
+        { translateY: cy - liftSV.value - jumpLift.value + stride.value.bob },
         { rotate: stride.value.lean },
         { translateX: -w / 2 },
         { translateY: -h },
@@ -281,7 +277,7 @@ export function EntitySprite({ id }: Props) {
       { translateX: -w / 2 },
       { translateY: -h * 0.62 },
     ];
-  }, [screen, w, h, lift, swimSV, swimAngleSV, stride, jumpLift, death]);
+  }, [screen, w, h, liftSV, swimSV, swimAngleSV, stride, jumpLift, death]);
 
   const meleeTransform = useDerivedValue(() => [
     { translateX: screen.value.x },
@@ -323,10 +319,10 @@ export function EntitySprite({ id }: Props) {
   const opacity = useDerivedValue(() => death.value.alpha, [death]);
 
   // Sombra de contato: ela fica no CHÃO (o `h` do laço de simulação é a cota do piso sob a
-  // entidade) enquanto o corpo sobe por `jumpLift`/`lift`. A folga entre os dois é o que o
+  // entidade) enquanto o corpo sobe por `jumpLift`/`liftSV`. A folga entre os dois é o que o
   // olho lê como altura numa câmera que não se move — em um terraço, num pulo ou no ar.
   const shadowRx = entityShadowWidth(w);
-  const shadowGap = useDerivedValue(() => jumpLift.value + lift, [jumpLift, lift]);
+  const shadowGap = useDerivedValue(() => jumpLift.value + liftSV.value, [jumpLift, liftSV]);
   const shadowTransform = useDerivedValue(() => {
     const s = contactShadow(shadowGap.value);
     return [

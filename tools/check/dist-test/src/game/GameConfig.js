@@ -65,12 +65,77 @@ exports.GAME_CONFIG = {
     HELI_CLIMB_RATE: 2.6,
     HELI_SINK_RATE: 2.2,
     /**
-     * Teto do voo em tiles acima do nível 0 do mundo. O relevo sobe até
-     * TERRAIN_MAX_ELEVATION = 4; restam 4 de ar acima da crista mais alta.
+     * Descida de um motor morto (tiles de cota por segundo). É mais rápido que o descer do
+     * comando porque não é descer: é cair. O valor decide quanto tempo o piloto tem para escolher
+     * onde bater, e é por isso que a `FrontierFallSystem` põe a sua linha onde ela está.
+     */
+    HELI_FALL_RATE: 2.8,
+    /**
+     * Onde a altura ainda é dita em pixels de tela. Até esta cota, um tile de altura vale
+     * ELEVATION_PX de deslocamento para cima e o iso manda: é o voo raso de sempre, o casco
+     * pairando visivelmente sobre a própria sombra. Passou daqui, continuar deslocando a lataria
+     * para cima não é subir — é sair do quadro, que é exatamente o "não consigo ir mais alto" e
+     * o "a tela quebra" de antes. Acima desta linha a altura passa a ser dita em ESCALA (o mundo
+     * encolhe) e em NUVEM (o chão some), não em translação.
      */
     HELI_CEILING_ELEVATION: 8,
     /** Folga do casco: só passa sobre o ressalto à frente quem está claramente acima dele. */
     HELI_WALL_TOLERANCE: 0.1,
+    // ---- O céu: a coluna de ar acima da linha onde o iso ainda sabe desenhar altura ----
+    /**
+     * Teto do voo com o ar limpo lá em cima. Não é uma parede: é onde o rotor já não iça nada
+     * (ver AR_PERDE_SUBIDA), então a máquina chega e para em vez de bater num clamp.
+     */
+    CEU_TETO: 46,
+    /** Folga que sempre sobra entre o topo da manta e o teto: quem quer, atravessa a nuvem. */
+    CEU_FOLGA: 6,
+    /**
+     * Cota (tiles) da base da manta quando o céu está quase limpo e quando está fechado. Uma
+     * frente de tempestade desce a base até o nível do voo raso; um dia claro deixa o teto de
+     * nuvem lá em cima, onde não há nada para ver.
+     */
+    NUVEM_BASE_ALTA: 30,
+    NUVEM_BASE_BAIXA: 11,
+    /** Espessura [mínima, máxima] da manta em tiles: é o comprimento do trecho de cegueira. */
+    NUVEM_ESPESSURA: [5, 13],
+    /** Largura da borda macia, em tiles: nuvem não começa numa linha, ela engole aos poucos. */
+    NUVEM_ONDE: 2.6,
+    /** Espessura da bruma do chão: subir isto já tira você de cima da névoa da manhã. */
+    BRUMA_DO_CHAO: 4.5,
+    /** Tiles por segundo de deriva com o vento da frente no máximo, lá em cima. */
+    VENTO_MAX: 2.4,
+    /** Fração da subida e do curso que o ar rarefeito leva no teto. Nunca zero: a máquina
+     *  continua respondendo ao manche, só não alcança mais nada. */
+    AR_PERDE_SUBIDA: 0.55,
+    AR_PERDE_CURSO: 0.3,
+    /**
+     * Translação máxima que a lataria ainda ganha ao subir sem fim. Acima da linha de passagem a
+     * altura é desenhada com o mundo encolhendo (zoom) e a nuvem fechando, não com a máquina
+     * subindo mais um pixel: `ISO_SPAN` é o teto desse pixel.
+     */
+    ISO_SPAN_ACIMA_DO_QUADRO: 7,
+    /** Comprimento da curva de saturação: quantos tiles de cota valem ~63% do span. */
+    ISO_SATURACAO: 15,
+    /**
+     * Até onde a lataria sobe no quadro antes de a câmera começar a segui-la — em FRAÇÃO DA METADE
+     * do quadro, não em tiles. É o número que a medição no navegador derrubou: com 8 tiles a máquina
+     * ficava a 8 * 64 * 1,55 = 794 pixels acima do centro num quadro de 600, ou seja, fora da tela
+     * muito antes de chegar na nuvem. Tiles não sabem o tamanho da janela; fração sabe.
+     */
+    ALTURA_NO_QUADRO: 0.6,
+    /** Zoom do aparelho no teto. O chão ainda cabe no quadro, minúsculo, até a nuvem tomá-lo. */
+    ZOOM_ALTO: 0.62,
+    /**
+     * Quantos metros vale um tile de elevação. É o número que transforma a coluna em instrumento:
+     * sem ele o altímetro leria "32", e 32 não é uma altitude — é um índice de grade. Calibrado
+     * pelo prédio: um tile de elevação é a altura de uma casa de cinco andares, e com ele a manta
+     * alta fica a 480 m (base de nuvem baixa de verdade), a manta de tempestade a 176 m, e o teto
+     * do aparelho a 736 m.
+     */
+    METROS_POR_ELEVACAO: 16,
+    /** Lado da célula de pintura da manta, em tiles. É o preço da nuvem desenhada como bolha:
+     *  grande demais a manta vira xadrez, pequeno demais são duzentas elipses por quadro no canvas. */
+    NUVEM_PINTURA: 4,
     VEHICLE_REVERSE_RATIO: 0.42,
     VEHICLE_REVERSE_ACCEL: 4.2,
     VEHICLE_STOP_EPS: 0.05,
@@ -152,6 +217,10 @@ exports.GAME_CONFIG = {
      *  elevação na tela: 2 ≈ 128px, acima dos prédios e ainda dentro do quadro em celular
      *  deitado (a metade da tela é ~195px e a barra superior da HUD come ~50px). */
     POLICE_HELI_ALTITUDE: 2,
+    /** Teto de serviço da ronda. É pouco menor que o do jogador de propósito: quando o perseguido
+     *  sobe, o casco policial sobe atrás e PARA — e ver a máquina desistir embaixo da nuvem é o que
+     *  prova que o ar acima da cidade é um lugar que a cidade reconhece. */
+    POLICE_HELI_TETO: 12,
     POLICE_HELI_SPOT_RANGE: 11,
     /** ---- Visão dos inimigos (todos usam o mesmo VisionSystem) ----
      *  A rua: um policial a pé enxerga um arco à sua frente, não os 360° ao redor. */

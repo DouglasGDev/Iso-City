@@ -36,14 +36,18 @@ function sweep(a, b, box, radius) {
 }
 /** No GameState, audio, React or wall-clock dependency. Call after ground movement. */
 class JumpSystem {
-    constructor(getVehicles = () => []) {
+    constructor(getVehicles = () => [], 
+    /** Os ônibus do horário entram no mesmo julgamento: um pulo não atravessa lataria. */
+    getBuses = () => []) {
         this.getVehicles = getVehicles;
+        this.getBuses = getBuses;
         this.flights = new WeakMap();
     }
     obstacles(map, a, b) {
         const radius = Math.hypot(b.x - a.x, b.y - a.y) / 2 + GameConfig_1.GAME_CONFIG.PLAYER_RADIUS + SKIN;
         return map.queryNearby((a.x + b.x) / 2, (a.y + b.y) / 2, radius)
-            .concat((0, MovementSystem_1.solidVehicleColliders)(this.getVehicles()));
+            .concat((0, MovementSystem_1.solidVehicleColliders)(this.getVehicles()))
+            .concat((0, MovementSystem_1.solidBusColliders)(this.getBuses()));
     }
     dryPath(map, a, b) {
         const r = GameConfig_1.GAME_CONFIG.PLAYER_RADIUS;
@@ -174,7 +178,7 @@ class JumpSystem {
                     return null;
                 }
                 player.jumpHeight = 4 * exports.JUMP_HEIGHT_PX * t * (1 - t);
-                (0, MovementSystem_1.movePlayerGround)(player, map, collision, target.x - player.x, target.y - player.y, this.getVehicles());
+                (0, MovementSystem_1.movePlayerGround)(player, map, collision, target.x - player.x, target.y - player.y, this.getVehicles(), this.getBuses());
                 player.vx = 0;
                 player.vy = 0;
                 player.speed = 0;

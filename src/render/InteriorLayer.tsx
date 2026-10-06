@@ -205,6 +205,9 @@ const PALETTES: Record<InteriorKind, Palette> = {
   office: { floor: '#9a9488', floorAlt: '#a49e92', grout: 'rgba(66,62,52,0.32)', wall: '#e6e2d6', wallDark: '#c8c3b4', trim: '#847f72', rug: '#4f6a7c' },
   jail: { floor: '#7b8086', floorAlt: '#848a90', grout: 'rgba(40,45,50,0.45)', wall: '#b9bec4', wallDark: '#9aa1a8', trim: '#5f676f', rug: '#4b535a' },
   precinct: { floor: '#8b959c', floorAlt: '#959ea5', grout: 'rgba(46,56,66,0.4)', wall: '#d7dee2', wallDark: '#b6c0c6', trim: '#54626d', rug: '#3f5566' },
+  // Saguão de rodoviária: granilho cinza no chão, parede de cal e a faixa escura de trim,
+  // que é o mesmo concreto do lado de fora do prédio.
+  terminal: { floor: '#8c8f94', floorAlt: '#95989d', grout: 'rgba(52,58,66,0.38)', wall: '#e6e0cf', wallDark: '#c6bfac', trim: '#5f6a76', rug: '#3f5566' },
 };
 
 const RoomShell = memo(function RoomShell({ room }: { room: InteriorRoom }) {

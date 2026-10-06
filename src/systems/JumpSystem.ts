@@ -6,7 +6,8 @@ import type { Collider } from '../entities/types';
 import type { Map } from '../world/Map';
 import { screenToWorld } from '../world/IsoUtils';
 import type { CollisionSystem } from './CollisionSystem';
-import { FENCE_CLEARANCE_PX, isLowFence, movePlayerGround, solidVehicleColliders } from './MovementSystem';
+import { FENCE_CLEARANCE_PX, isLowFence, movePlayerGround, solidBusColliders, solidVehicleColliders } from './MovementSystem';
+import type { StreetBody } from './TransportSystem';
 
 export const JUMP_DURATION = 0.65;
 export const JUMP_HEIGHT_PX = 24;
@@ -43,12 +44,17 @@ function sweep(a: Point, b: Point, box: Collider, radius: number) {
 export class JumpSystem {
   private flights = new WeakMap<Player, Flight>();
 
-  constructor(private getVehicles: () => readonly Vehicle[] = () => []) {}
+  constructor(
+    private getVehicles: () => readonly Vehicle[] = () => [],
+    /** Os ônibus do horário entram no mesmo julgamento: um pulo não atravessa lataria. */
+    private getBuses: () => readonly StreetBody[] = () => [],
+  ) {}
 
   private obstacles(map: Map, a: Point, b: Point): Collider[] {
     const radius = Math.hypot(b.x - a.x, b.y - a.y) / 2 + GAME_CONFIG.PLAYER_RADIUS + SKIN;
     return map.queryNearby((a.x + b.x) / 2, (a.y + b.y) / 2, radius)
-      .concat(solidVehicleColliders(this.getVehicles()));
+      .concat(solidVehicleColliders(this.getVehicles()))
+      .concat(solidBusColliders(this.getBuses()));
   }
 
   private dryPath(map: Map, a: Point, b: Point): boolean {
@@ -183,7 +189,8 @@ export class JumpSystem {
           return null;
         }
         player.jumpHeight = 4 * JUMP_HEIGHT_PX * t * (1 - t);
-        movePlayerGround(player, map, collision, target.x - player.x, target.y - player.y, this.getVehicles());
+        movePlayerGround(player, map, collision, target.x - player.x, target.y - player.y,
+          this.getVehicles(), this.getBuses());
         player.vx = 0;
         player.vy = 0;
         player.speed = 0;

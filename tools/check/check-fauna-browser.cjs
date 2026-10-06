@@ -55,6 +55,7 @@ async function test(name, fn) {
   };
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = () => reject(new Error('CDP falhou')); });
   await send('Runtime.enable'); await send('Page.enable'); await send('Log.enable');
+  await require('./bundle-identity.cjs').attach(socket, send);
   await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true });
 
   await send('Page.navigate', { url: 'about:blank' });

@@ -29,11 +29,21 @@ const PRECINCT = [
     { role: 'citizen', anchors: ['sofa', 'table'], char: 'c', kind: 'civ', roam: 0.75, speed: 0.4 },
 ];
 /**
+ * Rodoviária: a bilheteira no balcão, um passageiro sentado esperando a linha e outro de pé
+ * perto da catraca. É elenco de sala, não multidão — quem enche a plataforma lá fora é o
+ * horário, não esta planta.
+ */
+const TERMINAL = [
+    { role: 'clerk', anchors: ['counter'], char: 'b', kind: 'civ', roam: 0.3, speed: 0.32 },
+    { role: 'citizen', anchors: ['sofa'], char: 'a', kind: 'civ', roam: 0.8, speed: 0.42 },
+    { role: 'citizen', anchors: ['plant', 'crate'], char: 'c', kind: 'civ', roam: 1.1, speed: 0.5 },
+];
+/**
  * Elenco de uma sala. A cadeia fica de fora: lá o elenco é de presos e guarda, e quem
  * o manda é o `JailSystem`. O resto é a planta quem decide — um papel cuja base não
  * existe no layout (o cozinheiro sem cozinha, o cliente sem mesa) não é contratado.
  */
 function crowdRolesFor(kind) {
     return kind === 'home' ? HOME : kind === 'office' ? OFFICE : kind === 'shop' ? SHOP
-        : kind === 'precinct' ? PRECINCT : [];
+        : kind === 'precinct' ? PRECINCT : kind === 'terminal' ? TERMINAL : [];
 }

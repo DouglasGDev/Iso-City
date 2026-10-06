@@ -8,6 +8,7 @@ exports.roomBounds = roomBounds;
 exports.clampToRoom = clampToRoom;
 exports.indoorZoom = indoorZoom;
 const GameConfig_1 = require("../game/GameConfig");
+const Frontier_1 = require("./Frontier");
 function createCamera(x, y) {
     return { x, y, targetX: x, targetY: y, zoom: GameConfig_1.GAME_CONFIG.ZOOM_DEFAULT, h: 0 };
 }
@@ -21,8 +22,12 @@ function cameraFollow(cam, followX, followY, lookX, lookY, dt, mapWorldW, mapWor
 function clampToMap(cam, mapWorldW, mapWorldH, viewW, viewH) {
     const marginX = viewW / (2 * cam.zoom * 128);
     const marginY = viewH / (2 * cam.zoom * 64);
-    cam.x = Math.max(-marginX, Math.min(mapWorldW + marginX, cam.x));
-    cam.y = Math.max(-marginY, Math.min(mapWorldH + marginY, cam.y));
+    // A mata sem fim é mundo, então a câmera entra nela junto com o jogador: sem este alcance,
+    // quem anda para fora some atrás de uma borda de tela que parou na última rua. O alcance é
+    // o MESMO do `limiteJogável` — câmera e corpo têm de parar no mesmo tile, ou o jogador anda
+    // para fora do próprio enquadramento.
+    cam.x = Math.max(-marginX - Frontier_1.FRONTEIRA_ALCANCE, Math.min(mapWorldW + marginX + Frontier_1.FRONTEIRA_ALCANCE, cam.x));
+    cam.y = Math.max(-marginY - Frontier_1.FRONTEIRA_ALCANCE, Math.min(mapWorldH + marginY + Frontier_1.FRONTEIRA_ALCANCE, cam.y));
 }
 function setZoom(cam, zoom, mapWorldW, mapWorldH, viewW, viewH) {
     cam.zoom = Math.max(GameConfig_1.GAME_CONFIG.ZOOM_MIN, Math.min(GameConfig_1.GAME_CONFIG.ZOOM_MAX, zoom));

@@ -142,6 +142,18 @@ function tick(f, seconds, dt = 0.05) {
 function car(id, x, y = 31.5, dir = 'SE') {
   return createVehicle(id, VEHICLE_DEFS.sedan, 'blue', x, y, dir);
 }
+/**
+ * O corpo de um ônibus do horário: posição, rumo, velocidade e raio, nada de lataria,
+ * motorista nem banco. É exatamente o que o `TransportSystem` entrega ao `TrafficSystem` a
+ * cada tick, e o que se cobra aqui é que o motorista trate esse corpo como trata um carro.
+ */
+function body(x, y, dir, speed = 0) {
+  const ang = dir === 'SE' ? 0 : dir === 'NW' ? Math.PI : dir === 'SW' ? Math.PI / 2 : -Math.PI / 2;
+  return {
+    x, y, dir, angle: ang, speed, live: true,
+    radius: Math.max(VEHICLE_DEFS.bus_school.footprintW, VEHICLE_DEFS.bus_school.footprintH) / 2,
+  };
+}
 function trafficActor(system, vehicle, route, speed = 2.15) {
   vehicle.state = 'driving';
   const tv = { vehicle, driver: null, route, routeIndex: 0, state: 'driving', targetSpeed: speed,
@@ -741,6 +753,96 @@ test('keep-clear checks the exit lane, including turns, not adjacent or moving c
   blocker.speed = 0; blocker.x = 30.5; blocker.y = 33;
   actor.route = [...line(27.5, 30.5), { x: 30.5, y: 32.5 }, { x: 30.5, y: 33.5 }];
   assert.ok(Number.isFinite(signalStop(t, actor, map, [v, blocker])), 'blocked turning exit was ignored');
+});
+
+/**
+ * O ônibus do horário não é dirigido pelo trânsito — é o relógio que o põe no asfalto —, mas
+ * mora na mesma rua que os carros. As quatro provas abaixo são a queixa do jogador em forma de
+ * asfalto: o carro atravessa o ônibus, o ônibus atravessa o carro, o ônibus para no meio do
+ * cruzamento e a fila para por um ônibus que a câmera nem chegou a materializar. As regras são
+ * as mesmas dos veículos; o que muda é que quem freia é o outro.
+ */
+test('a bus stopped in the lane is a car the traffic brakes for', () => {
+  const map = crossMap(), t = new TrafficSystem(new CollisionSystem()), p = createPlayer(20, 20);
+  t.signalSystem.init(map);
+  const v = car(1, 40), bus = body(43.5, 31.5, 'SE');
+  trafficActor(t, v, line(40, 45.5));
+  for (let i = 0; i < 120; i++) {
+    t.update(map, [], [v], 0.05, p, undefined, [bus]);
+    assert.ok(bus.x - v.x >= 1.05 - 1e-6, `o carro passou por dentro do ônibus: ${v.x}`);
+  }
+  assert.ok(v.x > 41.5, `freou antes de chegar no ônibus: ${v.x}`);
+  assert.ok(v.speed < 0.3, `parou de longe e voltou a andar: ${v.speed}`);
+});
+
+test('a bus on the opposite lane is not a phantom wall', () => {
+  const map = crossMap(), t = new TrafficSystem(new CollisionSystem()), p = createPlayer(20, 20);
+  t.signalSystem.init(map);
+  const v = car(1, 40), bus = body(42.5, 30.5, 'NW');
+  trafficActor(t, v, line(40, 45.5));
+  for (let i = 0; i < 120; i++) t.update(map, [], [v], 0.05, p, undefined, [bus]);
+  assert.ok(v.x > 43.5, `a fila parou para um ônibus do outro lado da avenida: ${v.x}`);
+});
+
+test('a bus the camera never materialized holds no queue', () => {
+  const map = crossMap(), t = new TrafficSystem(new CollisionSystem()), p = createPlayer(20, 20);
+  t.signalSystem.init(map);
+  const v = car(1, 40), bus = body(43.5, 31.5, 'SE');
+  bus.live = false;
+  trafficActor(t, v, line(40, 45.5));
+  for (let i = 0; i < 120; i++) t.update(map, [], [v], 0.05, p, undefined, [bus]);
+  assert.ok(v.x > 44.5, `um corpo congelado virou parede na rua: ${v.x}`);
+});
+
+test('a bus on the crossing or just past it keeps the green approach out of the box', () => {
+  const map = crossMap(), t = new TrafficSystem(new CollisionSystem());
+  t.signalSystem.init(map); t.signalSystem.update(map, 6.1);
+  assert.equal(t.signals[0].xLight, 'green');
+  const v = car(1, 27.5), p = createPlayer(20, 29);
+  const actor = trafficActor(t, v, line(27.5, 45.5));
+  assert.equal(signalStop(t, actor, map, [v]), Infinity, 'cruzamento livre deveria deixar passar');
+  // Na saída da caixa: é o ônibus encostado logo adiante do cruzamento, e quem entra não sai.
+  const parado = body(33, 31.5, 'SE');
+  assert.ok(Number.isFinite(signalStop(t, actor, map, [v, parado])),
+    'a aproximação entrou na caixa sabendo que o ônibus para na saída dela');
+  // Cruzando a caixa: um ônibus em movimento no eixo de cima também é parede, e é o caso que o
+  // jogador vê quando dois deles se atravessam no meio do sinal verde.
+  const cruzando = body(30.5, 30.5, 'SW');
+  cruzando.speed = 3.5;
+  assert.ok(Number.isFinite(signalStop(t, actor, map, [v, cruzando])),
+    'um ônibus cortando a caixa não segurou a aproximação');
+  for (let i = 0; i < 120; i++) t.update(map, [], [v], 0.05, p, undefined, [parado]);
+  assert.ok(v.x < 30, `parou dentro da caixa do cruzamento: ${v.x}`);
+});
+
+// O retrato do congelamento: os dois lados da mesma conta se esperando, sem fim. O portão do
+// `crossing` mede radialmente — toda lataria registrada no poste é travessia —, e isso é certo
+// para quem passa, errado para quem está parado: um ônibus encostado dentro da caixa, corpo e
+// meio para o lado da minha faixa, não atravessa nada porque está parado exatamente porque eu
+// estou na frente dele. A via inteira atrás dele parava com ele.
+test('a bus stopped beside the approach track does not hold the green lane', () => {
+  const map = crossMap(), t = new TrafficSystem(new CollisionSystem());
+  t.signalSystem.init(map); t.signalSystem.update(map, 6.1);
+  assert.equal(t.signals[0].xLight, 'green');
+  const v = car(1, 27.5), p = createPlayer(20, 29);
+  const actor = trafficActor(t, v, line(27.5, 45.5));
+  const encostado = body(30.5, 30.1, 'SW');
+  assert.equal(signalStop(t, actor, map, [v, encostado]), Infinity,
+    'a aproximação parou para um ônibus parado a 1,4 tile do lado da sua faixa');
+  // O mesmo corpo no mesmo asfalto, agora andando, é travessia de verdade: quem entra na caixa
+  // divide lataria com ele, e a régua conservadora continua valendo para quem se move.
+  encostado.speed = 3.5;
+  assert.ok(Number.isFinite(signalStop(t, actor, map, [v, encostado])),
+    'um ônibus cortando fora da trilha deixou a aproximação entrar');
+  // E parado, mas dentro da minha trilha, continua sendo parede: a isenção é lateral, não é
+  // licença de passar por cima de quem está na minha frente.
+  encostado.speed = 0; encostado.y = 31.2;
+  assert.ok(Number.isFinite(signalStop(t, actor, map, [v, encostado])),
+    'um ônibus parado na minha faixa deixou a aproximação entrar');
+  // A prova de vida: com o corpo encostado ao lado, fora da trilha, a fila atravessa a caixa.
+  encostado.y = 30.1;
+  for (let i = 0; i < 200; i++) t.update(map, [], [v], 0.05, p, undefined, [encostado]);
+  assert.ok(v.x > 33, `a fila encalhou atrás de um ônibus que nunca esteve na sua frente: ${v.x}`);
 });
 
 test('junction waits never shrink physical headway to escape a blockage', () => {

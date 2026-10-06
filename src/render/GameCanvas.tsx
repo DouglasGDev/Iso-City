@@ -4,21 +4,29 @@ import { Canvas, Group, Path, Rect, Skia, useCanvasRef, type SkPath, type Transf
 import { useDerivedValue, useSharedValue, type DerivedValue } from 'react-native-reanimated';
 import { getGame } from '../game/GameState';
 import { GameLoop } from '../game/GameLoop';
-import { registerCameraSV, entitySVs, animalSVs } from './SharedValues';
+import { registerCameraSV, entitySVs, animalSVs, gorilaSVs, piranhaSVs } from './SharedValues';
 import { animalVisualState } from '../entities/Animal';
+import { gorilaVisualState } from '../entities/Gorila';
+import { piranhaVisualState } from '../entities/Piranha';
 import { isAboard } from '../entities/Player';
 import { GroundLayer } from './GroundLayer';
+import { FrontierLayer } from './FrontierLayer';
 import { CascadeLayer } from './CascadeLayer';
 import { SortedWorldLayer, type OcclusionFocus } from './SortedWorldLayer';
 import { effectiveAim, inputState } from '../game/InputState';
 import { GAME_CONFIG } from '../game/GameConfig';
 import { depthOf, screenToWorld, worldToScreen } from '../world/IsoUtils';
+import { liftDeTela } from '../systems/AltitudeSystem';
 import { MarkerLayer } from './MarkerLayer';
+import { BusStopLayer } from './BusStopLayer';
+import { BusMarkLayer } from './BusMarkLayer';
 import { WeaponEffects, type WeaponVisualState } from './WeaponEffects';
 import { useGameStore } from '../stores/useGameStore';
 import { EntranceMarkers, InteriorLayer } from './InteriorLayer';
 import { TrafficSignalLayer } from './TrafficSignalLayer';
 import { FogLayer } from './FogLayer';
+import { SkyWash } from './SkyLayer';
+import { CloudSea, CloudShadows, useCloudPaint } from './CloudDeckLayer';
 import { WitnessLayer } from './WitnessLayer';
 import { HazardLayer, HAZARD_VISUAL_IDLE, type HazardVisualState } from './HazardLayer';
 
@@ -71,6 +79,7 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
   const shake = useSharedValue({ x: 0, y: 0 });
   const env = useSharedValue({ night: 0, warm: 0, rain: 0, snow: 0, bolt: 0 });
   const fog = useSharedValue(game.fog.snapshot);
+  const sky = useSharedValue(game.altitude.snapshot);
   const rainY = useSharedValue(0);
   const clock = useSharedValue(0);
   const weapons = useSharedValue<WeaponVisualState>({ tracers: [], target: null, muzzle: null });
@@ -94,6 +103,8 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
     () => buildPrecipTile(size.width, rainTileH, precip?.slant ?? 0, precip?.snow ?? false),
     [size.width, rainTileH, precip],
   );
+  // A manta é amostrada no laço de simulação, seis vezes por segundo, e chega aqui como tela pronta.
+  const nuvem = useCloudPaint(game, size);
 
   const cameraTransform = useDerivedValue(() => {
     const c = camera.value;
@@ -114,8 +125,12 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
   const nightOpacity = useDerivedValue(() => env.value.night, [env]);
   const warmOpacity = useDerivedValue(() => env.value.warm, [env]);
   const flashOpacity = useDerivedValue(() => env.value.bolt * 0.5, [env]);
-  const rainOpacity = useDerivedValue(
-    () => Math.min(1, env.value.rain * (env.value.snow > 0.5 ? 1.15 : 1.4)), [env]);
+  const rainOpacity = useDerivedValue(() => {
+    // A chuva é um fenômeno do lado de baixo da manta: quem entrou no algodão ou passou por cima
+    // dele não tem risco nenhum na frente da lente, tem parede branca ou nuvem no chão.
+    const ar = Math.max(sky.value.bruma, sky.value.acima);
+    return Math.min(1, env.value.rain * (env.value.snow > 0.5 ? 1.15 : 1.4)) * (1 - ar);
+  }, [env, sky]);
   const rainTransformA = useDerivedValue<Transforms3d>(() => [{ translateY: rainY.value }], [rainY]);
   const rainTransformB = useDerivedValue<Transforms3d>(
     () => [{ translateY: rainY.value - rainTileH }],
@@ -162,6 +177,7 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
         bolt: game.interiors.active ? 0 : game.weather.bolt,
       };
       fog.value = game.fog.snapshot;
+      sky.value = game.altitude.snapshot;
       clock.value = game.time;
       const hz = game.hazard;
       hazard.value = {
@@ -223,6 +239,26 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
         sv.position.value = { x: animal.x, y: animal.y, h: game.map.heightSmoothAt(animal.x, animal.y) };
         sv.visual.value = animalVisualState(animal, game.time);
       }
+      // O gigante é publicado fora da fauna porque não mora no array `animals`: o modelo dele fala
+      // `vida/morto/raio`, e o laço acima leria campos que não existem. Um indivíduo por mundo, e a
+      // chave é o id que o sistema dele carrega.
+      for (const [id, sv] of gorilaSVs) {
+        const fera = game.gorilas.fera;
+        // A fera pode ter renascido (ou desaparecido) entre o recorte e este tick: publicar o
+        // corpo errado deixaria o gigante pregado num ponto do mundo que ele nunca pisou.
+        if (!fera || fera.id !== id) continue;
+        sv.position.value = { x: fera.x, y: fera.y, h: game.map.heightSmoothAt(fera.x, fera.y) };
+        sv.visual.value = gorilaVisualState(fera, game.time);
+      }
+      // A barbatana tem o mesmo laço do gigante, e o mesmo guarda de id: o rio cria um indivíduo,
+      // ele afunda, e dezoito segundos depois cria outro com id novo. Publicar o corpo velho pelo
+      // novo id deixaria uma piranha morta nadando para sempre num ponto do canal.
+      for (const [id, sv] of piranhaSVs) {
+        const peixe = game.piranhas.fera;
+        if (!peixe || peixe.id !== id) continue;
+        sv.position.value = { x: peixe.x, y: peixe.y, h: game.map.heightSmoothAt(peixe.x, peixe.y) };
+        sv.visual.value = piranhaVisualState(peixe, game.time);
+      }
       for (const [id, sv] of entitySVs) {
         if (id === 'player') {
           sv.value = { x: game.player.x, y: game.player.y, h: ground };
@@ -249,14 +285,21 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
           if (occupant) sv.value = { x: occupant.x, y: occupant.y, h: 0 };
         } else if (kind === 'veh') {
           const v = game.vehicles[idx];
-          // A âncora do sprite é sempre o chão: a folga do helicóptero entra como lift
-          // (`altitude * ELEVATION_PX`) em cima desta altura, nunca no lugar dela.
-          if (v) sv.value = { x: v.x, y: v.y, h: game.map.heightSmoothAt(v.x, v.y) };
+          // A âncora do sprite é sempre o chão: a folga do helicóptero entra como lift em cima
+          // desta altura, nunca no lugar dela. O lift é a altura *de tela*, não a cota crua, e é a
+          // mesma curva que a câmera usa — abaixo da linha de passagem as duas contas são idênticas
+          // (`alturaDeTela` é identidade) e a lataria continua `altitude * ELEVATION_PX` acima da
+          // própria sombra. Passou dali, a máquina fica no quadro e é o mundo que encolhe.
+          if (v) {
+            const chao = game.map.heightSmoothAt(v.x, v.y);
+            sv.value = { x: v.x, y: v.y, h: chao, lift: liftDeTela(chao + v.altitude, chao) };
+          }
         }
       }
     });
     return () => loop.stop();
-  }, [loop, game, camera, shake, env, fog, rainY, clock, rainTileH, weapons, hazard, focus, suspended]);
+  }, [loop, game, camera, shake, env, fog, sky, rainY, clock, rainTileH,
+    weapons, hazard, focus, suspended]);
 
   return (
     <View style={[styles.container, { pointerEvents: 'none' }]} onLayout={onLayout}>
@@ -268,17 +311,28 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
             <WeaponEffects state={weapons} />
           </> : <>
             <GroundLayer game={game} />
+            {!room && <CloudShadows paint={nuvem} sky={sky} />}
+            <FrontierLayer game={game} />
             <CascadeLayer game={game} clock={clock} />
+            <BusStopLayer game={game} />
             <MarkerLayer game={game} clock={clock} />
             <TrafficSignalLayer game={game} />
             <EntranceMarkers game={game} />
-            <SortedWorldLayer game={game} focus={focus} clock={clock} />
+            {/* A manta vai DENTRO da camada ordenada, entre o chão e o que voou acima dela: é um
+                plano de ar no meio do olhar, e olhar para baixo significa que o algodão está mais
+                perto do olho que o telhado. Pintá-la antes era vê-la virar lençol no chão — os
+                prédios saíam por cima de um céu fechado. */}
+            <SortedWorldLayer game={game} focus={focus} clock={clock}>
+              <CloudSea paint={nuvem} sky={sky} />
+            </SortedWorldLayer>
+            <BusMarkLayer game={game} clock={clock} />
             <HazardLayer state={hazard} />
             <WitnessLayer game={game} />
             <WeaponEffects state={weapons} />
           </>}
         </Group>
         {!room && <FogLayer width={size.width} height={size.height} camera={camera} snapshot={fog} />}
+        {!room && <SkyWash sky={sky} width={size.width} height={size.height} />}
         <Rect x={0} y={0} width={size.width} height={size.height} color="#0a1230" opacity={nightOpacity} />
         <Rect x={0} y={0} width={size.width} height={size.height} color="#ff7a2e" opacity={warmOpacity} />
         {precip ? (

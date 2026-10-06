@@ -71,6 +71,7 @@ async function launch(mobile) {
   });
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve); socket.addEventListener('error', reject); });
   await send('Page.enable'); await send('Runtime.enable');
+  await require('./bundle-identity.cjs').attach(socket, send);
   await launch(false);
   // O tamanho é lido do GAME_CONFIG do próprio bundle: crescer o mapa não exige
   // editar este teste, apenas que mundo e configuração continuem iguais.

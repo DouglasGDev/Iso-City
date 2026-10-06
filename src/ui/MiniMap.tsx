@@ -97,6 +97,20 @@ function MapCanvas({ mapW, mapH, zoom, panX, panY, detailed }: {
   const position = game.worldPosition;
   const p = project(position.x, position.y);
   const route = useMemo(() => routePath(mapRoute, project), [mapRoute, mapW, mapH, zoom, panX, panY, gameGen]);
+  // A bordo, a linha do ônibus que se pega aparece no mapa. Ela não passa pela store: o
+  // itinerário do veículo não é o destino do jogador, e o JourneySystem limpa o `mapRoute`
+  // durante a viagem de propósito — tinta que sobrevivesse a essa limpeza estaria brigando com
+  // o GPS, não com o horário. É a polilinha fechada da linha (ida e volta), na cor da viação,
+  // porque o que se quer ler é "por onde este ônibus passa".
+  const linha = useMemo(() => {
+    const u = game.transport?.units[game.player.busUnit ?? -1];
+    if (!u) return null;
+    const r = game.transport.network.routes[u.route];
+    return {
+      cor: game.transport.network.companies[r.company]?.livery ?? C.route,
+      path: routePath([...r.points, ...r.back.slice(1)], project),
+    };
+  }, [game, game.player.busUnit, mapW, mapH, zoom, panX, panY, gameGen]);
   // Porta aberta: nem o radar nem o mapa cheio desenham a cidade. A sala é um plano à
   // parte, com mapa e coordenadas próprios, e é a planta dela que entra neste canvas.
   const room = game.interiors.active;
@@ -151,6 +165,10 @@ function MapCanvas({ mapW, mapH, zoom, panX, panY, detailed }: {
         <Path path={path} color={color} style="stroke" strokeWidth={0.8} opacity={0.5} />
       </Group>;
     })}
+    {linha && <Group key="bus-line">
+      <Path path={linha.path} color="#0b1015" style="stroke" strokeWidth={detailed ? 6 : 4.5} opacity={0.55} strokeCap="round" strokeJoin="round" />
+      <Path path={linha.path} color={linha.cor} style="stroke" strokeWidth={detailed ? 3 : 2.2} strokeCap="round" strokeJoin="round" />
+    </Group>}
     {mapRoute.length >= 2 && <Group>
       <Path path={route} color="#161e24" style="stroke" strokeWidth={detailed ? 6 : 4} strokeCap="round" strokeJoin="round" />
       <Path path={route} color={C.route} style="stroke" strokeWidth={detailed ? 3 : 2} strokeCap="round" strokeJoin="round" />
@@ -363,6 +381,11 @@ export function FullMap({ onClose }: { onClose: () => void }) {
   const rem = mapMarker ? mapRoute.length >= 2 ? remainingRouteDistance(mapRoute, position.x, position.y)
     : Math.hypot(position.x - mapMarker.x, position.y - mapMarker.y) : null;
   const discovered = game.exploration.percent;
+  // A legenda só anuncia a linha quando há uma a bordo: sem ela, a cor do traçado no mapa
+  // seria mais um item de legenda explicando algo que não está na tela.
+  const aboard = game.player.busUnit === null || game.player.busUnit === undefined || !game.transport
+    ? null
+    : game.transport.network.routes[game.transport.units[game.player.busUnit]?.route ?? -1];
   const tools = [
     { id: 'zoom-in', label: 'Ampliar mapa', text: '+', disabled: zoom >= ZOOM_MAX, action: () => applyZoom(zoomRef.current + 0.5) },
     { id: 'zoom-out', label: 'Reduzir mapa', text: '−', disabled: zoom <= ZOOM_MIN, action: () => applyZoom(zoomRef.current - 0.5) },
@@ -424,6 +447,8 @@ export function FullMap({ onClose }: { onClose: () => void }) {
           </> : <>
             <Legend color="#657e86" label="Descoberto" />
             <Legend color={C.unknown} label="Não explorado" /><Legend color={C.mission} label="Missão / GPS" />
+            {aboard && <Legend color={game.transport.network.companies[aboard.company]?.livery ?? C.route}
+              label={`Rota ${aboard.name}`} />}
             {!compact && <><Legend color={C.police} label="Polícia" /><Legend color={C.ammo} label="Munição" /></>}
           </>}
         </View>

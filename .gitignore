@@ -32,10 +32,13 @@ assets/Audio/**
 !assets/Audio/generated/death.wav
 !assets/Audio/generated/desert_day.wav
 !assets/Audio/generated/desert_night.wav
+!assets/Audio/generated/engine_catch.wav
 !assets/Audio/generated/engine_loop.wav
 !assets/Audio/generated/explosion.wav
 !assets/Audio/generated/forest_day.wav
 !assets/Audio/generated/forest_night.wav
+!assets/Audio/generated/gorilla_roar.wav
+!assets/Audio/generated/gorilla_step.wav
 !assets/Audio/generated/heli_rotor.wav
 !assets/Audio/generated/industry_day.wav
 !assets/Audio/generated/industry_night.wav
@@ -44,10 +47,13 @@ assets/Audio/**
 !assets/Audio/generated/micro_shot.wav
 !assets/Audio/generated/pinewood_day.wav
 !assets/Audio/generated/pinewood_night.wav
+!assets/Audio/generated/piranha_splash.wav
+!assets/Audio/generated/piranha_threat.wav
 !assets/Audio/generated/pistol_shot.wav
 !assets/Audio/generated/punch.wav
 !assets/Audio/generated/revolver_shot.wav
 !assets/Audio/generated/rifle_shot.wav
+!assets/Audio/generated/rotor_fail.wav
 !assets/Audio/generated/savanna_day.wav
 !assets/Audio/generated/savanna_night.wav
 !assets/Audio/generated/shotgun_blast.wav
@@ -56,6 +62,8 @@ assets/Audio/**
 !assets/Audio/generated/sniper_shot.wav
 !assets/Audio/generated/thunder.wav
 !assets/Audio/generated/tornado_loop.wav
+!assets/Audio/generated/tribo_grito.wav
+!assets/Audio/generated/tribo_tambor.wav
 !assets/Audio/generated/vault.wav
 !assets/Audio/generated/wave_loop.wav
 !assets/Audio/generated/weapon_empty.wav

@@ -259,6 +259,7 @@ export class WildlifeSystem {
         continue;
       }
       if (!validPlayer) continue;
+      animal.simulated = false;
       const distance = Math.hypot(animal.x - player.x, animal.y - player.y);
       if (distance <= WILDLIFE_LOCAL_RADIUS) localCount++;
       const history = this.history.get(animal);
@@ -288,6 +289,7 @@ export class WildlifeSystem {
       - (b.x - player.x) ** 2 - (b.y - player.y) ** 2 || a.id - b.id);
     for (let i = 0; i < Math.min(WILDLIFE_UPDATE_LIMIT, this.activeAnimals.length); i++) {
       const animal = this.activeAnimals[i];
+      animal.simulated = true;
       const wasFleeing = animal.state === 'fleeing';
       const threat = this.findThreat(animal, context);
       const response = this.perceive(animal, threat, context, liveDt);

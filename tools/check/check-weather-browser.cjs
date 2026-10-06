@@ -89,6 +89,7 @@ async function test(name, fn) {
   };
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = () => reject(new Error('CDP falhou')); });
   await send('Runtime.enable'); await send('Page.enable'); await send('Log.enable');
+  await require('./bundle-identity.cjs').attach(socket, send);
 
   await launch(true);
   await test('o HUD diz em português a estação e o tempo de agora', async () => {

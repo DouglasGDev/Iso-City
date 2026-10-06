@@ -117,6 +117,7 @@ async function checkCentered() {
   });
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve); socket.addEventListener('error', reject); });
   await send('Page.enable'); await send('Page.navigate', { url: 'about:blank' });
+  await require('./bundle-identity.cjs').attach(socket, send);
   await until('location.href==="about:blank"', 'clean context');
   await send('Runtime.enable'); await send('Log.enable'); await send('Log.clear'); errors.length = 0;
   await viewport(844, 390);

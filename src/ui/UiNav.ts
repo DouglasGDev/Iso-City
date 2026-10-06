@@ -1,7 +1,7 @@
 import type { HardwareMode, InputUiAction } from '../game/InputState';
 
 /** Telas que congelam a simulação e podem ser percorridas por teclado/controle. */
-export type UiSurface = 'main' | 'pause' | 'shop' | 'map';
+export type UiSurface = 'main' | 'pause' | 'shop' | 'departures' | 'map';
 
 export interface UiItem {
   id: string;
@@ -19,7 +19,7 @@ export interface UiSurfaceSpec {
 }
 
 /** Com loja e pausa abertas ao mesmo tempo, quem recebe o toque primeiro é quem está por cima. */
-const PRIORITY: UiSurface[] = ['map', 'shop', 'pause', 'main'];
+const PRIORITY: UiSurface[] = ['map', 'departures', 'shop', 'pause', 'main'];
 const MOVE: InputUiAction[] = ['up', 'down', 'left', 'right'];
 const STEP: Partial<Record<InputUiAction, number>> = { up: -1, left: -1, down: 1, right: 1, prev: -1, next: 1 };
 

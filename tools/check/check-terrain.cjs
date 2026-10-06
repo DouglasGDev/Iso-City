@@ -332,7 +332,11 @@ test('relevo em movimento: o pé sobe a ladeira, mas não atravessa a montanha n
   const { CollisionSystem } = load(path.join(root, 'src/systems/CollisionSystem.ts'));
   const { createPlayer } = load(path.join(root, 'src/entities/Player.ts'));
   const { movePlayerGround } = load(path.join(root, 'src/systems/MovementSystem.ts'));
-  const W = 20;
+  // 60 e não 20: o passo de 120 lances caminha 42 tiles, e desde a fronteira o que existe
+  // depois da última fila de tiles não é mais o nada — é mata, com tronco que empurra para o
+  // lado. Numa régua de 20 o escalador saía do mapa no meio do teste e a lateral dele era
+  // decidida pela floresta, não pela ladeira que este contrato quer medir.
+  const W = 60;
   const ground = (cota) => new CityMap({
     tilesW: W, tilesH: W, worldW: W, worldH: W, buildings: [], props: [], vehicles: [],
     npcSpawns: [], playerSpawn: { x: 1.5, y: 1.5 },

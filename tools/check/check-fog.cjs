@@ -99,7 +99,7 @@ const source = (name) => load(srcPath(name));
 const { ChunkIndex } = source('world/streaming/ChunkIndex.ts');
 const { SpatialIndex } = source('world/streaming/SpatialIndex.ts');
 const { WorldStreamingManager } = source('world/streaming/WorldStreamingManager.ts');
-const { FogSystem, FOG, fogRadii } = source('systems/FogSystem.ts');
+const { FogSystem, FOG, fogRadii, aberturaDaParede, nevoaCores } = source('systems/FogSystem.ts');
 const { GAME_CONFIG: C } = source('game/GameConfig.ts');
 const { worldToScreen, screenToWorld } = source('world/IsoUtils.ts');
 const { visibleWorldAabb } = source('world/Visibility.ts');
@@ -166,7 +166,11 @@ function tileGame(ctx, width = C.MAP_TILES_W, height = C.MAP_TILES_H) {
     map: { data: { tilesW: width, tilesH: height, worldW: width, worldH: height,
       buildings: [], props: [], heights,
       tiles: Array.from({ length: width * height }, (_, i) => ({ kind: i % 5 ? 'grass' : 'road',
-        key: i % 7 ? 'tile_ground_grass' : 'missing-tile' })) }, heightAt: () => 0, heightSmoothAt: () => 0 },
+        key: i % 7 ? 'tile_ground_grass' : 'missing-tile' })) }, heightAt: () => 0, heightSmoothAt: () => 0,
+      // A mata de fora consulta a água (`árvoreDoTile` não planta no canal). Este oracle mede
+      // recorte, não o rio — e o tile fake acima nunca é `water`, então `false` é o espelho
+      // exato dos dados que este mapa já tem, não uma concessão ao teste.
+      isWaterWorld: () => false },
   };
 }
 function drawnTiles(record) {
@@ -215,6 +219,21 @@ function mount(Component, props) {
   };
 }
 
+/**
+ * A fila de desenho tem três andares pintados na ordem do pintor: a cidade, o encaixe da manta de
+ * nuvem (o `children` que o GameCanvas entrega) e o que já passou da barriga do algodão. Os checks
+ * de recorte olham o andar do chão, que é onde o mundo fake inteiro vive.
+ */
+function andares(tree) {
+  const pisos = tree.props.children;
+  const chao = pisos[0], ar = pisos[pisos.length - 1];
+  assert.equal(chao.type, 'Group', 'o primeiro andar não é a cidade');
+  assert.equal(ar.type, 'Group', 'o último andar não é o que passou da manta');
+  assert.deepEqual(ar.props.children, [], 'com o céu aberto nada passou da barriga da manta');
+  // O encaixe da manta é o piso do meio, se houver: é entre a cidade e o ar que o algodão pinta.
+  return { chao: chao.props.children, manta: pisos.length > 2 ? pisos[1] : null };
+}
+
 test('projected centers and screen radii agree for phone/desktop, zoom and translated cameras', () => {
   for (const ctx of contexts) for (const [x, y] of [[0, 0], [-3.25, 8.5], [159.75, 160.25], [80, 80]]) {
     const camera = { ...ctx.camera, x, y }; const view = fog.view({ ...ctx, camera });
@@ -250,6 +269,42 @@ test('FogLayer uses shared radii/stops, transparent center, opaque clamped perim
       assert.deepEqual(gradient.props.transform.value, [{ translateX: ctx.viewW / 2 }, { translateY: ctx.viewH / 2 },
         { scaleX: radius.x }, { scaleY: radius.y }]);
     }
+  }
+});
+
+test('a parede de névoa abre com a altura da câmera, e a moldura é o teto dela', () => {
+  const alpha = (color) => /^#[0-9a-f]{6}$/i.test(color) ? 1 : Number(color.match(/,\s*([\d.]+)\)$/)?.[1]);
+  // O chão não se move um pixel: até um tile acima do morro mais alto do mapa a curva é zero, e é
+  // isso que garante que rua, mato e chuva continuam fechados exatamente como estavam.
+  for (const h of [0, 1.2, 4, 5]) assert.equal(aberturaDaParede(h), 0);
+  for (const ctx of contexts) {
+    assert.deepEqual(fogRadii(ctx.viewW, ctx.viewH, ctx.camera.zoom, 4),
+      fogRadii(ctx.viewW, ctx.viewH, ctx.camera.zoom));
+    assert.deepEqual(fogRadii(ctx.viewW, ctx.viewH, ctx.camera.zoom, 0),
+      fogRadii(ctx.viewW, ctx.viewH, ctx.camera.zoom));
+  }
+  assert.equal(aberturaDaParede(NaN), 0);
+  assert.equal(aberturaDaParede(11), 1);
+  assert.ok(aberturaDaParede(9) > aberturaDaParede(7), 'a parede abre em degrau, não de uma vez');
+  // Lá em cima o que limita a vista é a moldura: o envelope encosta no cap de tela e PARA ali.
+  // Passar disso seria assar chão que nenhum pixel mostra, e o custo é o bake inteiro do mundo.
+  const teto = fogRadii(1000, 600, 0.751, 11);
+  near(teto.x, 1000 * 0.495); near(teto.y, 600 * 0.59);
+  assert.ok(teto.x > fogRadii(1000, 600, 0.751).x, 'a parede não abriu com a altura');
+  // A tinta é o que sai do quadro: com a parede inteira o stop da borda é a cor publicada; com ela
+  // aberta sobe a zero, e o canto do quadro devolve o algodão da manta.
+  assert.equal(nevoaCores(FOG.rgb, 0, FOG.color).at(-1), FOG.color);
+  assert.deepEqual(nevoaCores(FOG.rgb, 0, FOG.color), FOG.colors);
+  const aberta = nevoaCores(FOG.rgb, 1, FOG.color);
+  assert.equal(aberta.length, FOG.positions.length);
+  assert.deepEqual(aberta.map(alpha), FOG.positions.map(() => 0));
+  const meia = nevoaCores(FOG.rgb, 0.5, FOG.color).map(alpha);
+  assert.ok(meia.every((a, i) => a <= alpha(FOG.colors[i]) + 1e-6), 'a parede fechou ao subir');
+  for (const ctx of contexts) {
+    const camera = { value: { ...ctx.camera, h: 11 } };
+    const tree = FogLayer({ width: ctx.viewW, height: ctx.viewH, camera });
+    assert.deepEqual(tree.props.children.props.colors.value.map(alpha),
+      FOG.positions.map(() => 0), 'a parede do chão continuou pintada acima da manta');
   }
 });
 
@@ -387,7 +442,7 @@ function entityGame() {
     { key: building, ...point(5000, 5000), footprintW: 2, footprintH: 2 },
   ];
   game.map.data.props = [{ key: 'test-tall', ...point(0, baseY) }, { key: 'test-tall', ...point(-5000, -5000) }];
-  game.player = { ...point(5000, 5000), currentVehicleId: null };
+  game.player = { ...point(5000, 5000), currentVehicleId: null, busUnit: null };
   const npc = (p, patch = {}) => ({ ...p, dead: false, deathTimer: -1, inVehicle: false, kind: 'civ', char: 'a', anim: 'idle', dir: 'SE', frame: 0, ...patch });
   game.npcs = [npc(point(0, 0)), npc(point(5000, 5000)), npc(point(0, 0), { dead: true }),
     npc(point(0, 0), { inVehicle: true }), npc(point(0, 0), { char: 'missing' })];
@@ -401,6 +456,27 @@ function entityGame() {
     veh.def.type === 'helicopter' ? 1 : 0)] = image(96, 64);
   game.wildlife = { animals: [] };
   game.destruction = { wrecks: [] };
+  // A fera da fronteira é um indivíduo por mundo, não uma lista indexada: a fila de desenho lê
+  // `game.gorilas.fera` direto. Sem este fake o recorte mediria a tela contra um sistema que não
+  // existe, e o erro apareceria como um `TypeError` no lugar de uma medida.
+  game.gorilas = { fera: null, perigo: 0 };
+  // A barbatana é o mesmo formato: um indivíduo por mundo, lido direto pela fila de desenho.
+  game.piranhas = { fera: null, perigo: 0 };
+  // E a coluna de ar é o terceiro: a fila pergunta ao céu se ainda há chão para dividir. Com o
+  // teto de nuvem alto e o céu aberto nada passa da barriga, então a ordem pintada aqui é a de
+  // sempre — o que este check mede é o recorte, e a travessia da manta tem check próprio.
+  game.altitude = { doCeu: 0, daBase: C.NUVEM_BASE_ALTA };
+  // O ônibus da malha não é um `Vehicle` nem mora na grade `spatial`: ele é uma função do
+  // horário e vive em `game.transport.units`. Sem este fake o recorte fino pararia no
+  // `game.transport.units` e o check mediria a tela sem nenhum ônibus.
+  const { VEHICLE_DEFS } = source('data/vehicles.ts');
+  const busArt = (dir) => registry.spriteKeyForVehicle(VEHICLE_DEFS.bus_school, '', dir, 0);
+  for (const dir of ['SE', 'NW']) spriteStore[busArt(dir)] = image(96, 64);
+  game.transport = { units: [
+    { route: 'l', unit: 0, ...point(0, 0), angle: 0, dir: 'SE', stopped: false, stop: 0, live: true },
+    { route: 'l', unit: 1, ...point(5000, 5000), angle: 0, dir: 'NW', stopped: false, stop: 1, live: true },
+    { route: 'l', unit: 2, ...point(0, 0), angle: 0, dir: 'SE', stopped: true, stop: 0, live: false },
+  ] };
   game.entityVersion = 0; game.subscribeEntityChange = () => () => {};
   // O mundo fake entra no streaming do mesmo jeito que o real: índice dos estáticos depois
   // de o mapa estar montado, grade dos que se mexem depois das entidades, zonas a partir da
@@ -447,8 +523,12 @@ test('actual SortedWorldLayer keeps exact tall static bounds, lifted vehicles an
   const component = mount(sorted.SortedWorldLayer, { game });
   try {
     const tree = component.render(); assert.equal(tree.type, 'Group');
-    const children = tree.props.children;
-    assert.deepEqual(children.map((child) => child.key).sort(), ['building:0', 'npc:0', 'npc:2', 'player', 'prop:0', 'veh:0', 'veh:2'].sort());
+    const { chao: children, manta } = andares(tree);
+    // Com o céu do fake aberto o encaixe da manta está vazio — é o `children` do GameCanvas, e
+    // nada aqui monta nuvem. Se ele acordar pintado dentro da cidade, o mar de nuvens vira
+    // lençol estendido no chão.
+    assert.ok(!manta, 'com o céu aberto não há algodão entre a cidade e o ar');
+    assert.deepEqual(children.map((child) => child.key).sort(), ['building:0', 'bus:0', 'npc:0', 'npc:2', 'player', 'prop:0', 'veh:0', 'veh:2'].sort());
     const actualBuilding = children.find((child) => child.key === 'building:0');
     const wrapper = actualBuilding.type(actualBuilding.props);
     const transparent = wrapper.type({ ...wrapper.props, focus: { value: { x: 0, y: 0, depth: 0, active: false } } });
@@ -486,7 +566,11 @@ test('actual SortedWorldLayer keeps exact tall static bounds, lifted vehicles an
     assert.equal(sprite.type, 'Image'); near(sprite.props.x, p.x - g.anchorX * scale); near(sprite.props.y, p.y - g.anchorY * scale);
     assert.equal(transparent.props.children[1].props.invertClip, true);
     assert.equal(transparent.props.children[2].props.opacity, 0.16);
-    const items = sorted.visibleItems(game, nodes);
+    // A `mata` é o terceiro argumento real da fila (as árvores da fronteira entram ordenadas
+    // com o resto) e a `aldeia` é o quarto (os acampamentos tribo entram na mesma fila, não numa
+    // camada própria); aqui a tela medida é a da cidade, então as listas vazias são a premissa,
+    // não uma licença para esquecer os parâmetros.
+    const items = sorted.visibleItems(game, nodes, [], []);
     for (let i = 1; i < items.length; i++) assert.ok(items[i].depth >= items[i - 1].depth);
     assert.equal(children.at(-1).key, 'veh:2', 'airborne vehicle keeps elevated depth');
     assert.equal([...component.timers.values()][0].ms, C.ENTITY_CULL_MS);
@@ -499,7 +583,7 @@ test('SortedWorldLayer always keeps current vehicle by ID, hides passenger playe
   const npcs = game.npcs; const vehicles = game.vehicles;
   const component = mount(sorted.SortedWorldLayer, { game });
   try {
-    const keys = component.render().props.children.map((child) => child.key);
+    const keys = andares(component.render()).chao.map((child) => child.key);
     assert.ok(keys.includes('veh:1')); assert.ok(!keys.includes('player')); assert.ok(!keys.includes('veh:4'));
     const next = screenToWorld(fog.view(game).x - 5000, fog.view(game).y - 5000);
     game.camera.x = next.x; game.camera.y = next.y;
@@ -507,9 +591,13 @@ test('SortedWorldLayer always keeps current vehicle by ID, hides passenger playe
     // passo, senão o teste estaria medindo o recorte contra a janela de uma câmera velha.
     syncWorld(game);
     component.tick();
-    const moved = component.render().props.children.map((child) => child.key);
+    const moved = andares(component.render()).chao.map((child) => child.key);
     assert.ok(moved.includes('veh:1'), 'occupied vehicle cannot be culled');
     assert.ok(moved.includes('veh:4')); assert.ok(!moved.includes('npc:0')); assert.ok(!moved.includes('building:0'));
+    // O ônibus obedece ao mesmo recorte que o resto: a câmera foi embora dele, então ele foi
+    // junto — e o que o portão deixou dormente nunca tinha aparecido nem agora aparece.
+    assert.ok(!moved.includes('bus:0'), 'bus follows the camera out');
+    assert.ok(!moved.includes('bus:1')); assert.ok(!moved.includes('bus:2'));
     assert.equal(game.npcs, npcs); assert.equal(game.vehicles, vehicles); assert.equal(npcs.length, 5); assert.equal(vehicles.length, 5);
   } finally { component.dispose(); }
 });
@@ -523,7 +611,7 @@ test('wrecks join the depth-sorted pass and cull with the same envelope as the h
     { ...scorch, ...screenToWorld(v.x, v.y) },
   ];
   syncWorld(game);
-  const items = sorted.visibleItems(game, [...chunkStatics.staticNodesFor(game, game.streaming)]);
+  const items = sorted.visibleItems(game, [...chunkStatics.staticNodesFor(game, game.streaming)], [], []);
   assert.deepEqual(items.filter((i) => i.wreck).map((i) => i.id), ['wreck:1'],
     'only the on-screen scorch is drawn');
   assert.ok(items.every((i, k) => !k || i.depth >= items[k - 1].depth), 'depth order kept');

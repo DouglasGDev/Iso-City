@@ -33,6 +33,7 @@ function createAnimal(id, species, x, y, seed = id + 1) {
         speed: 0, dead: false, deathTimer: -1, animTime: 0,
         moveX: 1, moveY: 0, decisionTimer: 1, fleeTimer: 0, callTimer: 8,
         randomState: seed >>> 0, deathNotified: false,
+        simulated: false,
     };
 }
 /**

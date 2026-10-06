@@ -2,7 +2,9 @@
  * Sintetiza SFX e ambientes originais como WAV PCM16 mono 22.05kHz.
  * Rode: node tools/generate-sfx.js (todos), --weapons (armas) ou
  * --exploration (movimento, floresta, chamado animal e buzina), --regions (biomas),
- * --weather (vento e trovão) e --hazards (tornado, onda, cachoeira e sirene de aviso).
+ * --weather (vento e trovão), --hazards (tornado, onda, cachoeira e sirene de aviso) e
+ * --frontier (a voz e o passo do gorila, a morte do rotor e o reacender na mata) e
+ * --tribo (o grito de guerra do bando e o tambor do acampamento).
  */
 const fs = require('fs');
 const path = require('path');
@@ -618,13 +620,295 @@ function weatherAlert() {
   oneShot('weather_alert.wav', out, 0.2);
 }
 
+// ---- Fronteira: a voz e o peso do gorila ----
+//
+// O urro é três golfadas, não um uivo contínuo: é assim que um dorsípedio de duas toneladas
+// avisa (buf, rosna, bate no peito), e um sintetizado de uma nota só soaria a alarme de carro.
+// A fundamental cai de 96 para 62 Hz ao longo de cada golfada porque a garganta desce junto
+// com o ar; sobre ela entra a sub-oscilante em metade da frequência, que é o que faz o som ser
+// *sentido* no alto-falante pequeno do celular em vez de apenas ouvido, e o ruído passa por um
+// filtro que jura ser peito, não serra.
+function gorillaRoar() {
+  seed = 51_703; // semente própria: `--frontier` e a geração completa têm de dar os mesmos bytes.
+  const out = new Float32Array(sec(1.55));
+  const gritRaw = new Float32Array(out.length);
+  for (let i = 0; i < gritRaw.length; i++) gritRaw[i] = rnd();
+  const grit = lowpass(lowpass(gritRaw, 0.055), 0.055);
+  for (const [start, dur, forca] of [[0.03, 0.42, 1], [0.52, 0.34, 0.82], [0.92, 0.58, 0.96]]) {
+    let phase = 0, sub = 0;
+    for (let i = 0; i < sec(dur); i++) {
+      const idx = sec(start) + i;
+      if (idx >= out.length) break;
+      const u = i / (sec(dur) - 1);
+      const freq = 96 - 34 * u + 5 * Math.sin(2 * Math.PI * 7.5 * u * dur) + 14 * Math.sin(2 * Math.PI * 1.7 * u);
+      phase += 2 * Math.PI * freq / SR;
+      sub += Math.PI * freq / SR; // metade da fundamental: o peito que treme o cone.
+      const env = Math.sin(Math.PI * u) ** 1.4;
+      out[idx] += env * forca * (Math.sin(phase) * 0.62 + Math.sin(sub) * 0.8
+        + Math.sin(phase * 2) * 0.2 + Math.sin(phase * 3) * 0.09 + grit[idx] * 0.9);
+    }
+  }
+  oneShot('gorilla_roar.wav', out, 0.62);
+}
+
+// O passo não é o `land.wav` do jogador: é um corpo de duas toneladas caindo na serapilheira.
+// Sub-grave de 48 Hz que morre em 30 (o chão empurrando o ar), mais o estouro molhado de folha
+// seca por baixo, mais um rebote longo e baixo que é a mata respondendo, não a bota.
+function gorillaStep() {
+  seed = 20_921;
+  const out = new Float32Array(sec(0.62));
+  const leafRaw = new Float32Array(out.length);
+  for (let i = 0; i < leafRaw.length; i++) leafRaw[i] = rnd();
+  const leaf = lowpass(leafRaw, 0.28);
+  let phase = 0;
+  for (let i = 0; i < out.length; i++) {
+    const t = i / SR;
+    phase += 2 * Math.PI * (48 - 18 * Math.min(1, t * 6)) / SR;
+    const boom = Math.sin(phase) * Math.exp(-t * 9);
+    const crunch = leaf[i] * Math.exp(-t * 34) * (t < 0.09 ? 1 : 0.2);
+    const rebound = Math.sin(2 * Math.PI * 27 * t) * Math.exp(-Math.max(0, t - 0.05) * 12) * (t > 0.05 ? 1 : 0);
+    out[i] = boom * 1.15 + crunch * 1.6 + rebound * 0.5;
+  }
+  oneShot('gorilla_step.wav', out, 0.72);
+}
+
+// A morte do rotor não é um alarme: é uma máquina de 600 kg perdendo o torque que a sustentava.
+// O que faz o som ser um helicóptero morrendo é o chop das pás desacelerando — 22 passagens por
+// segundo em voo normal caindo em curva exponencial até as pás praticamente pararem — porque a
+// taxa de passagem é o relógio da máquina, e o ouvido lê esse relógio como velocidade. O tom
+// fundamental segue a mesma curva (310 → 42 Hz), e no lugar de um beipe de entrada entra o
+// tranco metálico do libre: um golpe curto de ruído, não uma nota.
+function rotorFail() {
+  seed = 71_307; // semente própria: `--frontier` e a geração completa têm de dar os mesmos bytes.
+  const dur = 1.7;
+  const out = new Float32Array(sec(dur));
+  const grão = new Float32Array(out.length);
+  for (let i = 0; i < grão.length; i++) grão[i] = rnd();
+  const aço = lowpass(grão, 0.42); // o estouro seco do metal, sem corpo
+  const peito = lowpass(lowpass(grão, 0.08), 0.08); // a fuselagem vibrando com a perda de passo
+  let fase = 0, chop = 0;
+  for (let i = 0; i < out.length; i++) {
+    const t = i / SR;
+    const u = t / dur;
+    const rotação = 22 * Math.exp(-t * 1.9) + 1.6;
+    fase += 2 * Math.PI * (42 + 268 * Math.exp(-t * 1.75)) / SR;
+    chop += rotação / SR;
+    const golpe = Math.exp(-6.5 * (chop % 1));
+    const moribunda = Math.min(1, rotação / 22); // o volume É a rotação: sem torque, sem ar
+    const treme = 1 + 0.5 * u * Math.sin(2 * Math.PI * (2 + 6 * u) * t);
+    out[i] = moribunda * treme * (Math.sin(fase) * 0.5 + Math.sin(fase * 2) * 0.26 * golpe
+      + peito[i] * 0.4 + aço[i] * golpe * 0.55 * (t < 0.4 ? 1 : 0.2));
+  }
+  // O torque some num instante; o resto é inércia. Este é o único clique do arquivo, e ele vem
+  // antes das pás, porque é o que o piloto ouve no momento exato em que o manche responde nada.
+  for (let i = 0; i < sec(0.1); i++) out[i] += aço[i] * Math.exp(-i * 60 / SR) * 1.5;
+  oneShot('rotor_fail.wav', out, 0.6);
+}
+
+// O reacender não é um motor de carro pegando: é uma turbina parada recomeçando. Metade do som é
+// o arranque engrenando (dentes de ruído que apertam conforme a velocidade sobe), metade é o
+// rotor voltando a bater ar — por baixo, ainda fraco, ~6 passagens por segundo, e é essa
+// diferença de taxa que diz ao ouvido que a máquina pega mas ainda não voa.
+function engineCatch() {
+  seed = 33_119;
+  const dur = 0.7;
+  const out = new Float32Array(sec(dur));
+  const grão = new Float32Array(out.length);
+  for (let i = 0; i < grão.length; i++) grão[i] = rnd();
+  const arranhado = lowpass(lowpass(grão, 0.3), 0.3);
+  let fase = 0, chop = 0;
+  for (let i = 0; i < out.length; i++) {
+    const t = i / SR;
+    if (t < 0.44) {
+      // Os dentes marcam o aperto do arranque, e a cadência acelera: é o mesmo gesto de quem dá
+      // partida repetida num motor molhado, primeiro espaçado, depois quase contínuo.
+      const dentes = Math.exp(-9 * ((t * 7) % 1)) + Math.exp(-9 * ((t * 7 + 0.5) % 1));
+      const aperto = 0.35 + 0.65 * (t / 0.44);
+      out[i] = arranhado[i] * dentes * aperto * 1.1
+        + Math.sin(2 * Math.PI * 84 * t) * 0.12 * aperto * (1 - t / 0.44);
+    } else {
+      const u = (t - 0.44) / 0.26;
+      const rotação = 3 + 14 * Math.min(1, u * 1.4);
+      chop += rotação / SR;
+      const golpe = Math.exp(-5 * (chop % 1)) * Math.min(1, u * 6);
+      fase += 2 * Math.PI * (46 + 150 * u) / SR;
+      out[i] = Math.sin(fase) * 0.5 * Math.sin(Math.PI * Math.min(1, u))
+        + arranhado[i] * golpe * 0.9;
+    }
+  }
+  oneShot('engine_catch.wav', out, 0.5);
+}
+
+// ---- Fronteira pelo rio: o aviso e a rotura da superfície ----
+//
+// A piranha não ruge: ela não tem peito para isso e o jogador está dentro do som, não diante
+// dele. O aviso é a superfície deslizando — ruído branco passando por uma fenda que abre e volta
+// a fechar, varrida pelo tempo, porque o que faz um som "ir embora pela água" é o filtro se
+// movendo, não o volume. Por baixo entram dois pulsos graves de barbatana batendo, espaçados
+// como uma respiração, e é só: o resto do medo é o que o jogador já viu na linha da HUD.
+function piranhaThreat() {
+  seed = 61_977; // semente própria: `--frontier` e a geração completa têm de dar os mesmos bytes.
+  const dur = 1.15;
+  const out = new Float32Array(sec(dur));
+  const grão = new Float32Array(out.length);
+  for (let i = 0; i < grão.length; i++) grão[i] = rnd();
+  let s = 0;
+  for (let i = 0; i < out.length; i++) {
+    const u = (i / SR) / dur;
+    // A brecha abre até a metade e volta a fechar: é um único gesto contínuo, não dois sons.
+    const brecha = 0.05 + 0.55 * Math.sin(Math.PI * Math.min(1, u * 1.1));
+    s += (grão[i] - s) * brecha;
+    const envelope = Math.sin(Math.PI * u) ** 0.7; // macio na entrada, morrendo na saída
+    out[i] = (grão[i] - s) * envelope * 0.85 + s * 0.22;
+  }
+  for (const [start, freq] of [[0.1, 78], [0.63, 61]]) {
+    let fase = 0;
+    for (let i = 0; i < sec(0.26); i++) {
+      const idx = sec(start) + i;
+      if (idx >= out.length) break;
+      const tt = i / SR;
+      fase += 2 * Math.PI * (freq - 17 * (tt / 0.26)) / SR;
+      out[idx] += Math.sin(fase) * Math.exp(-tt * 11) * 0.8;
+    }
+  }
+  oneShot('piranha_threat.wav', out, 0.5);
+}
+
+// O corpo rompendo a superfície é o som mais largo do jogo: dois metros de peixe saindo do rio,
+// caindo de volta e espirrando. Três camadas, cada uma com uma causa física diferente: o
+// estouro cru (ruído quase sem filtro, que é o que se ouve a 20 tiles), a coluna d'água que sobe
+// e desaba (um pente com atraso crescente — o atraso *é* a altura da coluna, então o tom cai
+// conforme ela desaba, e é isso que diz ao ouvido que aquilo foi grande), e o sub-grave do
+// deslocamento de água. Os pingos depois do golpe não são enfeite: sem cauda irregular o som
+// seria uma porta batendo molhada, e seria ouvido como um clique só.
+function piranhaSplash() {
+  seed = 88_511;
+  const dur = 0.55;
+  const out = new Float32Array(sec(dur));
+  const grão = new Float32Array(out.length);
+  for (let i = 0; i < grão.length; i++) grão[i] = rnd();
+  const água = lowpass(grão, 0.55); // o corpo molhado, sem a aresta do ruído puro
+  const pente = new Float32Array(out.length);
+  let fase = 0;
+  for (let i = 0; i < out.length; i++) {
+    const t = i / SR;
+    const env = Math.exp(-t * 15);
+    // Atraso de 6,2 ms a 15 ms: o pico do pente desliza de ~160 Hz para ~66 Hz na primeira
+    // metade do gesto, que é exatamente o tempo de a coluna cair.
+    const atraso = Math.max(1, Math.round(SR * (0.0062 + 0.0088 * Math.min(1, t * 5))));
+    const j = i - atraso;
+    pente[i] = grão[i] * env * 0.5 + (j >= 0 ? pente[j] : 0) * 0.72;
+    fase += 2 * Math.PI * (74 - 36 * Math.min(1, t * 5)) / SR;
+    out[i] = grão[i] * env * 0.9 + água[i] * Math.exp(-t * 7) * 0.6
+      + pente[i] * 0.5 + Math.sin(fase) * Math.exp(-t * 10) * 0.75;
+  }
+  // Os pingos: cada um é um estouro de ruído *passo-alto* (o grão menos o seu lowpass), porque
+  // gota pequena não tem grave nenhum, e com amplitudes irregulares porque respingo não é metrônomo.
+  for (const [atraso, força, vida] of [[0.13, 0.4, 46], [0.185, 0.22, 60], [0.27, 0.33, 52],
+    [0.33, 0.16, 70], [0.41, 0.26, 58]]) {
+    const inicial = sec(atraso);
+    for (let i = 0; i < sec(0.07); i++) {
+      const idx = inicial + i;
+      if (idx >= out.length) break;
+      const tt = i / SR;
+      out[idx] += (grão[idx] - água[idx]) * Math.exp(-tt * vida) * força * 1.4;
+    }
+  }
+  oneShot('piranha_splash.wav', out, 0.7);
+}
+
+// O grito de guerra humano não é o urro do gorila: o gorila é peito (96→62 Hz) e este é garganta.
+// Uma voz aberta em ~230 Hz com as duas primeiras vogais do chamado subindo e a última caindo, e o
+// timbre vindo dos harmônicos pesados em 690 Hz e 1150 Hz — que é onde mora o /a/ aberto de um
+// grito, não onde mora o zumbido de um motor. O vibrato de 6,5 Hz é o esforço de sustentar a nota
+// aos gritos, e o fio de ar por cima (ruído passa-altos, o grão menos o próprio lowpass) é o que
+// faz o ouvido ler carne e não sintetizador. Três sílabas com ataque duro porque chamado não tem
+// attack time de violino: cada uma começa no talo.
+function triboGrito() {
+  seed = 39_417; // semente própria: `--tribo` e a geração completa têm de dar os mesmos bytes.
+  const dur = 1.15;
+  const out = new Float32Array(sec(dur));
+  const grão = new Float32Array(out.length);
+  for (let i = 0; i < grão.length; i++) grão[i] = rnd();
+  const ar = (() => {
+    const y = new Float32Array(out.length);
+    let lp = 0;
+    for (let i = 0; i < out.length; i++) {
+      lp += 0.16 * (grão[i] - lp);
+      y[i] = grão[i] - lp; // passa-altos: o chiado fica, o corpo vai embora
+    }
+    return y;
+  })();
+  for (const [start, sil, pico, cauda] of [[0.02, 0.26, 1, 0.9], [0.3, 0.22, 0.86, 0.78],
+    [0.56, 0.55, 0.94, 0.62]]) {
+    let fase = 0;
+    const n = sec(sil);
+    for (let i = 0; i < n; i++) {
+      const idx = sec(start) + i;
+      if (idx >= out.length) break;
+      const u = i / (n - 1);
+      // A sílaba final desaba: quem chama alguém perde o fôlego no meio da última palavra.
+      const f = pico * (238 + 46 * Math.sin(Math.PI * Math.min(1, u * 1.35)) - 58 * u * u);
+      fase += 2 * Math.PI * f / SR;
+      const vib = 1 + 0.022 * Math.sin(2 * Math.PI * 6.5 * u * sil);
+      const env = Math.min(1, u * 14) * (1 - u) ** 0.85;
+      const harm = Math.sin(fase * vib) * 0.5 + Math.sin(fase * 2 * vib) * 0.24
+        + Math.sin(fase * 3 * vib) * 0.3 + Math.sin(fase * 5 * vib) * 0.26
+        + Math.sin(fase * 7 * vib) * 0.11;
+      out[idx] += env * cauda * (harm + ar[idx] * (0.22 + 0.2 * u));
+    }
+  }
+  oneShot('tribo_grito.wav', out, 0.6);
+}
+
+// O tambor do acampamento é ouvido a 45 tiles, então o que importa não é o ataque: é o corpo.
+// Cada batida é a membrana caindo de 142 Hz para 62 em sessenta milissegundos (o tempo que o ar
+// dentro do casco leva para empurrar a pele de volta), o taco da mão no aro (passa-altos que morre
+// em 15 ms), e o casco em 55 Hz que continua soando depois de a membrana ter parado. As quatro
+// batidas não são um metrônomo: a terceira é mais fraca e a última vem atrasada de propósito,
+// porque um tambor tocado por alguém que está do outro lado da clareia não é programado.
+function triboTambor() {
+  seed = 62_215;
+  const dur = 1.6;
+  const out = new Float32Array(sec(dur));
+  const grão = new Float32Array(out.length);
+  for (let i = 0; i < grão.length; i++) grão[i] = rnd();
+  const slap = (() => {
+    const y = new Float32Array(out.length);
+    let lp = 0;
+    for (let i = 0; i < out.length; i++) {
+      lp += 0.3 * (grão[i] - lp);
+      y[i] = grão[i] - lp;
+    }
+    return y;
+  })();
+  for (const [start, força, vida] of [[0.0, 1, 20], [0.21, 0.82, 22], [0.4, 0.55, 26],
+    [0.67, 0.9, 18]]) {
+    let fase = 0, casco = 0;
+    const base = sec(start);
+    for (let i = base; i < out.length; i++) {
+      const tt = (i - base) / SR;
+      const f = 62 + 80 * Math.exp(-tt * 26);
+      fase += 2 * Math.PI * f / SR;
+      casco += 2 * Math.PI * 55 / SR;
+      const membrana = Math.sin(fase) * Math.exp(-tt * vida);
+      const madeira = Math.sin(casco) * Math.exp(-tt * 7) * 0.42;
+      const mão = slap[i] * Math.exp(-tt * 210) * 1.5;
+      out[i] += (membrana * 1.1 + madeira + mão) * força;
+    }
+  }
+  oneShot('tribo_tambor.wav', out, 0.68);
+}
+
 fs.mkdirSync(OUT, { recursive: true });
 // Cada categoria só roda quando não foi pedida uma outra específica:
 // sem flag gera tudo, `--weather` gera só o clima, `--weapons --weather` gera as duas.
-const CATS = ['base', 'weapons', 'exploration', 'regions', 'weather', 'hazards'];
+const CATS = ['base', 'weapons', 'exploration', 'regions', 'weather', 'hazards', 'frontier',
+  'tribo'];
 const FLAGS = {
   base: '--base', weapons: '--weapons', exploration: '--exploration',
   regions: '--regions', weather: '--weather', hazards: '--hazards',
+  frontier: '--frontier', tribo: '--tribo',
 };
 const asked = CATS.filter((cat) => process.argv.includes(FLAGS[cat]));
 const skips = (cat) => asked.length > 0 && !asked.includes(cat);
@@ -676,5 +960,17 @@ if (!skips('hazards')) {
   waveLoop();
   cascadeLoop();
   weatherAlert();
+}
+if (!skips('frontier')) {
+  gorillaRoar();
+  gorillaStep();
+  rotorFail();
+  engineCatch();
+  piranhaThreat();
+  piranhaSplash();
+}
+if (!skips('tribo')) {
+  triboGrito();
+  triboTambor();
 }
 console.log('OK →', OUT);

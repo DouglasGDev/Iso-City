@@ -30,6 +30,13 @@ export interface Vehicle {
    * sem que a máquina tenha descido um palmo.
    */
   elevation: number;
+  /**
+   * O motor parou. É um bit, não um sistema: quem decide é a fronteira, quem obedece é o
+   * `MovementSystem`, que deixa de içar a máquina e a deixa cair. No chão, depois de um tempo,
+   * ele volta — a bordo de uma aeronave parada não há nada impedi-lo, e deixar o casco morto para
+   * sempre deixaria o jogador preso na mata sem meio de sair.
+   */
+  motorDead: boolean;
 }
 
 export function createVehicle(
@@ -59,6 +66,7 @@ export function createVehicle(
     animTimer: 0,
     altitude: 0,
     elevation: 0,
+    motorDead: false,
   };
 }
 

@@ -11,6 +11,7 @@ import { terrain } from './TerrainSystem';
 import { sound } from '../audio/SoundManager';
 import { TrafficSignalSystem, type TrafficSignal } from './TrafficSignalSystem';
 import { pedestrianCrossingIntent } from './NPCSystem';
+import type { StreetBody } from './TransportSystem';
 import { TIER, type WorldStreamingManager } from '../world/streaming/WorldStreamingManager';
 
 interface TrafficVehicle {
@@ -42,10 +43,43 @@ const radiusOf = (v: Vehicle) => Math.max(GAME_CONFIG.VEHICLE_RADIUS,
 const cellOf = (n: number) => Math.floor(n / GRID_CELL);
 const cellKey = (cx: number, cy: number) => (cx + 2048) * 8192 + (cy + 2048);
 
+/**
+ * Tudo que ocupa asfalto numa aproximação de trânsito: um carro que o trânsito dirige e um
+ * ônibus que só o horário sabe onde estar. O ônibus ainda não é um `Vehicle` — não tem
+ * lataria, motorista nem banco para o jogador sentar (é a fase seguinte) —, mas ele ocupa uma
+ * faixa, e um carro atravessando um ônibus é um acidente que o jogador vê e não consegue
+ * explicar. Uma aproximação não precisa de mais nada do corpo além do que está aqui.
+ */
+type Blocker = Vehicle | StreetBody;
+
+/** Só um veículo dirigido tem lataria; o corpo do horário tem apenas posição e relógio. */
+const driven = (o: Blocker): o is Vehicle => 'def' in o;
+
+/**
+ * O corpo está no chão e inteiro? Um carro destruído ou no ar não segura fila nenhuma; um
+ * ônibus fora do alcance da câmera nem é calculado, então também não está na rua.
+ */
+const onStreet = (o: Blocker): boolean => driven(o)
+  ? o.state !== 'destroyed' && o.def.driveable && o.altitude <= 0.5
+  : o.live;
+
+/** Meia-largura no eixo da via: é o vão que sobra entre dois corpos numa fila. */
+const reachOf = (o: Blocker): number => driven(o) ? radiusOf(o) : o.radius;
+
+/** O corpo corre no eixo `x` da malha (as faixas NW·SE) ou no `y` (SW·NE)? */
+const alongX = (o: Blocker): boolean => o.dir === 'SE' || o.dir === 'NW';
+
+/** Rumo real do corpo em radianos: o carro usa o do volante, o ônibus o do traçado. */
+const headingOf = (o: Blocker): number => driven(o) ? o.facingAngle : o.angle;
+
 export class TrafficSystem {
   private traffic: TrafficVehicle[] = [];
   readonly signalSystem = new TrafficSignalSystem();
-  private vehicleGrid = new Map<number, Vehicle[]>();
+  /**
+   * Os corpos do anel de trânsito, na grade de vizinhança. São carros e ônibus no mesmo balde:
+   * quem freia diante de um corpo não precisa saber se ele tem lataria ou só relógio.
+   */
+  private bodyGrid = new Map<number, Blocker[]>();
   private npcGrid = new Map<number, NPC[]>();
   /** Carimbo do tick: é o relógio que escalona o anel distante do trânsito. */
   private frame = 0;
@@ -195,8 +229,17 @@ export class TrafficSystem {
   }
 
   /** Rebuilds the proximity indexes once per frame; every look-ahead is shorter than GRID_CELL. */
-  private syncGrids(vehicles: Vehicle[], npcs: NPC[]) {
-    TrafficSystem.rebuild(this.vehicleGrid, vehicles, (v) => v.x, (v) => v.y);
+  private syncGrids(vehicles: Vehicle[], npcs: NPC[], buses: readonly StreetBody[] = []) {
+    TrafficSystem.rebuild(this.bodyGrid, vehicles, (v) => v.x, (v) => v.y);
+    // Os ônibus entram depois, empurrados um a um, porque o `rebuild` esvazia cada balde antes
+    // de enchê-lo e os dois corpos têm de dividir a mesma varredura: um motorista que vê o
+    // carro da frente mas não vê o ônibus parado adiante dele é o carro que entra no ônibus.
+    for (const b of buses) {
+      if (!b.live) continue;
+      const key = cellKey(cellOf(b.x), cellOf(b.y));
+      const bucket = this.bodyGrid.get(key);
+      if (bucket) bucket.push(b); else this.bodyGrid.set(key, [b]);
+    }
     // O filtro de quem está a pé vivia num `npcs.filter` que criava um array de 400 posições
     // a cada tick. Agora o `rebuild` pula o item na hora do empurrão: mesma grade, zero lixo.
     TrafficSystem.rebuild(this.npcGrid, npcs, (n) => n.x, (n) => n.y, (n) => n.dead || n.inVehicle);
@@ -210,9 +253,14 @@ export class TrafficSystem {
     player: Player,
     /** As zonas do mundo. Sem ela (testes, mapa pequeno) todo carro dirige como antes. */
     streaming?: WorldStreamingManager,
+    /**
+     * Os corpos dos ônibus do horário. Vem do `TransportSystem`, que é chamado antes do
+     * trânsito justamente para o asfalto ler o relógio do mesmo tick, não o do anterior.
+     */
+    buses: readonly StreetBody[] = [],
   ) {
     if (!Number.isFinite(dt) || dt <= 0) return;
-    this.syncGrids(vehicles, npcs);
+    this.syncGrids(vehicles, npcs, buses);
     this.signalSystem.update(map, dt);
     this.frame++;
     // Compacta no lugar: `filter` devolvia um array novo de até 56 motoristas por tick, que é
@@ -267,13 +315,22 @@ export class TrafficSystem {
       if (map.isCrosswalkAt(point.x, point.y)) crosswalkDistance = Math.min(crosswalkDistance, distance);
       const s = this.signalSystem.at(point.x, point.y);
       if (s) {
-        const horizontal = v.dir === 'SE' || v.dir === 'NW';
-        const grid = this.vehicleGrid;
+        const horizontal = alongX(v);
+        const grid = this.bodyGrid;
         this.signalSystem.request(s, v.dir);
         let crossing = false;
-        if (TrafficSystem.near(grid, point.x, point.y, (other) => other !== v && other.state !== 'destroyed' && other.altitude <= 0.5 &&
+        if (TrafficSystem.near(grid, point.x, point.y, (other) => other !== v && onStreet(other) &&
           this.signalSystem.at(other.x, other.y)?.id === s.id &&
-          horizontal !== (other.dir === 'SE' || other.dir === 'NW') &&
+          horizontal !== alongX(other) &&
+          // Parado fora da minha trilha não é travessia. O portão mede radialmente — qualquer
+          // lataria registrada no poste conta — e para quem passa isso é certo: hoje aqui, amanhã
+          // cortando a minha frente. Para quem está parado é uma peia sem saída, porque um ônibus
+          // encostado no meio do cruzamento, corpo e meio para o lado da minha faixa, não
+          // atravessa nada e não vai atravessar nunca: ele está parado exatamente porque eu estou
+          // na frente dele. Os dois lados da mesma conta se esperam, a espera não tem fim e a
+          // via inteira atrás do ônibus para com ele — foi assim que uma linha inteira ficou
+          // 407 s sem andar um metro e o passageiro nunca chegou à calçada do destino.
+          (other.speed > STOPPED_SPEED || this.blocksWithMyTrack(v, other)) &&
           // A stopped turning car yielding to this approach must not also block its signal.
           !(other.speed < 0.05 && this.vehicleAhead(other)?.vehicle === v))) crossing = true;
         let exitIndex = i + 1;
@@ -291,7 +348,7 @@ export class TrafficSystem {
         for (let j = i; j < exitIndex && !cellHeld; j++) {
           const node = tv.route[j];
           cellHeld = TrafficSystem.near(grid, node.x, node.y, (other) => other !== v
-            && other.state !== 'destroyed' && other.def.driveable && other.altitude <= 0.5
+            && onStreet(other)
             && other.speed <= STOPPED_SPEED
             && this.signalSystem.at(other.x, other.y)?.id === s.id
             && Math.hypot(other.x - node.x, other.y - node.y) < minGap
@@ -303,11 +360,10 @@ export class TrafficSystem {
           const length = Math.hypot(exit.x - last.x, exit.y - last.y);
           const ux = (exit.x - last.x) / length, uy = (exit.y - last.y) / length;
           if (TrafficSystem.near(grid, exit.x, exit.y, (other) => {
-            if (other === v || other.state === 'destroyed' || !other.def.driveable || other.altitude > 0.5
-              || other.speed > STOPPED_SPEED) return false;
+            if (other === v || !onStreet(other) || other.speed > STOPPED_SPEED) return false;
             const dx = other.x - exit.x, dy = other.y - exit.y;
             const forward = dx * ux + dy * uy;
-            const gap = Math.max(1.05, radiusOf(v) + radiusOf(other) + 0.25);
+            const gap = Math.max(1.05, reachOf(v) + reachOf(other) + 0.25);
             return forward > -0.5 && forward < gap && Math.abs(dx * uy - dy * ux) < 0.7;
           })) spillsOver = true;
         }
@@ -327,12 +383,12 @@ export class TrafficSystem {
     return Infinity;
   }
 
-  /** Tem carro da via preferencial entrando no cruzamento ou chegando nele agora? */
-  private priorityRunning(s: TrafficSignal, grid: Map<number, Vehicle[]>, v: Vehicle): boolean {
+  /** Tem corpo da via preferencial entrando no cruzamento ou chegando nele agora? */
+  private priorityRunning(s: TrafficSignal, grid: Map<number, Blocker[]>, v: Vehicle): boolean {
     const xPriority = s.yields === 'y';
-    return TrafficSystem.near(grid, s.x, s.y, (other) => other !== v && other.state !== 'destroyed'
-      && other.def.driveable && other.altitude <= 0.5 && other.speed > STOPPED_SPEED
-      && (other.dir === 'SE' || other.dir === 'NW') === xPriority
+    return TrafficSystem.near(grid, s.x, s.y, (other) => other !== v && onStreet(other)
+      && other.speed > STOPPED_SPEED
+      && alongX(other) === xPriority
       && Math.hypot(other.x - s.x, other.y - s.y) < 4.5);
   }
 
@@ -388,11 +444,29 @@ export class TrafficSystem {
     return stop;
   }
 
-  private vehicleAhead(v: Vehicle): { vehicle: Vehicle; distance: number } | null {
+  /**
+   * O corpo do cruzamento está na trilha de quem dirige? É a régua lateral do `vehicleAhead`
+   * (0,7 tile para o lado) vista do próprio carro, e não do nó: um corpo parado a um passo e
+   * meio de lado passa pela minha frente sem tocar lataria nenhuma, e contá-lo como travessia é
+   * esperar por algo que não existe. Quem se move não precisa desta régua — atravessar é o que
+   * ele faz — e continua barrando do jeito conservador de sempre.
+   */
+  private blocksWithMyTrack(v: Blocker, other: Blocker): boolean {
     const axis = DIR_VECTORS[v.dir];
-    let closest: { vehicle: Vehicle; distance: number } | null = null;
-    TrafficSystem.near(this.vehicleGrid, v.x, v.y, (other) => {
-      if (other === v || other.state === 'destroyed' || !other.def.driveable || other.altitude > 0.5) return false;
+    const dx = other.x - v.x, dy = other.y - v.y;
+    return axis.wx * dx + axis.wy * dy > -0.5 && Math.abs(axis.wy * dx - axis.wx * dy) < 0.7;
+  }
+
+  /**
+   * O corpo mais perto na frente de quem dirige, na mesma faixa. Serve para o carro frear
+   * diante do que está no asfalto — inclusive um ônibus do horário, que ele não dirige mas
+   * não pode atravessar.
+   */
+  private vehicleAhead(v: Blocker): { vehicle: Blocker; distance: number } | null {
+    const axis = DIR_VECTORS[v.dir];
+    let closest: { vehicle: Blocker; distance: number } | null = null;
+    TrafficSystem.near(this.bodyGrid, v.x, v.y, (other) => {
+      if (other === v || !onStreet(other)) return false;
       const dx = other.x - v.x, dy = other.y - v.y;
       const fwd = axis.wx * dx + axis.wy * dy;
       const side = Math.abs(axis.wy * dx - axis.wx * dy);
@@ -460,10 +534,11 @@ export class TrafficSystem {
     let desired = tv.targetSpeed;
     const ahead = this.vehicleAhead(v);
     if (ahead) {
-      const gap = Math.max(1.05, radiusOf(v) + radiusOf(ahead.vehicle) + 0.25);
+      const gap = Math.max(1.05, radiusOf(v) + reachOf(ahead.vehicle) + 0.25);
       const available = Math.max(0, ahead.distance - gap);
       stop = Math.min(stop, available);
-      const forwardSpeed = Math.max(0, Math.cos(ahead.vehicle.facingAngle - v.facingAngle) * ahead.vehicle.speed);
+      const forwardSpeed = Math.max(0,
+        Math.cos(headingOf(ahead.vehicle) - v.facingAngle) * ahead.vehicle.speed);
       desired = Math.min(desired, forwardSpeed + Math.max(0, available - v.speed * HEADWAY_S) / HEADWAY_S);
     }
     if (Number.isFinite(stop)) desired = Math.min(desired, Math.sqrt(2 * GAME_CONFIG.VEHICLE_BRAKE * Math.max(0, stop - 0.05)));
@@ -493,12 +568,13 @@ export class TrafficSystem {
   }
 
   private maybeHonk(tv: TrafficVehicle, player: Player, pedStop: number,
-    ahead: { vehicle: Vehicle; distance: number } | null) {
+    ahead: { vehicle: Blocker; distance: number } | null) {
     if (tv.hornCooldown > 0) return;
     const v = tv.vehicle;
     const impatient = pedStop < 2 && v.speed > 0.4;
-    // Someone parked right in its lane: a driver with a passenger behind it honks.
-    const blocked = !!ahead && ahead.vehicle.id === player.currentVehicleId
+    // Someone parked right in its lane: a driver with a passenger behind it honks. Um ônibus
+    // do horário não é o carro do jogador, então a buzinada é só para lataria de verdade.
+    const blocked = !!ahead && driven(ahead.vehicle) && ahead.vehicle.id === player.currentVehicleId
       && ahead.distance < 4 && Math.abs(ahead.vehicle.speed) < 0.6;
     if (!impatient && !blocked) return;
     const volume = TrafficSystem.hornVolume(Math.hypot(v.x - player.x, v.y - player.y));

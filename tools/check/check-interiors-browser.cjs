@@ -284,6 +284,7 @@ async function tapText(text, mobile) {
     delay(20000).then(() => { throw new Error(`sem alvo CDP na porta ${PORT}`); }),
   ]);
   await send('Page.enable');
+  await require('./bundle-identity.cjs').attach(socket, send);
   await send('Runtime.enable');
 
   await boot(844, 390, true);

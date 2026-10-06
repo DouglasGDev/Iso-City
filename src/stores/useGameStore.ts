@@ -10,6 +10,8 @@ interface GameStoreState {
   mapOpen: boolean;
   /** Balcão de loja aberto: a simulação congela enquanto o jogador escolhe. */
   shopOpen: boolean;
+  /** Telão de partidas aberto: congela a simulação pelo mesmo motivo do balcão. */
+  departuresOpen: boolean;
   gameGen: number;
   mapMarker: { x: number; y: number } | null;
   mapRoute: GpsPoint[];
@@ -21,6 +23,7 @@ let state: GameStoreState = {
   paused: false,
   mapOpen: false,
   shopOpen: false,
+  departuresOpen: false,
   gameGen: 0,
   mapMarker: null,
   mapRoute: [],
@@ -53,6 +56,7 @@ function startGame() {
     paused: false,
     mapOpen: false,
     shopOpen: false,
+    departuresOpen: false,
     gameGen: state.gameGen + 1,
     mapMarker: null,
     mapRoute: [],
@@ -61,17 +65,31 @@ function startGame() {
 }
 
 function goToMenu() {
-  set({ screen: 'menu', paused: false, mapOpen: false, shopOpen: false, mapMarker: null, mapRoute: [], overlay: null });
+  set({
+    screen: 'menu', paused: false, mapOpen: false, shopOpen: false, departuresOpen: false,
+    mapMarker: null, mapRoute: [], overlay: null,
+  });
 }
 
 function openShop() {
   if (state.screen !== 'playing' || state.shopOpen) return;
-  set({ shopOpen: true });
+  set({ shopOpen: true, departuresOpen: false });
 }
 
 function closeShop() {
   if (!state.shopOpen) return;
   set({ shopOpen: false });
+}
+
+/** O telão e o balcão são cartões do mesmo balcão: um aberto fecha o outro. */
+function openDepartures() {
+  if (state.screen !== 'playing' || state.departuresOpen) return;
+  set({ departuresOpen: true, shopOpen: false });
+}
+
+function closeDepartures() {
+  if (!state.departuresOpen) return;
+  set({ departuresOpen: false });
 }
 
 function showOverlay(kind: 'busted' | 'wasted') {
@@ -154,6 +172,8 @@ useGameStore.openMap = openMap;
 useGameStore.closeMap = closeMap;
 useGameStore.openShop = openShop;
 useGameStore.closeShop = closeShop;
+useGameStore.openDepartures = openDepartures;
+useGameStore.closeDepartures = closeDepartures;
 useGameStore.setMapMarker = setMapMarker;
 useGameStore.setMapDestination = setMapDestination;
 useGameStore.clearMapMarker = clearMapMarker;

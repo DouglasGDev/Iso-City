@@ -285,6 +285,7 @@ export function useHardwareInput(suspended: boolean): HardwareMode {
         if (ui.screen !== 'playing' || ui.overlay !== null) return;
         if (ui.mapOpen) useGameStore.closeMap();
         else if (action === 'pause' && ui.shopOpen) useGameStore.closeShop();
+        else if (action === 'pause' && ui.departuresOpen) useGameStore.closeDepartures();
         else if (action === 'map') useGameStore.openMap();
         else useGameStore.togglePause();
       },

@@ -43,9 +43,30 @@ export class DayNightSystem {
 
   /** "HH:MM" no relógio do jogo */
   get clock(): string {
-    const mins = Math.floor(this.t * 24 * 60);
-    const h = Math.floor(mins / 60);
-    const m = mins % 60;
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    return formatT(this.t);
   }
+
+  /**
+   * O mesmo "HH:MM" um pouco mais tarde: é como um painel de embarque anuncia partida. O
+   * horário do ônibus é medido em segundos de mundo (`wait` até o veículo encostar), mas o
+   * telão de uma rodoviária não mostra contagem regressiva para quem vai embora daqui a meia
+   * volta da cidade — mostra a hora. A volta completa do calendário é `DAY_NIGHT_CYCLE_S`,
+   * então a fração do dia é o instante pedido somado a esse ciclo.
+   */
+  clockIn(seconds: number): string {
+    return formatT(this.t + seconds / GAME_CONFIG.DAY_NIGHT_CYCLE_S);
+  }
+}
+
+/**
+ * "HH:MM" a partir da fração do dia, enrolando na meia-noite. O epsilão não é decoração: a
+ * fração de um dia é soma de quocientes binários, e meia-volta de dia mais sessenta segundos
+ * vale 0,6999999999999999 — sem ele o painel de meio da tarde mostraria 16:47.
+ */
+function formatT(t: number): string {
+  const dia = ((t % 1) + 1) % 1;
+  const mins = Math.floor(dia * 24 * 60 + 1e-9);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }

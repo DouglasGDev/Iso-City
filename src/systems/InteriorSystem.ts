@@ -1,4 +1,4 @@
-import { Map } from '../world/Map';
+import { Map, type Landmark } from '../world/Map';
 import { isAboard, type Player } from '../entities/Player';
 import type { Collider } from '../entities/types';
 import type { CityMapData } from '../data/maps/city';
@@ -8,7 +8,7 @@ import { JAIL_EXIT, JAIL_H, JAIL_PANEL, JAIL_PIECES, JAIL_SPAWN, JAIL_W } from '
 import type { GunId } from '../data/weapons';
 import { angleToWorldDir } from '../world/IsoUtils';
 
-export type InteriorKind = 'home' | 'shop' | 'office' | 'jail' | 'precinct';
+export type InteriorKind = 'home' | 'shop' | 'office' | 'jail' | 'precinct' | 'terminal';
 /** O que há atrás do balcão: nada (serviço instantâneo) ou um cardápio completo. */
 export type ShopCounter = 'armaria' | MenuId;
 export interface Entrance {
@@ -17,7 +17,8 @@ export interface Entrance {
   y: number;
   label: string;
   kind: InteriorKind;
-  service: 'rest' | 'food' | 'ammo' | 'firstAid' | 'cells' | 'bail';
+  /** `departures` é o telão da rodoviária: não vende nada, planeja a viagem. */
+  service: 'rest' | 'food' | 'ammo' | 'firstAid' | 'cells' | 'bail' | 'departures';
   counter: ShopCounter | null;
   facing: number;
 }
@@ -73,6 +74,8 @@ export interface InteriorContext {
   onTransition: () => void;
   onUse: () => void;
   onOpenShop: () => void;
+  /** O telão da rodoviária: quem decide o itinerário é o jogador, olhando o horário. */
+  onOpenDepartures: () => void;
 }
 
 /** Nome de fachada de cada balcão com cardápio. */
@@ -141,6 +144,18 @@ function makeRoom(entrance: Entrance): InteriorRoom {
       add('shelf', 'shelf', 2.3, 0.4, 1.2, 0.4, 34, '#8c6748');
       add('plant', 'plant', 6.4, 1.6, 0.5, 0.5, 26, '#408752');
     }
+  } else if (entrance.kind === 'terminal') {
+    // Hall de rodoviária: o telão de partidas ocupa a parede do fundo, a bilheteria fica
+    // à direita e as duas catracas deixam o vão do meio livre — é por ele que quem entra
+    // chega ao painel, e é nele que a fila se forma quando o ônibus encosta lá fora.
+    add('board', 'shelf', 2.3, 0.4, 2.4, 0.4, 40, '#2b3a45');
+    add('tickets', 'counter', 5.0, 0.45, 1.6, 0.65, 20, '#5c6b78');
+    add('bench-a', 'sofa', 0.5, 1.55, 1.7, 0.7, 16, '#3f5566');
+    add('bench-b', 'sofa', 0.55, 2.75, 1.7, 0.7, 16, '#3f5566');
+    add('turnstile-a', 'block', 2.2, 2.4, 0.5, 1.4, 22, '#7c8894');
+    add('turnstile-b', 'block', 4.3, 2.4, 0.5, 1.4, 22, '#7c8894');
+    add('luggage', 'crate', 6.05, 3.55, 0.7, 0.7, 17, '#6f7d4f');
+    add('plant', 'plant', 6.3, 4.15, 0.5, 0.5, 26, '#408752');
   } else {
     add('desk-a', 'desk', 0.6, 0.45, 1.3, 0.65, 15, '#997b5b');
     add('desk-b', 'desk', 2.4, 0.45, 1.3, 0.65, 15, '#997b5b');
@@ -179,6 +194,9 @@ function makeRoom(entrance: Entrance): InteriorRoom {
     : entrance.counter ? { title: COUNTER_TITLE[entrance.counter], items: FOOD_MENUS[entrance.counter] } : null;
   const service = jail
     ? { x: JAIL_PANEL.x, y: JAIL_PANEL.y, label: 'Painel de celas', cost: 0, action: 'none' as const }
+    : entrance.kind === 'terminal'
+      // O balcão da rodoviária não vende nada: é o telão, e ele planeja a viagem pelo horário.
+      ? { x: 3.5, y: 1.4, label: 'Painel de partidas', cost: 0, action: 'none' as const }
     : shop
     ? { x: 4.6, y: 1.5, label: `Balcão · ${shop.title}`, cost: 0, action: 'none' as const }
     : entrance.service === 'bail'
@@ -273,20 +291,42 @@ export class InteriorSystem {
     // Toda esquadra tem porta de delegacia, aberta a qualquer hora e sem depender de ser
     // preso para descobrir que ela existia: quem quer se entregar ou pagar fiança entra pela
     // calçada. A esquadra presídio fica de fora — ali o passeio já é a porta da cadeia.
-    for (const station of stations) {
-      if (station === prison) continue;
-      const id = map.data.buildings.findIndex((b) => b.key.startsWith('bld_policestation')
-        && Math.abs(b.x - b.footprintW / 2 - station.x) < 1e-6 && Math.abs(b.y - b.footprintW / 2 - station.y) < 1e-6);
-      if (id < 0) continue;
+    /**
+     * A porta de um landmark cívico: o passeio livre mais perto da frente dele, a pelo menos
+     * 2,5 tiles de qualquer outra porta já colocada. O `id` é o índice do prédio na lista do
+     * mapa — é assim que a sala fica cacheada por prédio, e duas esquadras têm duas salas.
+     */
+    const civicDoor = (prefix: string, station: Landmark) => {
+      const id = map.data.buildings.findIndex((b) => b.key.startsWith(prefix)
+        && Math.abs(b.x - b.footprintW / 2 - station.x) < 1e-6
+        && Math.abs(b.y - b.footprintW / 2 - station.y) < 1e-6);
+      if (id < 0) return null;
       const spot = map.sidewalkNodes
         .filter((node) => Math.hypot(node.x - station.front.x, node.y - station.front.y) < 3)
         .sort((a, b) => Math.hypot(a.x - station.front.x, a.y - station.front.y)
           - Math.hypot(b.x - station.front.x, b.y - station.front.y))
         .find((node) => clear(node.x, node.y)
           && this.entrances.every((e) => Math.hypot(e.x - node.x, e.y - node.y) >= 2.5));
-      if (!spot) continue;
-      this.entrances.push({ id, x: spot.x, y: spot.y, kind: 'precinct', label: 'Delegacia',
-        service: 'bail', counter: null, facing: Math.atan2(spot.y - station.y, spot.x - station.x) });
+      return spot ? { id, spot } : null;
+    };
+    for (const station of stations) {
+      if (station === prison) continue;
+      const door = civicDoor('bld_policestation', station);
+      if (!door) continue;
+      this.entrances.push({ id: door.id, x: door.spot.x, y: door.spot.y, kind: 'precinct',
+        label: 'Delegacia', service: 'bail', counter: null,
+        facing: Math.atan2(door.spot.y - station.y, door.spot.x - station.x) });
+    }
+    // A rodoviária tem porta de hall em toda quadra que o gerador reservou para ela. A
+    // calçada de embarque não é escrita aqui: é a parada com linha mais perto da frente do
+    // prédio, consultada na malha. Trocando a semente, o lote muda de quadra e a plataforma
+    // muda junto — nunca fica um prédio de rodoviária sem ônibus, nem um ônibus sem porta.
+    for (const station of map.landmarksOf('busstation')) {
+      const door = civicDoor('bld_busstation', station);
+      if (!door) continue;
+      this.entrances.push({ id: door.id, x: door.spot.x, y: door.spot.y, kind: 'terminal',
+        label: 'Rodoviária', service: 'departures', counter: null,
+        facing: Math.atan2(door.spot.y - station.y, door.spot.x - station.x) });
     }
   }
 
@@ -364,6 +404,13 @@ export class InteriorSystem {
     if (room.shop) {
       // Loja de verdade: o balcão abre o cardápio em vez de vender um item só.
       ctx.onOpenShop();
+      this.transitionLock = 0.4;
+      return true;
+    }
+    if (room.kind === 'terminal') {
+      // O telão abre o itinerário. Escolher um destino aqui não move o jogador um tile: o que
+      // ele faz é ganhar um plano, que depois é andado, esperado e embarcado no mundo.
+      ctx.onOpenDepartures();
       this.transitionLock = 0.4;
       return true;
     }

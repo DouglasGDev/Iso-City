@@ -92,6 +92,7 @@ async function launch() {
     delay(20000).then(() => { throw new Error(`sem alvo CDP na porta ${PORT}`); }),
   ]);
   await send('Page.enable');
+  await require('./bundle-identity.cjs').attach(socket, send);
   await send('Page.navigate', { url: 'about:blank' });
   await send('Runtime.enable');
   await until('location.href==="about:blank"', 'clean context');

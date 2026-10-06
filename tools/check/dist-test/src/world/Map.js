@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.Map = void 0;
 exports.vertexHeight = vertexHeight;
 const GameConfig_1 = require("../game/GameConfig");
+const Frontier_1 = require("./Frontier");
 const IsoUtils_1 = require("./IsoUtils");
 /**
  * O sprite ancora na ponta SUL (bottom-center).
@@ -26,6 +27,7 @@ const LANDMARK_KINDS = [
     { re: /^bld_gasstation/, kind: 'gasstation' },
     { re: /^bld_clinic/, kind: 'clinic' },
     { re: /^bld_autoshop/, kind: 'autoshop' },
+    { re: /^bld_busstation/, kind: 'busstation' },
     { re: /^bld_(cafe|pizza|icecream|gunshop|fruitstand)/, kind: 'shop' },
 ];
 /**
@@ -532,8 +534,12 @@ class Map {
             return false;
         const tx = Math.floor(x);
         const ty = Math.floor(y);
-        if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH)
-            return false;
+        // Fora da grade o mundo continua pelo rio: o canal que sai do mapa é água também para o
+        // movimento. Sem isto a fronteira pintaria a água, encheria o canal de tronco e deixaria
+        // o jogador andando no leito seco de um rio desenhado.
+        if (tx < 0 || ty < 0 || tx >= this.data.tilesW || ty >= this.data.tilesH) {
+            return (0, Frontier_1.rioDaFronteira)(this.data.tiles, this.data.tilesW, this.data.tilesH, tx, ty);
+        }
         const i = ty * this.data.tilesW + tx;
         // A bacia da cachoeira é água de verdade para o movimento, sem ser tile de água no mapa.
         if (this.cascadeWater && this.cascadeWater[i])

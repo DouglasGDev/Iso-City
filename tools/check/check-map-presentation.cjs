@@ -365,7 +365,7 @@ function fixture(empty = false) {
   const car = (id, type, p, extra = {}) => ({ id, def: { type }, ...p, state: 'parked', ...extra });
   currentGame = {
     map: { data: mapData(64, 40), roadNodes: [], sidewalkNodes: [] }, exploration: e,
-    player: { x: 16.5, y: 17.5, facingAngle: 0.37, currentVehicleId: null },
+    player: { x: 16.5, y: 17.5, facingAngle: 0.37, currentVehicleId: null, busUnit: null },
     npcs: [npc(1, 'civilian', known), npc(2, 'cop', known), npc(101, 'civilian', unknown), npc(102, 'cop', unknown),
       npc(201, 'civilian', known, { dead: true }), npc(202, 'cop', known, { inVehicle: true })],
     vehicles: [car(3, 'sedan', known), car(4, 'police', known), car(103, 'sedan', unknown), car(104, 'police', unknown),
@@ -376,6 +376,17 @@ function fixture(empty = false) {
     crowd: { list: [] }, jail: { occupants: [], keysOnFloor: null },
     pickups: { items: [{ id: 5, ...known, kind: 'ammo', active: true }, { id: 105, ...unknown, kind: 'ammo', active: true }] },
     missions: { state: { phase: 'travel', target: { x: 47.75, y: 31.25 } } }, police: { searchArea: null },
+    // A malha entra no mapa quando o corpo está dentro de um ônibus: a rota é lida daqui, do
+    // veículo em `player.busUnit`, e não de um destino marcado.
+    transport: {
+      network: {
+        companies: [{ id: 0, name: 'Viação Norte', code: 'VN', livery: '#4f8fc4', stripe: '#2d5f86' }],
+        routes: [{ id: 0, name: 'Linha 7', company: 0,
+          points: [{ x: 12.4, y: 8.6 }, { x: 20.1, y: 8.6 }, { x: 24.8, y: 12.3 }],
+          back: [{ x: 24.8, y: 13.1 }, { x: 19.7, y: 13.1 }, { x: 12.4, y: 9.4 }] }],
+      },
+      units: [{ route: 0 }],
+    },
     // O radar pergunta o que a polícia vê; o fixture devolve o que o teste quiser desenhar.
     visionCones: [], policeVisionCones() { return this.visionCones; },
   };
@@ -517,6 +528,41 @@ for (const detailed of [true, false]) test(`MapCanvas ${detailed ? 'detailed map
     assert.equal(segments.length, 12, 'apex + 11 pontos do arco, em ângulo real do mundo');
     assert.equal(wedges[0].props.color, cone.alert >= 0.9 ? '#f47f89' : '#e6d07c', 'a cor conta a atenção do oficial');
   }
+});
+
+// A bordo, o mapa diz por onde o ônibus que se pega passa. A polilinha é a da linha inteira —
+// ida e volta — na cor da viação, e ela não nasce atrás da névoa: quem está dentro do veículo já
+// está naquele pedaço do mundo. Não é o GPS (esse é o `mapRoute` da store, e o JourneySystem o
+// limpa durante a viagem de propósito), então a cor e a chave têm de ser outras.
+for (const detailed of [true, false]) test(`MapCanvas ${detailed ? 'mapa cheio' : 'radar'} pinta a rota do ônibus a bordo na cor da viação`, () => {
+  const game = fixture();
+  game.player.busUnit = 0;
+  const props = { ...canvasProps, detailed };
+  const entries = readOnlyRender(() => MapCanvas(props)), project = projectFor(props);
+  const rota = entries.find(({ node }) => node.key === 'bus-line');
+  assert.ok(rota, 'a rota do ônibus a bordo não aparece no mapa');
+  assert.ok(!rota.ancestors.some((parent) => parent.props.clip), 'a rota não pode sumir atrás da névoa de descoberta');
+  const tracos = (rota.node.props.children || []).flat();
+  assert.equal(tracos.length, 2, 'sombra mais o traçado da cor');
+  const r = game.transport.network.routes[0];
+  const esperado = [...r.points, ...r.back.slice(1)];
+  for (const traço of tracos) {
+    const vertices = commands(traço.props.path);
+    assert.equal(vertices.length, esperado.length, 'ida inteira mais a volta, sem repetir a esquina onde ela começa');
+    vertices.forEach((v, i) => {
+      const s = project(esperado[i].x, esperado[i].y);
+      assert.ok(Math.abs(v.x - s.x) < 1e-6 && Math.abs(v.y - s.y) < 1e-6, `vértice ${i} da rota em coordenadas iso reais`);
+    });
+  }
+  assert.equal(tracos[1].props.color, game.transport.network.companies[0].livery, 'a cor é a da viação');
+  assert.notEqual(tracos[1].props.color, C.route, 'a rota do ônibus não se confunde com o traçado do GPS');
+});
+
+test('sem ônibus a bordo, nenhuma rota de linha é pintada no mapa', () => {
+  const game = fixture();
+  assert.equal(game.player.busUnit, null, 'o fixture anda a pé');
+  const entries = readOnlyRender(() => MapCanvas(canvasProps));
+  assert.ok(!entries.some(({ node }) => node.key === 'bus-line'), 'apareceu rota de linha sem ninguém embarcado');
 });
 
 test('MapCanvas floors negative edge coordinates instead of truncating them into a known cell', () => {

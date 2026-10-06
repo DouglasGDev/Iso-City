@@ -24,6 +24,7 @@ function createVehicle(id, def, color, x, y, dir) {
         animTimer: 0,
         altitude: 0,
         elevation: 0,
+        motorDead: false,
     };
 }
 function vehicleSpriteKey(v) {

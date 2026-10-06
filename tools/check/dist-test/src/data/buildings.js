@@ -111,6 +111,10 @@ exports.BUILDING_CATALOG = [
     { name: 'bld_firestation_b', footprintW: 2.0, footprintH: 2.6, tag: 'special' },
     { name: 'bld_clinic_a', footprintW: 1.0, footprintH: 1.7, tag: 'special' },
     { name: 'bld_clinic_b', footprintW: 1.0, footprintH: 1.7, tag: 'special' },
+    // Rodoviária: desenhada por geometria em tools/prepare-biome-buildings.cjs no lote
+    // cheio de 2×2, metade salão de embarque e metade plataforma com marquise.
+    { name: 'bld_busstation_a', footprintW: 2.0, footprintH: 2.1, tag: 'special' },
+    { name: 'bld_busstation_b', footprintW: 2.0, footprintH: 2.1, tag: 'special' },
     { name: 'bld_mobilehomes_style1_a', footprintW: 2.0, footprintH: 2.0, tag: 'special' },
     { name: 'bld_mobilehomes_style1_b', footprintW: 2.0, footprintH: 2.0, tag: 'special' },
     { name: 'bld_mobilehomes_style2_a', footprintW: 2.0, footprintH: 2.0, tag: 'special' },

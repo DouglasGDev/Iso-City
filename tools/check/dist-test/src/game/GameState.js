@@ -11,11 +11,18 @@ const Map_1 = require("../world/Map");
 const city_1 = require("../data/maps/city");
 const Camera_1 = require("../world/Camera");
 const IsoUtils_1 = require("../world/IsoUtils");
+const Frontier_1 = require("../world/Frontier");
+const Tribo_1 = require("../world/Tribo");
 const Player_1 = require("../entities/Player");
 const Vehicle_1 = require("../entities/Vehicle");
 const NPC_1 = require("../entities/NPC");
 const LifeSystem_1 = require("../systems/LifeSystem");
 const WildlifeSystem_1 = require("../systems/WildlifeSystem");
+const GorilaSystem_1 = require("../systems/GorilaSystem");
+const FrontierFallSystem_1 = require("../systems/FrontierFallSystem");
+const PiranhaSystem_1 = require("../systems/PiranhaSystem");
+const TriboSystem_1 = require("../systems/TriboSystem");
+const CativeiroSystem_1 = require("../systems/CativeiroSystem");
 const vehicles_1 = require("../data/vehicles");
 const weapons_1 = require("../data/weapons");
 const CollisionSystem_1 = require("../systems/CollisionSystem");
@@ -41,13 +48,16 @@ const SnowSystem_1 = require("../systems/SnowSystem");
 const HazardSystem_1 = require("../systems/HazardSystem");
 const CascadeSystem_1 = require("../systems/CascadeSystem");
 const TransportSystem_1 = require("../systems/TransportSystem");
+const JourneySystem_1 = require("../systems/JourneySystem");
 const DestructionSystem_1 = require("../systems/DestructionSystem");
 const FogSystem_1 = require("../systems/FogSystem");
+const AltitudeSystem_1 = require("../systems/AltitudeSystem");
 const AmbientSystem_1 = require("../systems/AmbientSystem");
 const ExplorationSystem_1 = require("../systems/ExplorationSystem");
 const SoundManager_1 = require("../audio/SoundManager");
 const useGameStore_1 = require("../stores/useGameStore");
 const Gps_1 = require("../world/Gps");
+const network_1 = require("../data/transport/network");
 const InteriorSystem_1 = require("../systems/InteriorSystem");
 const JailSystem_1 = require("../systems/JailSystem");
 const InteriorCrowdSystem_1 = require("../systems/InteriorCrowdSystem");
@@ -132,12 +142,69 @@ class GameState {
         /** A neve que fica depois que a frente passa; lê o clima, não o contrário. */
         this.snow = new SnowSystem_1.SnowSystem();
         this.hazard = new HazardSystem_1.HazardSystem();
+        /**
+         * A viagem que o telão da rodoviária planejou. Guarda só o plano e a fase: quem anda, espera
+         * e embarca é o jogador no mundo, e o sistema observa o horário acontecer.
+         */
+        this.journeys = new JourneySystem_1.JourneySystem();
         this.destruction = new DestructionSystem_1.DestructionSystem();
         this.fog = new FogSystem_1.FogSystem();
+        /**
+         * O ar acima da linha onde o iso ainda desenha altura. Lê o clima e a cota de quem está no
+         * comando e devolve a coluna inteira — manta, bruma, vento, teto, rarefação — para o manche,
+         * para a câmera, para as nuvens e para o som olharem a mesma curva no mesmo quadro. Vem depois
+         * do `fog` porque é o irmão vertical dele: o fog fecha o horizonte, isto fecha o céu.
+         */
+        this.altitude = new AltitudeSystem_1.AltitudeSystem();
         this.ambient = new AmbientSystem_1.AmbientSystem(SoundManager_1.sound);
         this.life = new LifeSystem_1.LifeSystem();
         this.wildlife = new WildlifeSystem_1.WildlifeSystem();
-        this.jump = new JumpSystem_1.JumpSystem(() => this.interiors.active ? [] : this.vehicles);
+        /**
+         * A cobrança da mata sem fim. Não tem `init` porque não tem nada do mapa para ler: a
+         * fronteira é uma função da coordenada, e o único estado do sistema é a dívida acumulada e o
+         * corpo que ela comprou — os dois sobrevivem a salas, mortes e reinício de round tão bem
+         * quanto um número sobrevive.
+         */
+        this.gorilas = new GorilaSystem_1.GorilaSystem();
+        /**
+         * A mesma cobrança pelo lado do céu. Também não tem `init`: o que este sistema guarda é o
+         * histórico de queda de cada casco (`id → altura, pousou, noChão`), e nada nele depende do
+         * mapa. Roda **antes** do `gorilas` porque é a descida que entrega a dívida: se a caçada
+         * lesse o rancor um tick depois de ser paga, a fera só poderia nascer no quadro seguinte, e
+         * o pedido — o helicóptero cai e a coisa grande aparece — viraria dois pedidos separados.
+         */
+        this.quedas = new FrontierFallSystem_1.FrontierFallSystem();
+        /**
+         * A cobrança do rio sem fim — o espelho aquático do `gorilas`, pelo mesmo motivo e com a mesma
+         * espinha dorsal: o canal continua além da grade pela mesma função da coordenada, e um lugar que
+         * continua tem de custar.
+         *
+         * Os dois nunca cobram o mesmo trecho, e isso não é uma consequência da ordem de chamada: é o
+         * campo `água` do `GorilaContext`, que faz a mata recusar a dívida de quem está nadando no canal
+         * enquanto o rio recusa a de quem está na margem. Deixar os dois contarem a mesma água daria
+         * duas feras subindo no mesmo lugar — e um gigante no meio do rio é exatamente a cena que a
+         * separação de mecanismos existe para impedir.
+         */
+        this.piranhas = new PiranhaSystem_1.PiranhaSystem();
+        /**
+         * Os donos da terra pisada, do lado de dentro da banda do gigante. Como as duas feras, não tem
+         * `init`: o acampamento é uma função da coordenada, e o único estado do sistema são os bandos
+         * materializados perto do jogador.
+         *
+         * A ordem no tick é a parte que importa, e ela é diferente das outras três por um motivo físico:
+         * o bando é o único sistema daqui que **move o corpo do jogador** (`arrasta`). Rodasse antes do
+         * `separate`, a separação de corpos passaria por cima do arrasto e empurraria o prisioneiro para
+         * fora da corda; rodando depois, quem escreveu a última palavra no `x`/`y` foi quem está puxando.
+         */
+        this.tribos = new TriboSystem_1.TriboSystem();
+        /**
+         * O outro relógio da mesma clareira: o bando decide quem é levado, este decide quanto tempo a
+         * corda segura. Fica num sistema separado porque as duas mecânicas têm donos diferentes — o
+         * prisioneiro não é um guerreiro com um estado a menos, é o jogador com uma coordenada que ele não
+         * manda. O único laço entre os dois é o `acorda` do contexto, e ele é uma porta e não um campo.
+         */
+        this.cativeiro = new CativeiroSystem_1.CativeiroSystem();
+        this.jump = new JumpSystem_1.JumpSystem(() => this.interiors.active ? [] : this.vehicles, () => this.latariaDaRua());
         this.crouch = new CrouchSystem_1.CrouchSystem();
         this.hitCooldown = 0;
         this.exitLock = 0;
@@ -146,15 +213,36 @@ class GameState {
         this.gpsRefresh = 0;
         this.engineRefresh = 0;
         this.cascadeRefresh = 0;
+        /**
+         * O pino que a viagem pôs no mapa. Só ela é apagada no fim: o destino que o jogador marcou
+         * no mapa antes de consultar o telão não pode sumir porque um ônibus passou.
+         */
+        this.journeyMark = null;
         /** Bioma sob a câmera, lido no tick de ambiente: é o clima que ele escolhe. */
         this.biomeAtCamera = 'residential';
         this.nextVehicleId = 0;
         this.nextNpcId = 0;
         /** Janela de veículos do `separate`, reutilizada de um tick para o outro. */
         this.nearbyVehicles = [];
+        this.nearbyBuses = [];
+        /**
+         * A rua entregue ao ônibus: o mesmo `spatial` que a HUD e o trânsito consultam, embrulhado no
+         * contrato que a malha sabe ler. Uma instância fixa porque `TransportSystem.update` recebe a
+         * rua por parâmetro a cada quadro, e um objeto novo por frame é exatamente o lixo no meio do
+         * frame que o contrato do índice existe para evitar.
+         */
+        this.rua = {
+            pertoDe: (x, y, raio, visita) => this.varreRua(x, y, raio, visita),
+        };
+        /** O corpo visitado é emprestado: vale só durante a chamada, e por isso mora aqui. */
+        this.corpoVisitado = {
+            x: 0, y: 0, angle: 0, speed: 0, meio: 0, flanco: 0, mole: false,
+        };
+        this.caixaDaRua = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
         this.rnd = () => Math.random();
         this.entityListeners = new Set();
         this.shakeAmp = 0;
+        this.skyDaRondaCache = null;
         (0, InputState_1.resetActionInput)();
         this.weapons.events = {
             onShot: (weapon) => SoundManager_1.sound.play(SHOT_SFX[weapon.id], weapon.id === 'shotgun' ? 0.7 : 0.55),
@@ -213,11 +301,16 @@ class GameState {
             npc.y = c.y;
             this.npcs.push(npc);
         }
-        this.movement = new MovementSystem_1.MovementSystem(this.collision, () => this.interiors.active ? [] : this.vehicles);
+        this.movement = new MovementSystem_1.MovementSystem(this.collision, () => this.interiors.active ? [] : this.vehicles, () => this.latariaDaRua());
         this.npcSystem = new NPCSystem_1.NPCSystem(this.collision);
         this.interaction = new InteractionSystem_1.InteractionSystem(this.vehicleSystem);
         this.trafficSystem = new TrafficSystem_1.TrafficSystem(this.collision);
         this.trafficSystem.init(this.map, this.vehicles, this.npcs, () => this.nextVehicleId++);
+        // O semáforo é um só para a rua inteira. Os ônibus do horário existem antes de haver
+        // trânsito na cidade e liam apenas a lataria à frente; ligados aqui, eles passam a obedecer
+        // a mesma luz que os carros — dois conjuntos de verdade sobre quem entra no cruzamento é
+        // como o ônibus atropela o carro que espera o verde.
+        this.transport.signals = this.trafficSystem.signalSystem;
         this.pickups.init(this.map, this.rnd);
         this.missions = new MissionSystem_1.MissionSystem(this.map, this.rnd);
         this.police.init(this.policeContext());
@@ -245,20 +338,76 @@ class GameState {
             (0, Camera_1.clampToMap)(this.camera, this.map.worldW, this.map.worldH, this.viewW, this.viewH);
     }
     /**
-     * A câmera sobe junto com o chão que ela mira. É uma translação da tela no mesmo eixo Y
-     * da projeção: o losango continua 2:1 e a câmera continua isométrica.
+     * A câmera sobe junto com o chão que ela mira, e sobe junto com o casco quando ele passa da
+     * linha de passagem. É uma translação da tela no mesmo eixo Y da projeção: o losango continua
+     * 2:1 e a câmera continua isométrica — o que muda é que acima de oito tiles de cota a âncora
+     * para de perseguir o chão e passa a segurar a lataria no quadro, deixando o mundo encolher
+     * embaixo dela.
      */
     snapCameraHeight() {
-        this.camera.h = this.activeMap.heightSmoothAt(this.camera.x, this.camera.y);
+        const chao = this.activeMap.heightSmoothAt(this.camera.x, this.camera.y);
+        this.camera.h = this.alvoDaCâmera(chao);
     }
     /**
-     * A cota da câmera persegue a do chão com o mesmo alívio dos eixos x/y. Ler a cota crua
-     * a cada quadro faria a tela inteira pular um degrau na borda de cada tile — o solavanco
-     * que parece bug, ainda mais em carro.
+     * A cota da câmera persegue a do chão com o mesmo alívio dos eixos x/y. Ler a cota crua a cada
+     * quadro faria a tela inteira pular um degrau na borda de cada tile — o solavanco que parece bug,
+     * ainda mais em carro.
      */
     easeCameraHeight(dt) {
-        const alvo = this.activeMap.heightSmoothAt(this.camera.x, this.camera.y);
+        const chao = this.activeMap.heightSmoothAt(this.camera.x, this.camera.y);
+        const alvo = this.alvoDaCâmera(chao);
         this.camera.h += (alvo - this.camera.h) * (1 - Math.exp(-GameConfig_1.GAME_CONFIG.CAMERA_LERP * dt));
+    }
+    /**
+     * Dentro de uma sala não há céu: o plano é outro mundo e a cota dele é o próprio piso. A
+     * checagem existe porque o instantâneo da coluna ainda carrega a última viagem — quem descesse
+     * do helicóptero direto para uma porta levaria o teto de nuvem para dentro da parede.
+     */
+    alvoDaCâmera(chao) {
+        if (this.interiors.active)
+            return chao;
+        return Math.max(chao, (0, AltitudeSystem_1.ancoraDaCamera)(this.altitude.snapshot.cota, chao, (0, AltitudeSystem_1.folgaDoQuadro)(this.viewH, this.camera.zoom)));
+    }
+    /**
+     * O ar de cima é largo e o de baixo é apertado: a mesma rua que enche o quadro a dois tiles do
+     * chão é uma ficha a quarenta. O zoom vai junto com a cota, e só com ela — em sala o valor é
+     * mandado pela porta, e a pé o alvo é o zoom padrão de sempre.
+     */
+    easeCameraZoom(dt) {
+        if (this.interiors.active)
+            return;
+        const alvo = (0, AltitudeSystem_1.zoomDaAltura)(this.altitude.snapshot.cota);
+        this.camera.zoom += (alvo - this.camera.zoom) * (1 - Math.exp(-2.4 * dt));
+    }
+    /**
+     * Quem manda na coluna de ar deste quadro: o casco pilotado, ou o chão que a câmera mira quando
+     * ninguém está voando. É lido antes do movimento, então a manta que você vê fechar é a manta em
+     * que você estava no quadro passado — a um terço de segundo de diferença, com a borda macia que
+     * o sistema já tem por cima.
+     */
+    skyEnvironment() {
+        const v = this.aeronaveNoComando();
+        const x = v ? v.x : this.camera.x;
+        const y = v ? v.y : this.camera.y;
+        const chao = this.activeMap.heightSmoothAt(x, y);
+        return {
+            x, y,
+            cota: v ? v.elevation : chao,
+            chao,
+            cobertura: this.weather.cover,
+            nevoia: this.weather.mist,
+            vento: this.weather.wind + this.hazard.slant,
+            severidade: this.weather.intensity,
+            tempo: this.time,
+        };
+    }
+    /** O helicóptero que o jogador pilota, ou nenhum. Só ele manda na coluna: o céu não é da rua. */
+    aeronaveNoComando() {
+        const id = this.player.currentVehicleId;
+        if (id === null)
+            return null;
+        const v = this.vehicles.find((x) => x.id === id);
+        return v && v.def.type === 'helicopter' ? v : null;
     }
     /**
      * Instantâneo do save. Só estado persistente faz sentido: jogador, arsenal, relógio e o
@@ -361,7 +510,7 @@ class GameState {
         const jump = (0, InputState_1.consumeJump)();
         const crouch = (0, InputState_1.consumeCrouch)();
         const ui = useGameStore_1.useGameStore.getState();
-        if (this.paused || ui.paused || ui.mapOpen || ui.shopOpen || ui.overlay !== null) {
+        if (this.paused || ui.paused || ui.mapOpen || ui.shopOpen || ui.departuresOpen || ui.overlay !== null) {
             (0, InputState_1.resetActionInput)();
             this.weapons.suspend();
             return;
@@ -385,6 +534,9 @@ class GameState {
         this.weather.update(dt, this.rnd, this.biomeAtCamera);
         this.snow.update(dt, this.weather.kind, this.weather.intensity);
         this.hazard.update(dt, this.rnd, this.hazardContext());
+        // A coluna depois do clima e do perigo: ela lê a cobertura, a névoa e o vento que as duas
+        // frentes acabaram de escrever, e o que ela devolve é o ar que o manche deste quadro pisa.
+        this.altitude.update(dt, this.skyEnvironment());
         this.combat.update(dt);
         this.player.attackTimer = Math.max(0, this.player.attackTimer - dt);
         this.exitLock = Math.max(0, this.exitLock - dt);
@@ -430,15 +582,28 @@ class GameState {
         const outdoorPlayer = room
             ? { ...this.player, x: this.worldPosition.x, y: this.worldPosition.y, vx: 0, vy: 0, speed: 0, invulnUntil: Infinity }
             : this.player;
-        this.trafficSystem.update(this.map, this.npcs, this.vehicles, dt, outdoorPlayer, this.streaming);
         // O horário da cidade é o relógio da cidade: o sistema recebe o tempo do jogo, não um
-        // intervalo, então morrer ou entrar numa sala não atrasa nenhum ônibus.
-        this.transport.update(this.time, outdoorPlayer.x, outdoorPlayer.y, this.streaming);
+        // intervalo, então morrer ou entrar numa sala não atrasa nenhum ônibus. Lê o trânsito por
+        // último porque o trânsito lê os ônibus por primeiro: um motorista que freia diante de um
+        // corpo no asfalto tem de ver esse corpo onde o tick de hoje o pôs, não onde o de ontem o
+        // deixou. O passageiro que espera só conta lá fora: dentro de uma sala o âncora é um lugar
+        // do mapa, não um pedestre no ponto, e um hall de rodoviária não segura linha nenhuma.
+        // A rua vai junto pelo mesmo motivo, mas do lado de lá: o ônibus precisa saber quem está no
+        // asfalto dele, e quem está no asfalto ele não dirige — é o trânsito, os pedestres e os
+        // bichos que a grade dele acabou de organizar. Dentro de uma sala a grade ainda é a da cidade
+        // (a rua congela na última configuração, como o trânsito e a polícia), então a varredura é
+        // entregue do mesmo jeito: um hall não muda onde um sedã parado está.
+        this.transport.update(this.time, outdoorPlayer.x, outdoorPlayer.y, this.streaming, room ? undefined : outdoorPlayer, this.rua);
+        this.trafficSystem.update(this.map, this.npcs, this.vehicles, dt, outdoorPlayer, this.streaming, this.transport.bodies);
         // O cola do passageiro vem logo depois da leitura do horário: o ônibus já sabe onde o
         // tick o pôs, e o corpo tem que estar lá no mesmo tick. Fizesse isso no `handleMovement`
         // o jogador seria arrastado um frame atrás do próprio ônibus.
         if (!room)
             this.transport.ride(this.player);
+        // A viagem acompanha o corpo lá fora. Dentro de uma sala a rua está congelada na última
+        // configuração— a mesma regra do trânsito e da polícia — então o plano espera também.
+        if (!room)
+            this.journeys.update(this.journeyContext());
         this.updateNpcs(dt, outdoorPlayer);
         this.witnesses.update(dt, this.witnessContext(outdoorPlayer));
         outdoorPlayer.wantedLevel = this.player.wantedLevel;
@@ -523,6 +688,10 @@ class GameState {
             },
             onStructChange: () => this.notifyEntityChange(),
         });
+        if (!room)
+            this.quedas.update(dt, this.frontierFallContext());
+        this.gorilas.update(dt, this.gorilaContext(!!room, view));
+        this.piranhas.update(dt, this.piranhaContext(!!room, view));
         this.health.update(dt, this.player, this.time);
         // Depois de todo mundo se mover: o perigo empurra, arremessa e machuca o que cruzar.
         this.hazard.sweep(dt, this.hazardSweepContext(!!room));
@@ -534,6 +703,15 @@ class GameState {
         this.rebuildSpatial();
         if (!room)
             this.separate(this.player);
+        // O bando depois da separação, e não ao lado das outras três cobranças da fronteira: é o único
+        // sistema daqui que escreve a coordenada do jogador (`arrasta`), e quem arriva por último chega
+        // com a palavra final. Rodasse na linha de cima, a separação de corpos passaria por cima do
+        // arrasto e o prisioneiro escorregaria para fora da amarra a cada quadro.
+        this.tribos.update(dt, this.triboContext(!!room, view));
+        // O cativeiro logo depois do bando porque os dois relógios têm que ver o mesmo mundo no mesmo
+        // tick: é aqui que uma entrega vira amarra, e uma janela que começasse a contar no quadro
+        // seguinte daria ao prisioneiro um segundo de graça a mais do que o lugar promete.
+        this.cativeiro.update(dt, this.cativeiroContext(!!room));
         if (this.jump.update(this.player, this.activeMap, this.collision, dt) === 'landed')
             SoundManager_1.sound.play('land', 0.4);
         this.exploration.update({ position: this.worldPosition, outdoors: !this.interiors.active });
@@ -584,6 +762,200 @@ class GameState {
     purchaseShopItem(itemId) {
         return this.interiors.buy(itemId, this.interiorContext());
     }
+    /**
+     * Uma linha do telão: a partida do horário mais o nome de quem fica em frente ao ponto
+     * final. O destino é sempre uma calçada real da malha, nunca um lugar inventado pelo menu.
+     * `bay` é o número da plataforma onde aquele ônibus encosta — na rua é vazio, porque marquise
+     * não tem baia, e na rodoviária é o que o passageiro procura no pátio inteiro.
+     *
+     * `at` é a hora do mundo em que ele encosta, e `fleet` é a matrícula do veículo que serve
+     * aquela partida. Um painel de rodoviária anuncia hora, não contagem regressiva, e anuncia o
+     * ônibus — não a linha — porque é o número no teto que o passageiro lê entre as latarias
+     * paradas na baia.
+     */
+    departureRows() {
+        const platform = this.terminalPlatform();
+        if (!platform)
+            return [];
+        const network = this.transport.network;
+        return this.transport.departuresAt(platform.id).map((d) => {
+            const route = network.routes[d.route];
+            const via = network.companies[route.company];
+            return {
+                ...d,
+                line: route.name,
+                place: (0, JourneySystem_1.stationName)(network, this.map, d.destination),
+                bay: d.platform >= 0 ? network.platforms[d.platform].name : '',
+                company: via.name,
+                code: via.code,
+                cor: via.livery,
+                fleet: (0, network_1.fleetLabel)(route, d.unit),
+                at: this.dayNight.clockIn(d.wait),
+            };
+        });
+    }
+    /**
+     * A calçada de embarque da rodoviária onde o jogador está: a parada com linha mais perto da
+     * porta do hall, derivada do mapa. `null` é sala que não é terminal, ou terminal sem ônibus.
+     */
+    terminalPlatform() {
+        const room = this.interiors.active;
+        if (room?.kind !== 'terminal')
+            return null;
+        return this.transport.platformNear(room.entrance.x, room.entrance.y);
+    }
+    /**
+     * Escolheu uma linha no telão. Isto não move o jogador um passo: devolve false quando o
+     * horário não tem viagem entre a plataforma e o destino, e quando tem, entrega um plano que
+     * ele vai ter de andar, esperar e embarcar. O menu fecha; a viagem começa na rua.
+     *
+     * A linha tocada é o ônibus anunciado, com a passada e a frota que o painel escreveu. Sem
+     * isso o plano procuraria o mais rápido do horário, e a HUD prometceria embarcar num veículo
+     * dois minutos antes da hora que o telão acabou de anunciar.
+     */
+    chooseDeparture(line, destination) {
+        const platform = this.terminalPlatform();
+        if (!platform)
+            return false;
+        const row = this.transport.departuresAt(platform.id)
+            .find((d) => d.route === line && d.destination === destination);
+        const anunciado = row ? { route: row.route, pass: row.pass, unit: row.unit } : null;
+        if (!this.journeys.begin(this.journeyContext(), platform.id, destination, anunciado)) {
+            this.interiors.say('Sem linha do telão até esse destino');
+            return false;
+        }
+        useGameStore_1.useGameStore.closeDepartures();
+        SoundManager_1.sound.play('uiSwitch', 0.5);
+        return true;
+    }
+    /** A linha do objetivo na HUD enquanto a viagem estiver de pé. */
+    journeyStatus() {
+        return this.journeys.journey ? this.journeys.status(this.journeyContext()) : null;
+    }
+    /**
+     * O que a fronteira sabe do jogador agora, numa leitura só.
+     *
+     * Existe porque a HUD desenha a mesma dívida em dois lugares — a linha de texto e a barra — e
+     * duas leituras separadas quereriam dizer coisas diferentes no quadro em que o nadador cruza a
+     * margem: a linha falaria do gigante enquanto a barra ainda mostrasse o rio. Quem decide qual
+     * fera cobra é `noRioSemFim`, e só pode haver um lugar no jogo onde essa pergunta é feita.
+     */
+    frontierLeitura() {
+        // Sala aberta congela a rua: lá dentro o corpo é uma coordenada do plano da sala, e uma
+        // profundidade lida dela apontaria uma fronteira que não existe.
+        if (this.interiors.active)
+            return null;
+        const { worldW: W, worldH: H } = this.map;
+        const p = this.worldPosition;
+        const nadando = (0, PiranhaSystem_1.noRioSemFim)(this.player, W, H, this.map);
+        const fera = nadando ? this.piranhas.fera : this.gorilas.fera;
+        // As duas feras medem o perigo na mesma régua (dívida / limiar da caçada), então a HUD lê um
+        // número só. Fora da água a piranha não pode estar caçando ninguém, e ler `piranhas.perigo`
+        // sempre faria a linha da mata acusar um perigo que não existe.
+        const perigo = Math.max(this.gorilas.perigo, nadando ? this.piranhas.perigo : 0);
+        // A aldeia é lida na mesma respiração porque está *dentro* dessa mesma terra: a banda do
+        // gigante termina na porta deles, e quem atravessa o mapa para fora troca de cobrador no meio
+        // do nada. `perigo` não entra na barra das feras — são duas medidas diferentes (dívida até a
+        // caçada x quantos olhos estão em você), e uma barra que aceitasse as duas ensinaria o
+        // jogador a não confiar nela.
+        const aldeia = this.tribos.aldeiaEmDisputa() !== null;
+        // O manche que parou de responder é a fronteira mais literal do jogo: quem voa além da borda
+        // não vê profundidade nenhuma, vê o aviso de que caiu. A linha tem de existir mesmo com o
+        // casco de volta sobre o mapa, senão o jogador acorda "sem motor" dentro da cidade e acusa o
+        // buggy que não existe.
+        return {
+            W, H, p,
+            prof: (0, Frontier_1.profundidade)(p.x, p.y, W, H),
+            nadando,
+            perigo,
+            semMotor: this.quedas.semMotor(this.player.currentVehicleId),
+            caçado: !!fera && !fera.morto,
+            aldeia,
+        };
+    }
+    /**
+     * A frase da fronteira na HUD, ou `null` em território conhecido.
+     *
+     * É lida pelo polling de 200 ms da HUD, não por um evento, porque a fronteira não tem porta,
+     * letreiro nem horário: o que há é uma distância crescendo debaixo do pé de quem anda, e a
+     * única forma de o jogador descobrir que está sendo cobrado é ver o número antes de ouvir o
+     * urro. Sem esta linha a caçada começaria com um corpo no meio da tela e nenhuma explicação.
+     */
+    frontierStatus() {
+        const ler = this.frontierLeitura();
+        if (!ler)
+            return null;
+        const { W, H, p, prof, nadando, perigo, semMotor, caçado, aldeia } = ler;
+        // Dentro do mapa e sem dívida a mata é só paisagem: uma linha fixa dizendo "nada" seria a
+        // primeira coisa ensinada a ser ignorada na HUD.
+        if (prof <= 0 && perigo <= 0.02 && !semMotor)
+            return null;
+        const face = (0, Frontier_1.faceDaFronteira)(p.x, p.y, W, H);
+        // A palavra é de quem está cobrando agora. O bando vem primeiro não por preferência de tema,
+        // mas porque as duas posse nunca se sobrepõem de verdade (a banda do gigante para na porta
+        // deles e o rio é do peixe): se a aldeia nomeou o lugar, a caçada da mata é outra terra.
+        return `FRONTEIRA · ${nadando ? 'rio sem fim' : (0, Frontier_1.nomeDaTerra)(prof)} ${Math.round(prof)}t`
+            + `${face ? ` · ${face}` : ''} · `
+            + (semMotor ? 'SEM MOTOR' : aldeia ? 'ALDEIA ACORDADA'
+                : caçado ? 'CAÇADO' : perigo >= 0.5 ? 'aviso' : 'quieta');
+    }
+    /**
+     * A dívida da barra e a fera que a está cobrando. É a mesma leitura da linha de texto, e é por
+     * isso que existe um método em vez de o HUD ler `game.gorilas.perigo`: no rio quem cobra não é o
+     * gigante, e uma barra que mostra o rancor errado ensinaria o jogador a não confiar nela.
+     */
+    frontierDanger() {
+        const ler = this.frontierLeitura();
+        return ler ? { perigo: ler.perigo, caçado: ler.caçado } : { perigo: 0, caçado: false };
+    }
+    /**
+     * O índice da unidade que a tela deve marcar com a seta, ou `null` para não marcar nenhuma.
+     * A ordem é a da viagem, não a da conveniência do desenho: com plano de pé, o ônibus certo é o
+     * que serve a passada prometida pelo horário — mesmo que outro veículo tenha a porta aberta
+     * agora na mesma calçada, porque embarcar no que encostou primeiro é descer do outro lado da
+     * cidade uma volta depois. Sem plano, o ônibus certo é simplesmente o que está com a porta
+     * aberta para quem está a pé. Dentro de uma sala não há seta nenhuma: lá o `x`/`y` do corpo é
+     * uma coordenada do plano da sala, e medir alcance de porta com ela apontaria um ônibus
+     * qualquer na parede do hall.
+     */
+    busTarget() {
+        if (this.interiors.active)
+            return null;
+        const journey = this.journeys.journey;
+        const leg = journey ? journey.legs[journey.leg] : undefined;
+        if (journey && leg) {
+            const aguardado = this.transport.expectedUnit(leg.route, leg.pass);
+            if (aguardado !== null)
+                return aguardado;
+        }
+        return this.transport.boarding(this.player);
+    }
+    journeyContext() {
+        return {
+            player: this.player,
+            map: this.map,
+            transport: this.transport,
+            world: this.worldPosition,
+            // O pino do GPS é o do plano, não o do jogador: a perna a pé termina na calçada, e é
+            // ela que tem de aparecer no mapa cheio e no radar.
+            mark: (x, y) => {
+                const from = this.worldPosition;
+                this.journeyMark = { x, y };
+                useGameStore_1.useGameStore.setMapDestination(x, y, (0, Gps_1.buildGpsRoute)(this.map, from.x, from.y, x, y, false));
+            },
+            clearMark: () => {
+                const mark = this.journeyMark;
+                if (!mark)
+                    return;
+                this.journeyMark = null;
+                const st = useGameStore_1.useGameStore.getState();
+                if (st.mapMarker && Math.hypot(st.mapMarker.x - mark.x, st.mapMarker.y - mark.y) < 1e-6) {
+                    useGameStore_1.useGameStore.clearMapMarker();
+                }
+            },
+            say: (text) => this.interiors.say(text, 3.2),
+        };
+    }
     interiorContext() {
         return {
             player: this.player,
@@ -614,12 +986,14 @@ class GameState {
                 SoundManager_1.sound.play(room?.shop || room?.service.action === 'bail' ? 'coin' : 'healthPickup', 0.45);
             },
             onOpenShop: () => useGameStore_1.useGameStore.openShop(),
+            onOpenDepartures: () => useGameStore_1.useGameStore.openDepartures(),
             onTransition: () => this.afterInteriorTransition(),
         };
     }
     /** Câmera, inputs e som depois de cruzar uma porta — vale para entrar e para sair. */
     afterInteriorTransition() {
         useGameStore_1.useGameStore.closeShop();
+        useGameStore_1.useGameStore.closeDepartures();
         this.jump.cancel(this.player);
         this.exploration.breakTrail();
         this.exploration.update({ position: this.worldPosition, outdoors: true });
@@ -761,7 +1135,7 @@ class GameState {
             const flying = vehicle.def.type === 'helicopter';
             const bfx = vehicle.x;
             const bfy = vehicle.y;
-            this.movement.updateVehicle(vehicle, this.map, dt);
+            this.movement.updateVehicle(vehicle, this.map, dt, this.altitude.snapshot);
             if (!flying) {
                 const vc = {
                     x: vehicle.x,
@@ -802,6 +1176,31 @@ class GameState {
             player.swimming = false;
             this.stamina.update(player, dt, false, false);
         }
+        else if (!this.interiors.active && this.tribos.arrastado) {
+            // Prisioneiro: o corpo na ponta da corda não obedece ao manche, pelo mesmo motivo do
+            // passageiro e com uma razão a mais — aqui há quem esteja escrevendo estas duas coordenadas
+            // no fim do tick, e um passo tentado contra o arrasto seria desfazido no mesmo quadro, com o
+            // sprite andando e o lugar não. A perna que se cansa é a dele: sem esforço, o fôlego volta.
+            player.vx = 0;
+            player.vy = 0;
+            player.speed = 0;
+            player.swimming = false;
+            this.stamina.update(player, dt, false, false);
+        }
+        else if (!this.interiors.active && this.cativeiro.amarrado) {
+            // Amarrado: aqui o manche não leva a lugar nenhum porque já há quem decida o pé — o poste. O
+            // `arrastado` acima tira o joystick do caminho por um motivo (um corpo em movimento), este o
+            // tira por outro: não existe passo que não seja desfazido pelo `empurraDoAcampamento` no
+            // quadro seguinte, e um sprite andando parado seria a única coisa na tela mentindo sobre a
+            // mecânica. O que o manche **faz** é o esforço: a leitura do lado é a mão puxando a corda, e
+            // é por isto que o `dx` continua sendo lido aqui, no ramo que proíbe andar.
+            player.vx = 0;
+            player.vy = 0;
+            player.speed = 0;
+            player.swimming = false;
+            this.cativeiro.puxa(InputState_1.inputState.dx);
+            this.stamina.update(player, dt, false, false);
+        }
         else {
             const wantsRun = InputState_1.inputState.runHeld && !player.crouching;
             const moving = InputState_1.inputState.magnitude > GameConfig_1.GAME_CONFIG.JOYSTICK_DEADZONE;
@@ -826,16 +1225,31 @@ class GameState {
             vehicles: this.vehicles, npcs: this.npcs, collision: this.collision,
             health: this.health, wanted: this.wanted, time: this.time,
             night: this.dayNight.isNight,
+            sky: this.skyDaRonda(),
             allocVehicleId: () => this.nextVehicleId++, allocNpcId: () => this.nextNpcId++,
             onStructChange: () => this.notifyEntityChange(), onBusted: () => this.bust(),
             shake: (amount) => this.shake(amount), rng: this.rnd,
         };
     }
     /**
+     * A leitura de ar que a ronda policial faz do nosso céu: o pé-direito da manta e a espessura de
+     * nuvem entre dois andares. Uma ficha só para o mundo inteiro — o `PoliceContext` é reconstruído a
+     * cada quadro, e um objeto novo ali seria lixo por quadro dentro do laço da polícia.
+     */
+    skyDaRonda() {
+        if (!this.skyDaRondaCache) {
+            const ar = this.altitude;
+            this.skyDaRondaCache = {
+                get base() { return ar.daBase; },
+                obstrucao: (x, y, de, ate, tempo) => ar.obstrucao(x, y, de, ate, tempo),
+            };
+        }
+        return this.skyDaRondaCache;
+    }
+    /**
      * O que os oficiais empenhados enxergam agora, para o radar desenhar. Nada aqui lê a
      * posição do jogador: o cone pertence ao policial, então a HUD não vira raio-x.
-     */
-    policeVisionCones() {
+     */ policeVisionCones() {
         // O cone pertence à rua. Dentro de uma sala o radar mostra o plano do interior, e a
         // posição real do jogador não existe no mapa — nada aqui pode desenhá-la.
         if (this.interiors.active)
@@ -864,6 +1278,22 @@ class GameState {
             npcs: !room ? this.npcs : room.kind === 'jail' ? this.jail.occupants : this.crowd.list,
             vehicles: room ? [] : this.vehicles,
             animals: room ? [] : this.wildlife.animals,
+            // O gigante é o único alvo do mundo que não é uma lista: um por mundo, e `alvo` já devolve
+            // `null` para o cadáver, então quem atira no corpo caído não ganha dois prêmios.
+            gorila: room ? null : this.gorilas.alvo,
+            onGorilaHit: (damage) => { if (this.gorilas.fere(damage))
+                this.notifyEntityChange(); },
+            // A outra fera da fronteira, pela mesma porta e pelo mesmo motivo: um corpo por mundo, o
+            // cadáver deixa de ser alvo, e o tiro que a acerta é o que ela usa para ficar mais rápida.
+            piranha: room ? null : this.piranhas.alvo,
+            onPiranhaHit: (damage) => { if (this.piranhas.fere(damage))
+                this.notifyEntityChange(); },
+            // O bando inteiro, não um alvo por mundo: são corpos com id, e a arma precisa poder acertar
+            // o segundo depois de derrubar o primeiro. A porta devolve o id junto com o dano porque é o
+            // sistema que sabe qual corpo caiu — e um companheiro caindo é o que acende os outros.
+            guerreiros: room ? [] : this.tribos.alvos(),
+            onGuerreiroHit: (id, damage) => { if (this.tribos.fere(id, damage))
+                this.notifyEntityChange(); },
             onCrime: (incident) => this.reportCrime(incident),
             map: this.activeMap,
             wanted: this.wanted,
@@ -939,6 +1369,116 @@ class GameState {
         this.streaming.stats.activeNpcs = s.countIn('npc', z.active);
         this.streaming.stats.simulatedEntities = this.streaming.stats.activeNpcs +
             s.countIn('veh', z.active);
+    }
+    /**
+     * Quem está no asfalto em volta de um ponto, entregue ao ônibus corpo por corpo. É a rua que a
+     * malha não dirige — carros do trânsito, pedestres, bichos e o próprio jogador a pé —, e sem
+     * ela o freio do ônibus só enxerga o próprio horário: dois ônibus combinando de não se encostar
+     * enquanto um sedã atravessa a faixa dele, que é o "eles atravessam carros" da tela.
+     *
+     * Três contas mandam aqui. A primeira é o tipo de corpo: lataria (`mole: false`) disputa asfalto
+     * com corrente e recuo, corpo vivo (`mole: true`) é sempre cedido e nunca empurrado — dar ré num
+     * pedestre que atravessou é pior do que o atraso que ele causa. A segunda é a lataria dele
+     * mesmo: um pedestre do tamanho de um ônibus estreitaria a faixa de um ponto em meio tile para
+     * cada lado, e cada pessoa parada no meio-fio prenderia a linha inteira; por isso cada corpo
+     * traz `meio` e `flanco` próprios. A terceira é o recorte: só pisa na rua quem está num tile de
+     * via, porque um cachorro deitado na grama não pode parar um ônibus que passa do outro lado do
+     * canteiro, do mesmo jeito que o `pedestrianStopDistance` do trânsito já exige o asfalto.
+     *
+     * O buffer da grade é emprestado por tipo e vale até a próxima consulta do MESMO tipo, então cada
+     * varredura é consumida antes da seguinte. O corpo visitado é o `corpoVisitado` desta instância:
+     * quem quiser guardar um tem de copiar, e o `TransportSystem` copia para o próprio risco.
+     */
+    varreRua(x, y, raio, visita) {
+        const caixa = this.caixaDaRua;
+        caixa.minX = x - raio;
+        caixa.maxX = x + raio;
+        caixa.minY = y - raio;
+        caixa.maxY = y + raio;
+        const corpo = this.corpoVisitado;
+        // Lataria primeiro: é o corpo que disputa a faixa, e o recuo dele já tem corrente própria.
+        for (const i of this.spatial.query('veh', caixa)) {
+            const v = this.vehicles[i];
+            if (!v || v.state === 'destroyed' || !v.def.driveable || v.altitude > 0.5)
+                continue;
+            const dx = v.x - x, dy = v.y - y;
+            if (dx * dx + dy * dy > raio * raio)
+                continue;
+            corpo.x = v.x;
+            corpo.y = v.y;
+            corpo.angle = v.facingAngle;
+            corpo.speed = v.speed;
+            corpo.meio = Math.max(v.def.footprintW, v.def.footprintH) / 2;
+            corpo.flanco = Math.min(v.def.footprintW, v.def.footprintH) / 2;
+            corpo.mole = false;
+            visita(corpo);
+        }
+        // Pedestre e bicho depois: corpo mole, que o ônibus cede o passo e nunca empurra.
+        //
+        // Congelado não segura fila. O mundo para de simular quem está longe da câmera — o pedestre
+        // além do `NPC_SIM_FAR`, o bicho fora das fichas do `WildlifeSystem` — e o corpo fica no
+        // asfalto com a velocidade do último quadro escrita nele: um javali `fleeing` a 3,15 tiles por
+        // segundo que não anda um milímetro. O ônibus que freia para esse corpo planta o pé com a
+        // dívida inteira (um segundo de atraso por segundo de relógio) e espera por algo que o mundo
+        // decidiu não mover mais: foi assim que a linha 16 ficou parada 30 s e o passageiro nunca
+        // chegou à calçada. O trânsito já tem esta regra (`pedestrianStopDistance`) e é a mesma que
+        // vale aqui — quem atravessa a faixa de verdade continua parado o ônibus, porque quem está
+        // sendo simulado está nesta lista.
+        const px = this.player.x, py = this.player.y;
+        const longeDoMundo2 = GameConfig_1.GAME_CONFIG.NPC_SIM_FAR * GameConfig_1.GAME_CONFIG.NPC_SIM_FAR;
+        for (const i of this.spatial.query('npc', caixa)) {
+            const n = this.npcs[i];
+            if (!n || n.dead || n.inVehicle)
+                continue;
+            const dx = n.x - x, dy = n.y - y;
+            if (dx * dx + dy * dy > raio * raio)
+                continue;
+            const pdx = n.x - px, pdy = n.y - py;
+            if (n.kind !== 'cop' && n.state !== 'fleeing' && pdx * pdx + pdy * pdy > longeDoMundo2)
+                continue;
+            if (this.map.tileKindAt(n.x, n.y) !== 'road')
+                continue;
+            corpo.x = n.x;
+            corpo.y = n.y;
+            corpo.angle = (0, IsoUtils_1.dirToAngle)(n.dir);
+            corpo.speed = n.speed;
+            corpo.meio = corpo.flanco = GameConfig_1.GAME_CONFIG.NPC_RADIUS;
+            corpo.mole = true;
+            visita(corpo);
+        }
+        for (const i of this.spatial.query('animal', caixa)) {
+            const a = this.wildlife.animals[i];
+            if (!a || a.dead || !a.simulated)
+                continue;
+            const dx = a.x - x, dy = a.y - y;
+            if (dx * dx + dy * dy > raio * raio)
+                continue;
+            if (this.map.tileKindAt(a.x, a.y) !== 'road')
+                continue;
+            corpo.x = a.x;
+            corpo.y = a.y;
+            corpo.angle = a.moveX || a.moveY ? Math.atan2(a.moveY, a.moveX) : (0, IsoUtils_1.dirToAngle)(a.dir);
+            corpo.speed = a.speed;
+            corpo.meio = corpo.flanco = a.radius;
+            corpo.mole = true;
+            visita(corpo);
+        }
+        // O jogador a pé é o pedestre mais importante da rua: é ele que o ônibus não pode passar por
+        // cima. Dentro de uma sala ele não existe no mapa, e num ônibus do horário ele já é lataria do
+        // próprio ônibus — nos dois casos não há corpo mole a visitar.
+        const p = this.player;
+        if (!this.interiors.active && !(0, Player_1.isAboard)(p) && p.health > 0) {
+            const dx = p.x - x, dy = p.y - y;
+            if (dx * dx + dy * dy <= raio * raio && this.map.tileKindAt(p.x, p.y) === 'road') {
+                corpo.x = p.x;
+                corpo.y = p.y;
+                corpo.angle = p.facingAngle;
+                corpo.speed = p.speed;
+                corpo.meio = corpo.flanco = GameConfig_1.GAME_CONFIG.PLAYER_RADIUS;
+                corpo.mole = true;
+                visita(corpo);
+            }
+        }
     }
     // ---------------------------------------------------------------- npcs
     updateNpcs(dt, player = this.player) {
@@ -1047,6 +1587,198 @@ class GameState {
         };
     }
     /**
+     * O que a fronteira sabe do jogador.
+     *
+     * `player: null` dentro de uma sala não é uma convenience: é o contrato de que a rua congela
+     * com a porta. O sistema receberia `outdoorPlayer` — uma cópia, no caso da sala — e o soco
+     * empurraria um corpo que não existe, deixando o real exatamente onde estava.
+     *
+     * O dano sai pelo `HealthSystem`, nunca por `player.health -=`: é a invulnerabilidade do
+     * pós-dano que faz três marteladas em 1,15 s doerem em vez de matarem no segundo frame, e uma
+     * regra própria de invulnerabilidade seria a primeira divergência do jogo.
+     */
+    gorilaContext(indoors, view) {
+        return {
+            worldW: this.map.worldW,
+            worldH: this.map.worldH,
+            player: indoors ? null : this.player,
+            worldPosition: this.worldPosition,
+            água: this.map,
+            damages: (amount) => this.health.damage(this.player, amount, this.time),
+            shake: (amount) => this.shake(amount),
+            say: (text, seconds) => this.interiors.say(text, seconds),
+            play: (key, volume) => SoundManager_1.sound.play(key, volume),
+            isVisible: (x, y) => {
+                // A caixa é o corpo inteiro do bicho, não o tile do pé: um gigante cujo tronco está na
+                // tela e os pés ainda não é visível, e o rugido teria de vir antes dele.
+                const p = (0, IsoUtils_1.worldToScreen)(x, y, this.map.heightSmoothAt(x, y));
+                return this.fog.intersects(view, p.x - 60, p.y - 150, 120, 170);
+            },
+            onStructChange: () => this.notifyEntityChange(),
+        };
+    }
+    /**
+     * O que o rio sabe do mundo. É o espelho exato do `gorilaContext`, inclusive no `água: this.map`
+     * — o `Map` real é a única autoridade sobre onde há água, dentro e fora da grade, e um segundo
+     * oracle inventado aqui seria a primeira divergência entre o que o movimento pisa e o que a
+     * fera persegue.
+     *
+     * A caixa de visibilidade é larga e baixa porque o corpo dela é assim: 140x84 de quadro ancorado
+     * na linha d'água, com o salto subindo acima dela. Copiar a caixa do gigante faria o trote
+     * surface soar dentro de casa.
+     */
+    piranhaContext(indoors, view) {
+        return {
+            worldW: this.map.worldW,
+            worldH: this.map.worldH,
+            player: indoors ? null : this.player,
+            água: this.map,
+            damages: (amount) => this.health.damage(this.player, amount, this.time),
+            shake: (amount) => this.shake(amount),
+            say: (text, seconds) => this.interiors.say(text, seconds),
+            play: (key, volume) => SoundManager_1.sound.play(key, volume),
+            isVisible: (x, y) => {
+                const p = (0, IsoUtils_1.worldToScreen)(x, y, this.map.heightSmoothAt(x, y));
+                return this.fog.intersects(view, p.x - 78, p.y - 120, 156, 132);
+            },
+            onStructChange: () => this.notifyEntityChange(),
+        };
+    }
+    /**
+     * O que o bando sabe do mundo. Espelho dos dois anteriores nas leituras (mesma `água: this.map`,
+     * mesmo `damages` pelo `HealthSystem`, mesma régua de profundidade pelo `worldPosition`) e com
+     * quatro campos que as feras não têm, cada um por uma razão:
+     *
+     * - `vidaDoJogador` é leitura, nunca escrita. É o que permite ao golpe **parar** antes de matar:
+     *   sem saber onde está o chão do alvo, o sistema só saberia machucar, e a captura viraria morte.
+     * - `aPé` fecha a porta da captura para quem está num carro, numa moto, num ônibus do horário ou
+     *   nadando. Ninguém arrasta um corpo que está dentro de outro corpo.
+     * - `arrasta` escreve a coordenada do jogador. É a única chamada deste contexto que move o
+     *   jogador, e é por ela que o tick do bando roda depois do `separate` — ver o campo `tribos`.
+     * - `raioDoCorpo` é a largura do prisioneiro. O bando precisa dela para saber **onde** pousar o
+     *   corpo na ponta da corda — a amarra é a soma dos dois raios — e o raio não é dele: é do
+     *   jogador, e este arquivo é o único lugar do mundo que sabe quanto mede um pé aqui.
+     *
+     * A caixa de visibilidade é o quadro desenhado: 36x46 pixels de tela ancorados no pé, com folga
+     * de um pixel e meio para cada lado. Copiar a caixa do gigante faria o tambor do bando soar
+     * dentro de casa, exatamente o erro que a caixa baixa e larga da piranha existe para não repetir.
+     */
+    triboContext(indoors, view) {
+        return {
+            worldW: this.map.worldW,
+            worldH: this.map.worldH,
+            player: indoors ? null : this.player,
+            worldPosition: this.worldPosition,
+            água: this.map,
+            damages: (amount) => this.health.damage(this.player, amount, this.time),
+            vidaDoJogador: () => this.player.health,
+            aPé: () => !(0, Player_1.isAboard)(this.player) && !this.player.swimming,
+            arrasta: (x, y) => this.tribosArrasta(x, y),
+            raioDoCorpo: () => GameConfig_1.GAME_CONFIG.PLAYER_RADIUS,
+            captura: (ac) => this.tribosCapturam(ac),
+            shake: (amount) => this.shake(amount),
+            say: (text, seconds) => this.interiors.say(text, seconds),
+            play: (key, volume) => SoundManager_1.sound.play(key, volume),
+            isVisible: (x, y) => {
+                const p = (0, IsoUtils_1.worldToScreen)(x, y, this.map.heightSmoothAt(x, y));
+                return this.fog.intersects(view, p.x - 20, p.y - 48, 40, 50);
+            },
+            onStructChange: () => this.notifyEntityChange(),
+        };
+    }
+    /**
+     * O corpo na ponta da corda. Escreve a coordenada e apaga a intenção de andar: o `arrastado` já
+     * tirou o joystick do caminho no começo do tick, e zerar o velocidade aqui é o que impede o
+     * inércia de um passo anterior de continuar escorregando o prisioneiro para fora da amarra.
+     * Não passa por `resolveCircle` de propósito: quem puxa já foi empurrado para fora das paredes
+     * pelo `empurraDoAcampamento` dentro do sistema, e resolver o corpo do meio do caminho criaria
+     * dois donos discordando do mesmo pé no mesmo quadro.
+     */
+    tribosArrasta(x, y) {
+        const player = this.player;
+        player.x = x;
+        player.y = y;
+        player.vx = 0;
+        player.vy = 0;
+        player.speed = 0;
+    }
+    /**
+     * O prisioneiro foi atado ao poste, e o custo é do jogo — a mecânica é do sistema. O bando revira
+     * quem carrega e leva o dinheiro solto do bolso: um sequestro sem preço seria um teletransporte com
+     * drama, e a alternativa — matar — é a cutscene que o pedido proibiu. A vida fica onde o abolo
+     * parou (no piso do `PISO_DO_ABOLO`, nunca abaixo).
+     *
+     * Depois do bolso, este método entrega o acampamento ao cativeiro e **não fala mais com o
+     * prisioneiro**: a frase de levada era um adeus ao centro da aldeia, e agora quem tem a última
+     * palavra é a corda. O `amarra` só acende os relógios porque o corpo já foi pousado no ponto da
+     * amarra pelo próprio bando, um pouco antes de chamar isto.
+     */
+    tribosCapturam(ac) {
+        const player = this.player;
+        const levado = Math.min(player.money, Math.ceil(player.money * 0.25));
+        if (levado > 0)
+            player.money -= levado;
+        if (levado > 0) {
+            this.interiors.say(`Levaram ${levado} de você — agora se solta do poste`, 4);
+        }
+        this.cativeiro.amarra(ac);
+        this.notifyEntityChange();
+    }
+    /**
+     * O que o poste sabe do mundo. É o contexto mais curto da fronteira inteira de propósito: o
+     * cativeiro não tem alvo, não tem ferimento e não tem coordenada própria — ele só tem dois relógios
+     * e uma porta para bater quando a corda cede.
+     *
+     * - `player` é `null` dentro de uma sala, e isto não é uma defesa contra o impossível: é a mesma
+     *   regra do bando, e ela mantém os dois relógios parados juntos. Entrar numa casa com as mãos
+     *   presas não afrouxa nada, e o jogador não pode escapar de uma mecânica da rua pelo banheiro.
+     * - `expulsa` é a ferramenta do gigante: `expulsaDaClareira` põe o corpo fora da jurisdição pela
+     *   borda da clareira, vivo. O cativeiro não inventa um segundo destino para o fracasso porque
+     *   "fora daqui" já tem dono neste mundo.
+     * - `acorda` é a porta do bando, e não um `alerta = 1`: quem solta a corda devolve ao lugar a
+     *   disposição de olhar, e se um sentinela tem o ex-prisioneiro no cone, o grito sai pelo caminho
+     *   normal — com o aviso antes da fera.
+     */
+    cativeiroContext(indoors) {
+        return {
+            player: indoors ? null : this.player,
+            aPé: () => !(0, Player_1.isAboard)(this.player) && !this.player.swimming,
+            acorda: (aldeiaId) => this.tribos.acorda(aldeiaId),
+            expulsa: () => (0, Tribo_1.expulsaDaClareira)(this.player, this.map.worldW, this.map.worldH, this.map),
+            say: (text, seconds) => this.interiors.say(text, seconds),
+            play: (key, volume) => SoundManager_1.sound.play(key, volume),
+            shake: (amount) => this.shake(amount),
+        };
+    }
+    /**
+     * O que a fronteira pelo ar sabe do mundo.
+     *
+     * A frota inteira, não uma seleção: o céu não tem dono, e um sistema que olhasse só a máquina
+     * pilotada deixaria o helicóptero estacionado no heliporto atravessar a borda ileso — a mesma
+     * exceção silenciosa que a cobrança a pé não pode ter.
+     *
+     * `pilotado` é lido do `currentVehicleId`, e não de uma flag no casco, porque quem viaja como
+     * passageiro de um motorista de trânsito não pilotei o nariz que amorteceu o pouso: a mata
+     * cobra o casco dele, não o corpo dele. O dano sai pelo `HealthSystem` pela mesma razão do
+     * gorila — a invulnerabilidade pós-dano é uma regra do jogo, não do sistema.
+     */
+    frontierFallContext() {
+        return {
+            worldW: this.map.worldW,
+            worldH: this.map.worldH,
+            vehicles: this.vehicles,
+            pilotado: this.player.currentVehicleId,
+            damages: (amount) => this.health.damage(this.player, amount, this.time),
+            shake: (amount) => this.shake(amount),
+            say: (text, seconds) => this.interiors.say(text, seconds),
+            play: (key, volume) => SoundManager_1.sound.play(key, volume),
+            cobra: (dívida) => this.gorilas.cobra(dívida),
+            água: this.map,
+            cobraÁgua: (dívida) => this.piranhas.cobra(dívida),
+            onStructChange: () => this.notifyEntityChange(),
+        };
+    }
+    /**
      * Volume do rugido ouvido onde o jogador está, no mesmo ritmo de 0,25s do motor: um
      * pedido por quadro ao canal nativo afogaria a ponte assíncrona por uma diferença
      * inaudível. Dentro de casa a queda fica do lado de fora do plano da sala.
@@ -1080,6 +1812,13 @@ class GameState {
             return;
         }
         const isHeli = v.def.type === 'helicopter';
+        // Motor morto pela fronteira: o loop do motor é a única fonte de verdade audível de que a
+        // máquina parou. Sem este silêncio o jogador ouviria o rotor girando durante a própria queda
+        // e concluiria, com razão, que o controle de subida está com defeito.
+        if (v.motorDead) {
+            SoundManager_1.sound.setLoop('engine', null);
+            return;
+        }
         const load = Math.min(1, Math.abs(v.speed) / (isHeli ? GameConfig_1.GAME_CONFIG.HELI_MAX_SPEED : GameConfig_1.GAME_CONFIG.VEHICLE_MAX_SPEED));
         SoundManager_1.sound.setLoop('engine', 'engine', isHeli ? 0.34 + load * 0.3 : 0.2 + load * 0.42);
     }
@@ -1109,6 +1848,9 @@ class GameState {
             lookY = InputState_1.inputState.aimY * 1.2;
         }
         (0, Camera_1.cameraFollow)(this.camera, followX, followY, lookX, lookY, dt, this.activeMap.worldW, this.activeMap.worldH);
+        // O zoom antes do clamp: as margens que prendem a câmera ao mapa são medidas em pixels de
+        // tela, e uma tela que acabou de alargar ainda estava sendo apertada pelo quadro anterior.
+        this.easeCameraZoom(dt);
         this.clampCamera();
         this.easeCameraHeight(dt);
     }
@@ -1254,6 +1996,18 @@ class GameState {
         }
     }
     // ---------------------------------------------------------------- helpers antigos
+    /**
+     * A lataria do horário que existe no chão agora: os ônibus vivos da malha, do lado de fora de
+     * uma sala e de um veículo. Dentro do ônibus não há parede — quem está sentado no banco não
+     * bate na lataria em que está, e é a mesma razão que tira o pedestre da rua quando ele embarca
+     * (`varreRua`). O array é devolvido vazio, nunca filtrado por fora: quem chama guarda a lista
+     * entre quadros e uma lataria parada no último pixel visto é uma parede invisível.
+     */
+    latariaDaRua() {
+        if (this.interiors.active || (0, Player_1.isAboard)(this.player))
+            return [];
+        return this.transport.bodies;
+    }
     separate(player) {
         if ((0, Player_1.isAboard)(player) || (player.jumpTimer > 0 && player.jumpEnd !== null))
             return;
@@ -1290,12 +2044,29 @@ class GameState {
             if (v)
                 pertoVeh.push(v);
         }
+        // O ônibus do horário não é `Vehicle` — não tem lataria, motorista nem banco —, mas ele
+        // ocupa a faixa, e até aqui quem andava a pé atravessava a lataria como se ela fosse de
+        // fumaça. O recorte é o mesmo dos carros: quatro tiles em volta do pé.
+        const pertoBus = this.nearbyBuses;
+        pertoBus.length = 0;
+        const naRua = this.latariaDaRua();
+        for (const b of naRua) {
+            if (!b.live)
+                continue;
+            if (Math.abs(b.x - body.x) > 4 || Math.abs(b.y - body.y) > 4)
+                continue;
+            pertoBus.push(b);
+        }
         for (let i = 0; i < 3; i++) {
             this.collision.resolveCircleVsVehicles(body, pertoVeh);
+            this.collision.resolveCircleVsBuses(body, pertoBus);
             this.collision.resolveCircle(body, this.map.queryNearby(body.x, body.y, 2));
         }
-        player.x = Math.max(body.radius, Math.min(this.map.worldW - body.radius, body.x));
-        player.y = Math.max(body.radius, Math.min(this.map.worldH - body.radius, body.y));
+        // O empurrão de um carro também tem mundo além da borda: sem aqui, quem é atropelado
+        // junto da última fila de tiles é encostado contra um nada.
+        (0, Frontier_1.seguraNaFronteira)(body, this.map.worldW, this.map.worldH, this.map);
+        player.x = body.x;
+        player.y = body.y;
     }
     updateAnimations(dt) {
         const p = this.player;

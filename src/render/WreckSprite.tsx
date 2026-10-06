@@ -35,6 +35,25 @@ function CharredHull({ cx, cy, angle }: { cx: number; cy: number; angle: number 
   );
 }
 
+/**
+ * Uma baforada da coluna de fumaça. As três têm o mesmo tempo e fases diferentes, então cada uma
+ * precisa do próprio número: o Skia lê o shared value a cada quadro, e uma constante multiplicada
+ * fora daqui viraria leitura no render.
+ */
+function Puff({ cx, cy, phase, rise, raio, alpha }: {
+  cx: number;
+  cy: number;
+  phase: number;
+  rise: SharedValue<number>;
+  raio: SharedValue<number>;
+  alpha: SharedValue<number>;
+}) {
+  const y = useDerivedValue(() => cy + rise.value - phase * 6, [cy, phase, rise]);
+  const r = useDerivedValue(() => raio.value + phase * 2, [phase, raio]);
+  const op = useDerivedValue(() => alpha.value * (1 - phase * 0.25), [alpha, phase]);
+  return <Circle cx={cx} cy={y} r={r} color="#4b4a48" opacity={op} />;
+}
+
 export function WreckSprite({ wreck, clock, smoking, h }: {
   wreck: Wreck;
   clock: SharedValue<number>;
@@ -63,15 +82,21 @@ export function WreckSprite({ wreck, clock, smoking, h }: {
     return path;
   }, [wreck, s.x, s.y]);
 
-  const age = useDerivedValue(() => clock.value - wreck.explodedAt, [clock, wreck.explodedAt]);
-  const fire = useDerivedValue(() => {
-    const p = Math.min(1, age.value / BLAST_S);
-    return { r: 10 + 34 * Math.sqrt(p), core: 6 + 12 * p, alpha: 1 - p, ring: 10 + 52 * p };
-  }, [age]);
-  const smoke = useDerivedValue(() => {
-    const p = Math.min(1, age.value / SMOLDER_S);
-    return { rise: -18 - age.value * 9, r: 7 + 13 * p, alpha: (1 - p) * 0.5 };
-  }, [age]);
+  // Os números da queimada são shared values entregues como props. Lê-los aqui no render congelaria
+  // a bola de fogo no quadro em que o React passou por este componente — a camada de desenho do Skia
+  // materializa cada shared value a todo quadro, e é por isso que o fogo cresce sozinho.
+  const idade = useDerivedValue(() => clock.value - wreck.explodedAt, [clock, wreck.explodedAt]);
+  const fogo = useDerivedValue(() => Math.min(1, idade.value / BLAST_S), [idade]);
+  const brilho = useDerivedValue(() => 1 - fogo.value, [fogo]);
+  const opHalo = useDerivedValue(() => brilho.value * 0.5, [brilho]);
+  const opBola = useDerivedValue(() => brilho.value * 0.85, [brilho]);
+  const raioHalo = useDerivedValue(() => 10 + 52 * fogo.value, [fogo]);
+  const raioBola = useDerivedValue(() => 10 + 34 * Math.sqrt(fogo.value), [fogo]);
+  const raioNucleo = useDerivedValue(() => 6 + 12 * fogo.value, [fogo]);
+  const brasa = useDerivedValue(() => Math.min(1, idade.value / SMOLDER_S), [idade]);
+  const ascenso = useDerivedValue(() => -18 - idade.value * 9, [idade]);
+  const raioFumaca = useDerivedValue(() => 7 + 13 * brasa.value, [brasa]);
+  const opFumaca = useDerivedValue(() => (1 - brasa.value) * 0.5, [brasa]);
 
   return (
     <Group>
@@ -93,13 +118,13 @@ export function WreckSprite({ wreck, clock, smoking, h }: {
       )}
       {smoking ? (
         <>
-          <Circle cx={s.x} cy={s.y - 12} r={fire.value.ring} color="#ffb347" style="stroke"
-            strokeWidth={3} opacity={fire.value.alpha * 0.5} />
-          <Circle cx={s.x} cy={s.y - 12} r={fire.value.r} color="#ff8a2b" opacity={fire.value.alpha * 0.85} />
-          <Circle cx={s.x} cy={s.y - 12} r={fire.value.core} color="#ffe9a8" opacity={fire.value.alpha} />
+          <Circle cx={s.x} cy={s.y - 12} r={raioHalo} color="#ffb347" style="stroke"
+            strokeWidth={3} opacity={opHalo} />
+          <Circle cx={s.x} cy={s.y - 12} r={raioBola} color="#ff8a2b" opacity={opBola} />
+          <Circle cx={s.x} cy={s.y - 12} r={raioNucleo} color="#ffe9a8" opacity={brilho} />
           {SMOKE_PUFFS.map((phase) => (
-            <Circle key={phase} cx={s.x + (phase - 0.9) * 5} cy={s.y + smoke.value.rise - phase * 6}
-              r={smoke.value.r + phase * 2} color="#4b4a48" opacity={smoke.value.alpha * (1 - phase * 0.25)} />
+            <Puff key={phase} cx={s.x + (phase - 0.9) * 5} cy={s.y} phase={phase}
+              rise={ascenso} raio={raioFumaca} alpha={opFumaca} />
           ))}
         </>
       ) : null}

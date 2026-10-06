@@ -78,6 +78,33 @@ function trace(ctx, x2, y2) {
         if (t !== null && t < best.t)
             best = { t, hit: true, animal };
     }
+    // Um corpo de dois metros e meio na frente da linha de tiro também é uma parede: sem isto o
+    // tiro passaria através do gigante para acertar o nada, e a única coisa que faz um chefão
+    // parece sólido é o projétil parar nele.
+    const gorila = ctx.gorila;
+    if (gorila && !gorila.morto) {
+        const t = segmentCircle(x1, y1, x2, y2, gorila, gorila.raio);
+        if (t !== null && t < best.t)
+            best = { t, hit: true, gorila };
+    }
+    // A piranha para o tiro do mesmo jeito: o corpo está na água, e água não é transparente para
+    // chumbo nesta altura. É também o que faz atirar de fora da margem ser possível — e é esse o
+    // único caminho do "atirar acelera" do rio, já que quem está dentro d'água não dispara.
+    const piranha = ctx.piranha;
+    if (piranha && !piranha.morto) {
+        const t = segmentCircle(x1, y1, x2, y2, piranha, piranha.raio);
+        if (t !== null && t < best.t)
+            best = { t, hit: true, piranha };
+    }
+    // O bando inteiro entra na mesma linha de tiro, corpo por corpo, e um guerreiro morto não é
+    // parede: um cadáver no caminho que parasse a bala ensinaria o jogador a atirar em chão vazio.
+    for (const g of ctx.guerreiros ?? []) {
+        if (g.morto)
+            continue;
+        const t = segmentCircle(x1, y1, x2, y2, g, g.raio);
+        if (t !== null && t < best.t)
+            best = { t, hit: true, guerreiro: g };
+    }
     return best.hit ? best : { t: 1, hit: false };
 }
 /** No GameState, rendering or audio dependency; timers advance only with simulation dt. */
@@ -243,6 +270,18 @@ class WeaponSystem {
         for (const animal of ctx.animals ?? [])
             if (!animal.dead && animal.health > 0)
                 consider(animal, 'animal');
+        // O gigante é o alvo mais alto da mira automática, e é de propósito: quem está a 20 tiles
+        // de um dorsípede de dois toneladas com o polegar no gatilho não pode estar acertando o ar.
+        if (ctx.gorila && !ctx.gorila.morto)
+            consider(ctx.gorila, 'gorila');
+        if (ctx.piranha && !ctx.piranha.morto)
+            consider(ctx.piranha, 'piranha');
+        // O bando entra na mira automática pelo mesmo critério de um pedestre — o menor desvio de
+        // ângulo, com a distância desempateando — porque aqui não existe alvo preferido: na frente do
+        // cano, quem está mais no meio da linha é quem você vai acertar.
+        for (const g of ctx.guerreiros ?? [])
+            if (!g.morto)
+                consider(g, 'guerreiro');
     }
     /** Bare calls are taps. A held trigger repeats only on automatic weapons. */
     tryFire(ctx, trigger = { pressed: true }) {
@@ -273,6 +312,17 @@ class WeaponSystem {
         const npcDamage = new globalThis.Map();
         const vehicleDamage = new globalThis.Map();
         const animalDamage = new globalThis.Map();
+        // Os corpos do bando somam por id, não num total: a rajada de escopeta pode levar três deles,
+        // e quem decide quem caiu é o `TriboSystem` — um único número somado não diria a ele qual
+        // corpo perdeu vida, e o companheiro ileso ao lado sairia ferido.
+        const guerreiroDamage = new globalThis.Map();
+        // As duas feras da fronteira somam num laço, não em dois `if` soltos: cada uma tem um corpo
+        // por mundo e o dano tem de sair uma única vez por rajada, pela porta do sistema dono. Um
+        // laço é o que deixa essa regra visível para a próxima fera que entrar aqui.
+        const feras = [
+            { dano: 0, onHit: ctx.onGorilaHit },
+            { dano: 0, onHit: ctx.onPiranhaHit },
+        ];
         for (let pellet = 0; pellet < def.pellets; pellet++) {
             const offset = def.pellets === 1 ? 0 : (pellet / (def.pellets - 1) - 0.5) * def.spread;
             const angle = this.aimAngle + offset;
@@ -287,11 +337,33 @@ class WeaponSystem {
                 vehicleDamage.set(hit.vehicle, (vehicleDamage.get(hit.vehicle) ?? 0) + def.damage);
             if (hit.animal)
                 animalDamage.set(hit.animal, (animalDamage.get(hit.animal) ?? 0) + def.damage);
+            if (hit.gorila)
+                feras[0].dano += def.damage;
+            if (hit.piranha)
+                feras[1].dano += def.damage;
+            if (hit.guerreiro) {
+                guerreiroDamage.set(hit.guerreiro, (guerreiroDamage.get(hit.guerreiro) ?? 0) + def.damage);
+            }
+        }
+        // Uma única chamada por rajada, não por chumbo: é o sistema da fera que decide se aquele dano
+        // matou, e ele só tem um corpo para dar. A festa do disparo continua aqui porque é este arquivo
+        // que sabe que a fera é um alvo — o sistema dono dela não conhece armas.
+        let feraAtingida = false;
+        for (const fera of feras) {
+            if (fera.dano <= 0)
+                continue;
+            feraAtingida = true;
+            fera.onHit?.(fera.dano);
         }
         for (const [animal, damage] of animalDamage) {
             if ((0, Animal_1.damage)(animal, damage))
                 ctx.onStructChange();
         }
+        // Um chamada por corpo ferido, com o id dele: quem manda na vida deles é o `TriboSystem`, e é
+        // ele que sabe que um companheiro caído acorda os outros — somar tudo num número só jogaria
+        // fora exatamente a informação que a aldeia usa para ficar mais rápida.
+        for (const [g, damage] of guerreiroDamage)
+            ctx.onGuerreiroHit?.(g.id, damage);
         let crime = 1;
         for (const [npc, damage] of npcDamage) {
             npc.health = Math.max(0, npc.health - damage);
@@ -317,7 +389,7 @@ class WeaponSystem {
             crime = Math.max(crime, ['police', 'swat'].includes(vehicle.def.type) ? 3 : 1);
         }
         ctx.onCrime?.({ x: p.x, y: p.y, severity: crime });
-        ctx.shake(npcDamage.size || vehicleDamage.size || animalDamage.size ? 0.18 : 0.06);
+        ctx.shake(npcDamage.size || vehicleDamage.size || animalDamage.size || feraAtingida ? 0.18 : 0.06);
         (ctx.onShot ?? this.events.onShot)?.(def);
         if (ammo.loaded === 0)
             this.reload(ctx);

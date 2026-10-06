@@ -89,6 +89,7 @@ const caminho = (serie) => serie.reduce((soma, p, i) => (i ? soma + Math.hypot(p
   };
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = () => reject(new Error('CDP falhou')); });
   await send('Runtime.enable'); await send('Page.enable'); await send('Log.enable');
+  await require('./bundle-identity.cjs').attach(socket, send);
 
   await send('Page.navigate', { url: 'about:blank' });
   await send('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 1, mobile: true });

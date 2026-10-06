@@ -104,6 +104,10 @@ export function HUD() {
   let objective = interior ? interior.label : gpsActive
     ? `GPS ${remainingRouteDistance(mapRoute, game.player.x, game.player.y).toFixed(0)}m`
     : MISSION_LABEL[mission.phase] ?? '';
+  // A viagem do telão manda no objetivo: ela já é um pino de GPS, e dizer só "GPS 120m"
+  // escondia o que falta — a pé até a calçada, o ônibus que chega, a hora de descer.
+  const journey = game.journeyStatus();
+  if (journey) objective = journey;
   // Na cela o relógio é o objetivo: diz quanto falta para a grade abrir.
   if (interior?.kind === 'jail' && game.jail.locked) objective = `CADEIA · ${Math.ceil(game.jail.sentenceLeft)}s`;
   if (wantedLevel && area) objective = area.phase === 'pursuit'
@@ -111,6 +115,15 @@ export function HUD() {
     : 'POLÍCIA · BUSCANDO';
   if (game.witnesses.calls.some((call) => !call.radio)) objective = 'TESTEMUNHA · CHAMANDO A POLÍCIA';
   const timedMission = !gpsActive && !interior && mission.phase !== 'giver' && mission.phase !== 'break';
+  // A fronteira tem painel próprio em vez de uma linha no objetivo porque as duas perguntas são
+  // diferentes: o objetivo diz "para onde ir", isto diz "quanto a terra está cobrando". Meter uma
+  // dentro da outra calaria a mata no exato instante em que ela é o que importa — e a caçada
+  // começaria na tela sem que o jogador soubesse por quê.
+  const frontier = game.frontierStatus();
+  // A dívida e a fera vêm do GameState, não do sistema do gigante: quem está no rio é caçado pela
+  // barbatana, e uma barra lida do rancor errado marcaria 0% no instante exato do bote.
+  const cobrança = game.frontierDanger();
+  const caçado = cobrança.caçado;
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingLeft: Math.max(12, insets.left), paddingRight: Math.max(12, insets.right) }]}>
       <View style={styles.topRow}>
@@ -151,6 +164,16 @@ export function HUD() {
             width: `${Math.max(0, Math.min(100, mission.timeLeft / Math.max(1, mission.totalTime) * 100))}%`,
           }]} /></View>
         </View>}
+      </View> : null}
+      {frontier ? <View style={[styles.frontierPanel, compact && styles.compactFrontier]}
+        testID="hud-frontier" accessible accessibilityLabel={frontier}>
+        <Text style={[styles.frontierText, caçado && styles.frontierHunt]} numberOfLines={1}>{frontier}</Text>
+        {/* A barra é a dívida, não a vida da fera: é o número que empurrou o jogador até aqui, e
+            é ele que diz se ainda dá tempo de voltar para o asfalto — ou para a margem. */}
+        <View style={styles.frontierTrack}><View style={[styles.frontierFill, {
+          width: `${Math.round(Math.min(1, cobrança.perigo) * 100)}%`,
+          backgroundColor: caçado ? '#ef5350' : '#8bc34a',
+        }]} /></View>
       </View> : null}
       {hazard ? <View style={[styles.hazardPanel, compact && styles.compactHazard]}
         testID="hud-hazard" accessible accessibilityLabel={hazard}>
@@ -230,6 +253,14 @@ const styles = StyleSheet.create({
     maxWidth: '55%', alignItems: 'center', pointerEvents: 'none' },
   compactHazard: { maxWidth: '46%' },
   hazardText: { color: '#ffd0c2', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
+  frontierPanel: { marginTop: 4, alignSelf: 'center', backgroundColor: 'rgba(14,32,18,0.72)',
+    borderWidth: 1, borderColor: 'rgba(156,200,140,0.45)', borderRadius: 6, paddingVertical: 3,
+    paddingHorizontal: 10, maxWidth: '55%', alignItems: 'center', gap: 3, pointerEvents: 'none' },
+  compactFrontier: { maxWidth: '46%' },
+  frontierText: { color: '#b9dcae', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
+  frontierHunt: { color: '#ffccbc' },
+  frontierTrack: { height: 2, width: 76, backgroundColor: '#26331f', overflow: 'hidden' },
+  frontierFill: { height: '100%', backgroundColor: '#8bc34a' },
   missionRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
   missionText: { color: '#b3e5fc', fontSize: 9 },
   missionTrack: { height: 2, width: 64, backgroundColor: '#344044', overflow: 'hidden' },

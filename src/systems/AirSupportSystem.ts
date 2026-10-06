@@ -10,6 +10,18 @@ import { sound } from '../audio/SoundManager';
 type Point = { x: number; y: number };
 type HeliPhase = 'inbound' | 'orbit' | 'descend' | 'climb' | 'outbound';
 
+/**
+ * O ar por onde a ronda voa. Veio do `AltitudeSystem` e é opcional de propósito: sem ele o céu não
+ * existe, a varredura enxerga como sempre enxergou e as fixtures offline continuam medindo a rua,
+ * não a meteorologia.
+ */
+export interface AirSky {
+  /** Cota absoluta do pé-direito da manta (a barriga da nuvem). */
+  readonly base: number;
+  /** 0..1 de algodão na laje de ar entre duas cotas do mesmo ponto do mundo. */
+  obstrucao(x: number, y: number, cotaA: number, cotaB: number, tempo: number): number;
+}
+
 interface Heli {
   vehicleId: number;
   x: number;
@@ -39,6 +51,10 @@ export interface AirSupportContext {
   target: Point | null;
   /** Desembarca um policial no solo; falso se o ponto está ocupado ou molhado. */
   deployOfficer: (x: number, y: number, tier: number) => boolean;
+  /** O ar por cima da caça: nuvem que cega a varredura e pé-direito onde o casco se detém. */
+  sky?: AirSky;
+  /** Relógio do mundo: é o que deixa a manta no mesmo lugar entre duas varreduras. */
+  time: number;
 }
 
 /** Helicópteros por estrela (0..5): o apoio aéreo assume a caça a partir de 4 estrelas. */
@@ -143,7 +159,7 @@ export class AirSupportSystem {
     heli.x = Math.max(0.5, Math.min(ctx.map.worldW - 0.5, heli.x));
     heli.y = Math.max(0.5, Math.min(ctx.map.worldH - 0.5, heli.y));
 
-    const ceiling = heli.phase === 'descend' ? DROP_ALTITUDE : HOVER_ALTITUDE;
+    const ceiling = heli.phase === 'descend' ? DROP_ALTITUDE : this.alturaDaRonda(ctx, heli);
     heli.altitude += (ceiling - heli.altitude) * Math.min(1, 1.5 * dt);
     vehicle.x = heli.x;
     vehicle.y = heli.y;
@@ -175,6 +191,51 @@ export class AirSupportSystem {
     return { x: target.x + Math.cos(heli.orbit) * ORBIT_RADIUS, y: target.y + Math.sin(heli.orbit) * ORBIT_RADIUS };
   }
 
+  /**
+   * A folga que a ronda mantém neste quadro.
+   *
+   * Com o alvo na rua é o pairar de sempre, e o `max` no fim devolve exatamente `HOVER_ALTITUDE`
+   * para quem não voa — as fixtures que medem a caça sem céu continuam medindo a mesma altura.
+   * Quando o perseguido está no ar, o casco sobe atrás dele até o teto da própria máquina e para
+   * ali, ou para um pouco abaixo da barriga da nuvem: helicóptero leve não entra em branco, e a
+   * cidade inteira vê a máquina desistir embaixo do algodão. É a mesma razão de voo do mundo real
+   * e ela não precisa de regra nova — só de um ar que tenha teto.
+   */
+  private alturaDaRonda(ctx: AirSupportContext, heli: Heli): number {
+    const sky = ctx.sky;
+    if (!sky) return HOVER_ALTITUDE;
+    const chao = ctx.map.heightSmoothAt(heli.x, heli.y);
+    const teto = Math.max(HOVER_ALTITUDE, Math.min(GAME_CONFIG.POLICE_HELI_TETO,
+      sky.base - chao - GAME_CONFIG.NUVEM_ONDE));
+    return Math.max(HOVER_ALTITUDE, Math.min(this.cotaDoPerseguido(ctx) - chao, teto));
+  }
+
+  /**
+   * Onde o perseguido de fato está, em cota absoluta. A caça aérea existe para um fugitivo que
+   * trocou de andar, e o andar dele é lido da aeronave em que ele voa — não do tile da rua, que é
+   * onde o corpo dele continua registrado enquanto ele está a vinte tiles dali.
+   */
+  private cotaDoPerseguido(ctx: AirSupportContext): number {
+    const id = ctx.player.currentVehicleId;
+    const v = id === null ? null : ctx.vehicles.find((x) => x.id === id);
+    if (v && v.def.type === 'helicopter') return v.elevation;
+    return ctx.map.heightSmoothAt(ctx.player.x, ctx.player.y);
+  }
+
+  /**
+   * Tem nuvem na linha de visão? Medida no MEIO do olhar, não numa ponta: o aparelho da ronda está
+   * lá embaixo e o fugitivo lá em cima, e o que apaga um do outro é a laje entre os dois. É por
+   * aqui que se perde o rastro sem manobra — quem some no branco não fugiu por velocidade, e a
+   * delegacia recebe de volta a última posição em que ele ainda era visível.
+   */
+  private entreNuvem(ctx: AirSupportContext, heli: Heli): boolean {
+    const sky = ctx.sky;
+    if (!sky) return false;
+    const x = (heli.x + ctx.player.x) / 2, y = (heli.y + ctx.player.y) / 2;
+    const chao = ctx.map.heightSmoothAt(x, y);
+    return sky.obstrucao(x, y, chao + heli.altitude, this.cotaDoPerseguido(ctx), ctx.time) > 0.5;
+  }
+
   private escapeVector(heli: Heli, ctx: AirSupportContext): Point {
     const center = { x: ctx.map.worldW / 2, y: ctx.map.worldH / 2 };
     const dx = heli.x - center.x, dy = heli.y - center.y;
@@ -189,6 +250,9 @@ export class AirSupportSystem {
     if (heli.deployTimer > 0) return;
     heli.deployTimer = DEPLOY_INTERVAL_S[0] + ctx.rng() * (DEPLOY_INTERVAL_S[1] - DEPLOY_INTERVAL_S[0]);
     if (Math.hypot(heli.x - target.x, heli.y - target.y) > ORBIT_RADIUS * 2) return;
+    // Ninguém desce de corda do décimo segundo andar. A ronda que subiu atrás de um fugitivo do ar
+    // mantém a perseguição de longe e não despeja equipe na rua: o rapel é uma coisa de voo raso.
+    if (heli.altitude > HOVER_ALTITUDE * 1.6) return;
     heli.phase = 'descend';
     heli.dropTimer = 1.4;
   }
@@ -211,6 +275,7 @@ export class AirSupportSystem {
     if (heli.searchTimer > 0) return;
     heli.searchTimer = SPOT_SCAN_S;
     if (ctx.concealed || ctx.player.health <= 0) return;
+    if (this.entreNuvem(ctx, heli)) return;
     if (Math.hypot(heli.x - ctx.player.x, heli.y - ctx.player.y) < GAME_CONFIG.POLICE_HELI_SPOT_RANGE) {
       this.spotTimer = SPOT_HOLD_S;
     }

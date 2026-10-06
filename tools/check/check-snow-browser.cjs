@@ -75,6 +75,7 @@ async function test(name, fn) {
   };
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = () => reject(new Error('CDP falhou')); });
   await send('Runtime.enable'); await send('Page.enable'); await send('Log.enable');
+  await require('./bundle-identity.cjs').attach(socket, send);
   // Sem isto o Chrome pode devolver o `index.bundle` do disco e o quadro medir a tinta da
   // compilação passada: a calibração da neve saiu idêntica a si mesma por exatamente esse
   // motivo. O feixe é o que está no servidor, sempre.

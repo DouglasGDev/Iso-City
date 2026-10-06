@@ -23,11 +23,12 @@ require.extensions['.ts'] = (module, filename) => {
   });
   module._compile(outputText, filename);
 };
-const ui = { paused: false, mapOpen: false, shopOpen: false, overlay: null, mapMarker: null, mapRoute: [] };
+const ui = { paused: false, mapOpen: false, shopOpen: false, departuresOpen: false, overlay: null, mapMarker: null, mapRoute: [] };
 for (const [name, exports] of [
   ['audio/SoundManager', { sound: { play() {}, setLoop() {}, ambient() {}, weather() {}, stopLoops() {} } }],
   ['assets/AssetRegistry', { spriteKeyForVehicle: () => '' }],
-  ['stores/useGameStore', { useGameStore: { getState: () => ui, showOverlay: (kind) => { ui.overlay = kind; }, clearMapMarker() {}, refreshMapRoute() {}, openShop() { ui.shopOpen = true; }, closeShop() { ui.shopOpen = false; } } }],
+  ['stores/useGameStore', { useGameStore: { getState: () => ui, showOverlay: (kind) => { ui.overlay = kind; }, clearMapMarker() {}, refreshMapRoute() {}, openShop() { ui.shopOpen = true; }, closeShop() { ui.shopOpen = false; },
+    openDepartures() { ui.departuresOpen = true; }, closeDepartures() { ui.departuresOpen = false; } } }],
 ]) {
   const filename = source(name);
   require.cache[filename] = { id: filename, filename, loaded: true, exports };

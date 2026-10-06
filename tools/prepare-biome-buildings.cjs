@@ -1,11 +1,14 @@
 // Arte nova derivada de geometria, não de download: desenha os prédios que faltam
 // nos biomas (cabana da mata, bangalô da praia, celeiro do campo, casa de adobe do
-// deserto) no mesmo losango, com o mesmo contorno preto e a mesma sombra do pack.
+// deserto) e os equipamentos cívicos da rede de transporte (rodoviária) no mesmo
+// losango, com o mesmo contorno preto e a mesma sombra do pack.
 //
 // A projeção é a do jogo: um tile de 1x1 é o losango de 63x31,5 px visto de cima,
 // com o canto sul encostado em (58, 62) do canvas 128x76 — os mesmos números que a
-// sonda mediu em `bld_house_small_blue_a.png`. Tudo é rasterizado 4x e reduzido,
-// então as bordas saem com anti-aliasing igual ao dos sprites originais.
+// sonda mediu em `bld_house_small_blue_a.png`. Um lote de 2x2 tem o dobro da base e
+// por isso outro quadro: o canto sul cai em (128, 100), a mesma âncora que o pack usa
+// para os especiais de esquina (posto de gasolina, esquadra). Tudo é rasterizado 4x e
+// reduzido, então as bordas saem com anti-aliasing igual ao dos sprites originais.
 const fs = require('node:fs');
 const path = require('node:path');
 const { PNG } = require('pngjs');
@@ -14,13 +17,17 @@ const outDir = path.resolve(__dirname, '../assets/sprites/Buildings');
 const S = 4; // superamostragem
 const HW = 31.5; // meia largura do losango de 1 tile
 const HH = 15.75; // meia altura do losango de 1 tile
-const OX = 58, OY = 30.5; // canto de trás do lote, no 1x
 const OUTLINE = 3; // espessura do contorno preto, no 1x
 const INK = [0, 0, 0];
 const SHADOW_ALPHA = 64;
 
-/** (u, v) anda sobre o chão no eixo leste/sul; h é a altura acima do piso. */
-const project = (u, v, h) => [OX + (u - v) * HW, OY + (u + v) * HH - h];
+/**
+ * Quadro do lote: `ox`/`oy` são o canto de trás (norte) da base em pixels de 1x, e
+ * `lados` é a aresta do quadrado de chão em tiles. É a única diferença entre uma casa
+ * e um prédio de esquina — a projeção, o contorno e a sombra são os mesmos.
+ */
+const LOTE_1 = { width: 128, height: 76, ox: 58, oy: 30.5, lados: 1 };
+const LOTE_2 = { width: 256, height: 140, ox: 128, oy: 37, lados: 2 };
 
 function inflate(points, r) {
   // Empurra cada vértice na bissetriz externa, com canto limitado: o telhado
@@ -50,9 +57,14 @@ function inflate(points, r) {
 }
 
 class Sheet {
-  constructor(width, height) {
-    this.width = width; this.height = height;
-    this.img = new PNG({ width: width * S, height: height * S });
+  constructor(lote) {
+    this.lote = lote;
+    this.width = lote.width; this.height = lote.height;
+    this.img = new PNG({ width: this.width * S, height: this.height * S });
+  }
+  /** (u, v) anda sobre o chão no eixo leste/sul; h é a altura acima do piso. */
+  p(u, v, h) {
+    return [this.lote.ox + (u - v) * HW, this.lote.oy + (u + v) * HH - h];
   }
   fill(points, color) {
     const pts = points.map(([x, y]) => [x * S, y * S]);
@@ -82,8 +94,9 @@ class Sheet {
     this.fill(points, color);
   }
   /** Sombra no chão: mesmo losango do prédio, empurrado para o canto leste. */
-  static groundShadow(u0, v0, u1, v1, dx = 0.28, dy = 0.1) {
-    return [[u0 + dx, v0 + dy], [u1 + dx, v0 + dy], [u1 + dx, v1 + dy], [u0 + dx, v1 + dy]].map(([u, v]) => project(u, v, 0));
+  groundShadow(u0, v0, u1, v1, dx = 0.28, dy = 0.1) {
+    return [[u0 + dx, v0 + dy], [u1 + dx, v0 + dy], [u1 + dx, v1 + dy], [u0 + dx, v1 + dy]]
+      .map(([u, v]) => this.p(u, v, 0));
   }
   shrink() {
     const out = new PNG({ width: this.width, height: this.height });
@@ -123,7 +136,7 @@ class Sheet {
 
 /** Caixa: piso (u0,v0)-(u1,v1), paredes até `h`. Só as duas faces sul ficam à vista. */
 function box(sheet, u0, v0, u1, v1, h, wall, wallShade, roof) {
-  const p = (u, v, z) => project(u, v, z);
+  const p = (u, v, z) => sheet.p(u, v, z);
   sheet.face([p(u0, v1, 0), p(u1, v1, 0), p(u1, v1, h), p(u0, v1, h)], wall); // face oeste-sul
   sheet.face([p(u1, v0, 0), p(u1, v1, 0), p(u1, v1, h), p(u1, v0, h)], wallShade); // face leste-sul
   if (roof) sheet.face([p(u0, v0, h), p(u1, v0, h), p(u1, v1, h), p(u0, v1, h)], roof);
@@ -131,7 +144,7 @@ function box(sheet, u0, v0, u1, v1, h, wall, wallShade, roof) {
 
 /** Cumeeira ao longo de `u`: o telhado desce para os dois lados no eixo v. */
 function gable(sheet, u0, v0, u1, v1, eaves, ridge, roofColor, gableColor) {
-  const p = (u, v, z) => project(u, v, z);
+  const p = (u, v, z) => sheet.p(u, v, z);
   const mid = (v0 + v1) / 2;
   // Só a empena próxima é desenhada: a do fundo fica escondida atrás da cumeeira,
   // e pintá-la primeiro solta um triângulo preto no canto de cima da sprite.
@@ -141,20 +154,20 @@ function gable(sheet, u0, v0, u1, v1, eaves, ridge, roofColor, gableColor) {
 }
 
 /** Retângulo na parede: `axis` é o eixo que corre pela parede, `fixed` é a face. */
-function wallQuad(axis, fixed, from, to, h0, h1) {
-  const p = (u, v, z) => project(u, v, z);
+function wallQuad(sheet, axis, fixed, from, to, h0, h1) {
+  const p = (u, v, z) => sheet.p(u, v, z);
   return axis === 'v'
     ? [p(fixed, from, h0), p(fixed, to, h0), p(fixed, to, h1), p(fixed, from, h1)]
     : [p(from, fixed, h0), p(to, fixed, h0), p(to, fixed, h1), p(from, fixed, h1)];
 }
 
 function windowOn(sheet, axis, fixed, from, to, h0, h1, color) {
-  sheet.face(wallQuad(axis, fixed, from, to, h0, h1), color);
+  sheet.face(wallQuad(sheet, axis, fixed, from, to, h0, h1), color);
 }
 
 /** Detalhe miúdo (viga, tábua, sombra): pinta sem contorno, que engoliria o traço. */
 function detailOn(sheet, axis, fixed, from, to, h0, h1, color) {
-  sheet.fill(wallQuad(axis, fixed, from, to, h0, h1), color);
+  sheet.fill(wallQuad(sheet, axis, fixed, from, to, h0, h1), color);
 }
 
 /** Caixa de topo plano com platibanda: a laje fica recuada dentro da borda. */
@@ -162,9 +175,10 @@ function flatTop(sheet, u0, v0, u1, v1, h, wall, wallShade, deck, rim = 0.07) {
   box(sheet, u0, v0, u1, v1, h, wall, wallShade, wall);
   // A laje entra sem contorno: inflar um losango pequeno o faria maior que a
   // própria platibanda, e o topo ganharia espinhos pretos por fora da casa.
+  const p = (u, v, z) => sheet.p(u, v, z);
   sheet.fill([
-    project(u0 + rim, v0 + rim, h), project(u1 - rim, v0 + rim, h),
-    project(u1 - rim, v1 - rim, h), project(u0 + rim, v1 - rim, h),
+    p(u0 + rim, v0 + rim, h), p(u1 - rim, v0 + rim, h),
+    p(u1 - rim, v1 - rim, h), p(u0 + rim, v1 - rim, h),
   ], deck);
 }
 
@@ -220,19 +234,55 @@ function adobe(sheet) {
   windowOn(sheet, 'v', 0.92, 0.26, 0.46, 7, 12.5, GLASS_DARK);
 }
 
+/**
+ * Rodoviária: um lote inteiro de 2×2, metade salão e metade plataforma. É o primeiro
+ * prédio desenhado para o lote cheio — o colisor do gerador é o quadrado todo, e se a
+ * arte deixasse as quinas de fora o `span` medido pelo manifest encolheria e o prédio
+ * nasceria maior que o próprio lote (a escala do jogo é `pé-direito × 64 px / span`).
+ * Por isso a fachada encosta em (2,0) e o passeio em (0,2) e (2,2).
+ */
+function busstation(sheet) {
+  const concreto = [206, 201, 190], concretoSombra = [178, 173, 163], laje = [124, 127, 131];
+  const aco = [96, 106, 118], amarelo = [222, 186, 60], passeio = [186, 182, 174];
+  // Ala administrativa no leste, mais alta: dá ao terminal uma silhueta de duas
+  // alturas sem empilhar volume sobre a laje do salão, que é o que embolava o topo.
+  flatTop(sheet, 1.45, 0.02, 2, 1, 40, concreto, concretoSombra, laje, 0.05);
+  // Salão de embarque comprido no terço de trás do lote: baixo e largo é a cara de
+  // terminal rodoviário; um bloco quadrado seria um escritório qualquer.
+  flatTop(sheet, 0.02, 0.02, 1.45, 1, 30, concreto, concretoSombra, laje, 0.05);
+  // Testeira de vidro na ala alta e a faixa de sinal amarela sob a platibanda do salão.
+  windowOn(sheet, 'u', 1, 1.5, 1.95, 12, 34, GLASS_DARK);
+  for (const u of [0.12, 0.42, 0.72, 1.02, 1.3]) windowOn(sheet, 'u', 1, u, u + 0.2, 12, 23, GLASS);
+  detailOn(sheet, 'u', 1, 0.04, 1.43, 24, 28, amarelo);
+  windowOn(sheet, 'u', 1, 0.52, 0.82, 0, 16, [70, 84, 96]); // porta do hall, no meio da fachada
+  // Plataforma de embarque: o meio-fio da frente é a calçada onde o ônibus encosta.
+  flatTop(sheet, 0, 1, 2, 2, 5, passeio, [162, 158, 150], [198, 194, 186], 0.04);
+  // Duas vagas pintadas no concreto, uma para cada linha que serve o terminal.
+  for (const [u0, u1] of [[0.22, 0.94], [1.06, 1.78]]) {
+    sheet.fill([[u0, 1.62], [u1, 1.62], [u1, 1.78], [u0, 1.78]]
+      .map(([u, v]) => sheet.p(u, v, 5)), amarelo);
+  }
+  // Marquise sobre as vagas, baixa o bastante para a fachada continuar lendo.
+  for (const [u, v] of [[0.25, 1.12], [1.75, 1.12], [0.25, 1.5], [1.75, 1.5]]) {
+    box(sheet, u - 0.03, v - 0.03, u + 0.03, v + 0.03, 21, aco, [78, 88, 98], null);
+  }
+  sheet.face([[0.2, 1.08, 22], [1.8, 1.08, 22], [1.8, 1.54, 22], [0.2, 1.54, 22]]
+    .map(([u, v, h]) => sheet.p(u, v, h)), aco);
+}
+
 const BUILDINGS = [
-  { key: 'bld_cabin_log', draw: cabin },
-  { key: 'bld_beach_bungalow', draw: bungalow },
-  { key: 'bld_farm_barn', draw: barn },
-  { key: 'bld_adobe_house', draw: adobe },
+  { key: 'bld_cabin_log', draw: cabin, lote: LOTE_1 },
+  { key: 'bld_beach_bungalow', draw: bungalow, lote: LOTE_1 },
+  { key: 'bld_farm_barn', draw: barn, lote: LOTE_1 },
+  { key: 'bld_adobe_house', draw: adobe, lote: LOTE_1 },
+  { key: 'bld_busstation', draw: busstation, lote: LOTE_2 },
 ];
 
-const width = Number(process.argv[3] || 128), height = Number(process.argv[4] || 76);
-for (const { key, draw } of BUILDINGS) {
-  const sheet = new Sheet(width, height);
-  sheet.fill(Sheet.groundShadow(0, 0, 1, 1), [0, 0, 0, SHADOW_ALPHA]);
+for (const { key, draw, lote } of BUILDINGS) {
+  const sheet = new Sheet(lote);
+  sheet.fill(sheet.groundShadow(0, 0, lote.lados, lote.lados), [0, 0, 0, SHADOW_ALPHA]);
   draw(sheet);
   fs.writeFileSync(path.join(outDir, `${key}_a.png`), PNG.sync.write(sheet.shrink()));
   fs.writeFileSync(path.join(outDir, `${key}_b.png`), PNG.sync.write(sheet.mirror()));
-  console.log(`gerado ${key} (_a/_b)`);
+  console.log(`gerado ${key} (_a/_b) em ${lote.width}x${lote.height}`);
 }

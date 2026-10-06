@@ -69,6 +69,8 @@ const loopChannels: Record<LoopChannel, LoopState<LoopKey>> = {
   engine: loopState<LoopKey>(LOOPS),
   siren: loopState<LoopKey>(LOOPS),
   cascade: loopState<LoopKey>(LOOPS),
+  rotor: loopState<LoopKey>(LOOPS),
+  ar: loopState<LoopKey>(LOOPS),
 };
 
 function clampVolume(volume: number) {
@@ -197,9 +199,7 @@ function refreshLoops() {
   return Promise.all([
     refreshAmbient(),
     reconcileLoop(weatherChannel),
-    reconcileLoop(loopChannels.engine),
-    reconcileLoop(loopChannels.siren),
-    reconcileLoop(loopChannels.cascade),
+    ...Object.values(loopChannels).map((st) => reconcileLoop(st)),
   ]);
 }
 
@@ -323,12 +323,23 @@ export const sound = {
     void requestLoop(weatherChannel, gain > 0 ? bed : null, gain);
   },
 
+  /** Leito do casco em voo: o corte das pás e o sopro do ar, cada um no seu canal. */
+  rotorLoop(volume: number) {
+    const gain = clampVolume(volume);
+    void requestLoop(loopChannels.rotor, gain > 0 ? 'rotor' : null, gain);
+  },
+
+  arLoop(volume: number) {
+    const gain = clampVolume(volume);
+    void requestLoop(loopChannels.ar, gain > 0 ? 'ar' : null, gain);
+  },
+
   setLoop(ch: LoopChannel, key: LoopKey | null, volume = 0.5) {
     void requestLoop(loopChannels[ch], key, volume);
   },
 
   stopLoops() {
-    for (const ch of ['engine', 'siren', 'cascade'] as const) {
+    for (const ch of Object.keys(loopChannels) as LoopChannel[]) {
       void requestLoop(loopChannels[ch], null, 0);
     }
   },

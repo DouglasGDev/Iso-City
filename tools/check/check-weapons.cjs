@@ -765,13 +765,14 @@ function stub(relative, exports) {
   const filename = path.join(compiled, relative);
   require.cache[filename] = { id: filename, filename, loaded: true, exports };
 }
-const ui = { paused: false, mapOpen: false, shopOpen: false, overlay: null, mapMarker: null, mapRoute: [] };
+const ui = { paused: false, mapOpen: false, shopOpen: false, departuresOpen: false, overlay: null, mapMarker: null, mapRoute: [] };
 stub('audio/SoundManager.js', { sound: { play() {}, ambient() {}, weather() {}, setLoop() {}, stopLoops() {} } });
 stub('assets/AssetRegistry.js', { spriteKeyForVehicle: () => '', damagedVehicleKey: () => null });
 stub('stores/useGameStore.js', { useGameStore: {
   getState: () => ui, showOverlay: (kind) => { ui.overlay = kind; },
   clearMapMarker() {}, refreshMapRoute() {},
   openShop() { ui.shopOpen = true; }, closeShop() { ui.shopOpen = false; },
+    openDepartures() { ui.departuresOpen = true; }, closeDepartures() { ui.departuresOpen = false; },
 } });
 const { GameState } = require(path.join(compiled, 'game/GameState.js'));
 function gameFixture() {
@@ -1133,6 +1134,9 @@ async function checkMeleeRender() {
         if (id === './SharedValues') return { entitySVs: new Map() };
         if (id === './ContactShadow') return load('src/render/ContactShadow.ts');
         if (id === './entityImages') return load('src/render/entityImages.ts');
+        // O catálogo de veículos entrou no `entityImages` quando o ônibus da malha passou a
+        // escolher a própria arte: sem isto o sandbox para no `require('../data/vehicles')`.
+        if (id === '../data/vehicles') return load('src/data/vehicles.ts');
         if (id === './WeaponEffects') return load('src/render/WeaponEffects.tsx');
         if (id === '../data/weapons') return { isGunId };
         return require(id);

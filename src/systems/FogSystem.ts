@@ -24,6 +24,8 @@ export interface FogSnapshot {
   readonly color: string;
   readonly colors: string[];
   readonly positions: number[];
+  /** O rgb cru: é com ele que a camada tinge a parede quando a névoa ficou para trás. */
+  readonly rgb: readonly [number, number, number];
   readonly clarity: number;
 }
 
@@ -58,14 +60,53 @@ function target({ timeOfDay, rain, cover, mist, dark, snow, biome }: FogEnvironm
   return { rgb, clarity: 0.60 - wet * 0.09 - white * 0.11 - cloud * 0.03 - haze * 0.24 - gloom * 0.05
     - (1 - daylight) * 0.035 - (wooded ? 0.025 : 0) };
 }
+/** Os degraus de tinta até a borda. O stop final é a cor cheia da parede, publicada no instantâneo. */
+const NEVOA = [0, 0, 0.10, 0.32, 0.72];
+
+/**
+ * As tintas da parede com o quanto da névoa já ficou para baixo de quem olha.
+ *
+ * `abrir` escala a ALFA e não a geometria de propósito: a única parede que existe no céu claro lá de
+ * cima é a moldura, e empurrar o losango para fora dela custaria assar chão que nenhum pixel mostra,
+ * enquanto apagar a tinta custa zero e devolve o canto do quadro para o algodão.
+ */
+export function nevoaCores(rgb: readonly [number, number, number] | number[], abrir: number,
+  opaca: string): string[] {
+  'worklet';
+  const forca = 1 - Math.max(0, Math.min(1, Number.isFinite(abrir) ? abrir : 0));
+  const [r, g, b] = rgb;
+  const degraus = NEVOA.map((a) => `rgba(${r},${g},${b},${(a * forca).toFixed(3)})`);
+  // A borda é a cor cheia do bioma: é ela que fecha o canto do quadro na rua, e o contrato
+  // publicado é que o último stop É o `color` do instantâneo enquanto a parede está inteira.
+  return forca === 1 ? degraus.concat(opaca) : degraus.concat(`rgba(${r},${g},${b},${forca.toFixed(3)})`);
+}
+
+/**
+ * Quanto da névoa do chão ficou para trás, 0..1, medido na altura da CÂMERA e não na cota.
+ *
+ * A parede existe porque o ar do rodapé do mundo tem alcance; ela não é um desenho do quadro, é o
+ * horizonte próximo. Quando a câmera é obrigada a sair do plano do chão para a máquina continuar no
+ * quadro, o alcance que resta é o da própria moldura — e é exatamente aí que a parede deve sumir.
+ * A curva começa um tile acima do morro mais alto do mapa (4) e fecha seis tiles depois, onde o
+ * anchor da câmera para de subir porque a lataria estourou a folga do quadro. No chão ela é zero por
+ * construção, e isso não é detalhe de gosto: é o que garante que a rua, o mato e a chuva não se
+ * moveram um pixel.
+ */
+export function aberturaDaParede(alturaDaCamera: number): number {
+  'worklet';
+  if (!Number.isFinite(alturaDaCamera) || alturaDaCamera <= 5) return 0;
+  const t = Math.min(1, (alturaDaCamera - 5) / 6);
+  return t * t * (3 - 2 * t);
+}
+
 function publish(rgb: number[], clarity: number): FogSnapshot {
-  const [r, g, b] = rgb.map((v) => Math.round(Math.max(0, Math.min(255, v))));
+  const [r, g, b] = rgb.map((v) => Math.round(Math.max(0, Math.min(255, v)))) as [number, number, number];
   const color = '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
   return {
-    color, clarity,
+    color, clarity, rgb: [r, g, b],
     positions: [0, clarity, clarity + (1 - clarity) * 0.32, clarity + (1 - clarity) * 0.62,
       clarity + (1 - clarity) * 0.84, 1],
-    colors: [0, 0, 0.10, 0.32, 0.72].map((a) => `rgba(${r},${g},${b},${a})`).concat(color),
+    colors: nevoaCores([r, g, b], 0, color),
   };
 }
 const INITIAL = target({ timeOfDay: 0.5, rain: 0, biome: 'countryside' });
@@ -80,10 +121,16 @@ export interface FogView { x: number; y: number; radiusX: number; radiusY: numbe
 
 /** Fixed outer envelope: weather changes inner clarity, NEVER the culling/bake footprint.
  * Small radius increase + much wider transparent center, while retaining a hidden opaque apron.
+ *
+ * O termo `520 * zoom` é a névoa, não a moldura: lá embaixo é ele que decide o que se vê, e o cap de
+ * tela só segura o que a moldura já cortaria de qualquer jeito. Subindo, a névoa dilata até o cap
+ * encostar na moldura e PARA ali — passar disso seria assar mundo fora do quadro. O que continua
+ * sendo fixo contra o clima é o footprint; a altitude é outro regime, e ela sim move a janela.
  */
-export function fogRadii(width: number, height: number, zoom: number) {
+export function fogRadii(width: number, height: number, zoom: number, alturaDaCamera = 0) {
   'worklet';
-  return { x: Math.min(width * 0.495, 520 * zoom), y: Math.min(height * 0.59, 310 * zoom) };
+  const dilata = 1 + aberturaDaParede(alturaDaCamera) * 1.5;
+  return { x: Math.min(width * 0.495, 520 * zoom * dilata), y: Math.min(height * 0.59, 310 * zoom * dilata) };
 }
 
 export class FogSystem {
@@ -105,7 +152,7 @@ export class FogSystem {
   }
 
   view({ camera, viewW, viewH }: FogContext): FogView {
-    const radius = fogRadii(viewW, viewH, camera.zoom);
+    const radius = fogRadii(viewW, viewH, camera.zoom, camera.h);
     // Centro da tela = a projeção DO PONTO ELEVADO que a câmera mira, a mesma fórmula
     // do transform da câmera. Sem o `h` o descarte de tiles e a neblina ficariam
     // deslocados para baixo assim que o jogador subisse no morro.

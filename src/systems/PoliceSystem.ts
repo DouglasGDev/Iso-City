@@ -15,7 +15,7 @@ import { CoverSystem } from './CoverSystem';
 import { canSee, facingAngle, fovHalf, sightRange, type Viewer, type VisionConfig } from './VisionSystem';
 import { createMemory, observe, type DetectionMemory, type Response } from './DetectionResponse';
 import { TacticsSystem, type TacticalTarget } from './TacticsSystem';
-import { AirSupportSystem } from './AirSupportSystem';
+import { AirSupportSystem, type AirSky } from './AirSupportSystem';
 
 type Point = { x: number; y: number };
 export interface PoliceSearchArea extends Point { radius: number; phase: 'pursuit' | 'search' }
@@ -59,6 +59,12 @@ export interface PoliceContext {
   wanted: WantedSystem;
   time: number;
   concealed?: boolean;
+  /**
+   * O ar da caça, entregue pelo `GameState`. Só o apoio aéreo usa: é o que faz a ronda subir atrás
+   * de quem foge pelo ar e o holofote perder o alvo dentro da nuvem. Sem ela (fixture, sala fechada)
+   * não há céu, e a perseguição é a de sempre, medida no asfalto.
+   */
+  sky?: AirSky;
   /** Noite fecha o cone: os faróis veem, mas o resto escurece o alcance. */
   night?: boolean;
   allocVehicleId: () => number;
@@ -225,6 +231,7 @@ export class PoliceSystem {
       map: ctx.map, player: ctx.player, vehicles: ctx.vehicles, rng: ctx.rng,
       concealed: ctx.concealed, allocVehicleId: ctx.allocVehicleId, onStructChange: ctx.onStructChange,
       target: this.searchArea,
+      sky: ctx.sky, time: ctx.time,
       deployOfficer: (x: number, y: number, tier: number) => this.deployOfficer(x, y, tier, ctx),
     };
   }

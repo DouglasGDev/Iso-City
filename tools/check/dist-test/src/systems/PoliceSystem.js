@@ -190,6 +190,7 @@ class PoliceSystem {
             map: ctx.map, player: ctx.player, vehicles: ctx.vehicles, rng: ctx.rng,
             concealed: ctx.concealed, allocVehicleId: ctx.allocVehicleId, onStructChange: ctx.onStructChange,
             target: this.searchArea,
+            sky: ctx.sky, time: ctx.time,
             deployOfficer: (x, y, tier) => this.deployOfficer(x, y, tier, ctx),
         };
     }

@@ -18,6 +18,8 @@ exports.ASSET_FILES = {
     "Buildings/bld_autoshop_b_damaged.png": require("../../assets/sprites/Buildings/bld_autoshop_b_damaged.png"),
     "Buildings/bld_beach_bungalow_a.png": require("../../assets/sprites/Buildings/bld_beach_bungalow_a.png"),
     "Buildings/bld_beach_bungalow_b.png": require("../../assets/sprites/Buildings/bld_beach_bungalow_b.png"),
+    "Buildings/bld_busstation_a.png": require("../../assets/sprites/Buildings/bld_busstation_a.png"),
+    "Buildings/bld_busstation_b.png": require("../../assets/sprites/Buildings/bld_busstation_b.png"),
     "Buildings/bld_cabin_log_a.png": require("../../assets/sprites/Buildings/bld_cabin_log_a.png"),
     "Buildings/bld_cabin_log_b.png": require("../../assets/sprites/Buildings/bld_cabin_log_b.png"),
     "Buildings/bld_cafe_a.png": require("../../assets/sprites/Buildings/bld_cafe_a.png"),
@@ -713,4 +715,4 @@ exports.ASSET_FILES = {
     "Weapons/sniper_icon.png": require("../../assets/sprites/Weapons/sniper_icon.png"),
 };
 exports.ASSET_KEYS = Object.keys(exports.ASSET_FILES);
-exports.ASSET_COUNT = 706;
+exports.ASSET_COUNT = 708;

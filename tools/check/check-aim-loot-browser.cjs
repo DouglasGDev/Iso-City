@@ -52,6 +52,7 @@ async function main() {
   };
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
   await send('Page.enable');
+  await require('./bundle-identity.cjs').attach(socket, send);
   await send('Page.navigate', { url: 'about:blank' });
   await send('Runtime.enable');
   await until('location.href==="about:blank"', 'clean context');

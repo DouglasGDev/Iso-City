@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.MovementSystem = exports.MAX_VAULT_FENCE_THICKNESS = exports.FENCE_CLEARANCE_PX = void 0;
 exports.isLowFence = isLowFence;
 exports.solidVehicleColliders = solidVehicleColliders;
+exports.solidBusColliders = solidBusColliders;
 exports.movePlayerGround = movePlayerGround;
 const GameConfig_1 = require("../game/GameConfig");
 const InputState_1 = require("../game/InputState");
@@ -10,8 +11,20 @@ const IsoUtils_1 = require("../world/IsoUtils");
 const CollisionSystem_1 = require("./CollisionSystem");
 const CrouchSystem_1 = require("./CrouchSystem");
 const TerrainSystem_1 = require("./TerrainSystem");
+const Frontier_1 = require("../world/Frontier");
 exports.FENCE_CLEARANCE_PX = 12;
 exports.MAX_VAULT_FENCE_THICKNESS = 0.4;
+/**
+ * O ar de quando ninguém informou a coluna: teto de oito tiles, nada de vento, subida cheia.
+ * É o default porque é a verdade de quem está na rua — e porque um sistema de clima não pode
+ * mudar o voo raso de um check que não falou com ele.
+ */
+const AR_DE_SEMPRE = Object.freeze({
+    cota: 0, chao: 0, teto: GameConfig_1.GAME_CONFIG.HELI_CEILING_ELEVATION,
+    base: GameConfig_1.GAME_CONFIG.NUVEM_BASE_ALTA, topo: GameConfig_1.GAME_CONFIG.NUVEM_BASE_ALTA, cobertura: 0,
+    dentro: 0, bruma: 0, fechamento: 0, acima: 0, visivel: 1, rarefeito: 0, cidade: 1,
+    ventoX: 0, ventoY: 0,
+});
 function isLowFence(c) {
     return c.type === 'FENCE' && Math.min(c.width, c.height) <= exports.MAX_VAULT_FENCE_THICKNESS;
 }
@@ -19,8 +32,16 @@ function isLowFence(c) {
 function solidVehicleColliders(vehicles) {
     return vehicles.filter((v) => v.state !== 'destroyed' && !(v.altitude > 0.5)).map(CollisionSystem_1.vehicleGroundCollider);
 }
+/**
+ * A lataria dos ônibus do horário na mesma lista dos carros. Só os vivos: o corpo que não está
+ * no alcance da câmera não tem posição calculada naquele instante, e deixá-lo na lista seria uma
+ * parede invisível exatamente onde o jogador não vê ônibus nenhum.
+ */
+function solidBusColliders(bodies) {
+    return bodies.filter((b) => b.live).map(CollisionSystem_1.streetBodyCollider);
+}
 /** Shared by ordinary locomotion and JumpSystem's certified vault, not vehicles. */
-function movePlayerGround(player, map, collision, dx, dy, vehicles = []) {
+function movePlayerGround(player, map, collision, dx, dy, vehicles = [], buses = []) {
     if (!Number.isFinite(dx) || !Number.isFinite(dy))
         return;
     const radius = GameConfig_1.GAME_CONFIG.PLAYER_RADIUS;
@@ -28,7 +49,7 @@ function movePlayerGround(player, map, collision, dx, dy, vehicles = []) {
     const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / (radius * 0.5)));
     const sx = dx / steps;
     const sy = dy / steps;
-    const cars = solidVehicleColliders(vehicles);
+    const cars = solidVehicleColliders(vehicles).concat(solidBusColliders(buses));
     const clearFence = player.jumpTimer > 0 && player.jumpEnd !== null &&
         player.jumpHeight >= exports.FENCE_CLEARANCE_PX;
     const resolve = () => {
@@ -36,8 +57,12 @@ function movePlayerGround(player, map, collision, dx, dy, vehicles = []) {
         const obstacles = clearFence ? nearby.filter((c) => !isLowFence(c)) : nearby;
         const circle = { x: player.x, y: player.y, radius };
         collision.resolveCircle(circle, obstacles.concat(cars));
-        player.x = Math.max(radius, Math.min(map.worldW - radius, circle.x));
-        player.y = Math.max(radius, Math.min(map.worldH - radius, circle.y));
+        // A cidade tem parede de colisor; o que acaba o mundo não é a borda da grade, é a mata.
+        // Dentro do mapa isto é o mesmo clamp de antes com um `Math.min` mais largo, e o tronco
+        // nem é perguntado — quem anda na rua não paga pela floresta que não está lá.
+        (0, Frontier_1.seguraNaFronteira)(circle, map.worldW, map.worldH, map);
+        player.x = circle.x;
+        player.y = circle.y;
     };
     for (let step = 0; step < steps; step++) {
         const prevX = player.x;
@@ -66,9 +91,12 @@ function angleDiff(from, to) {
     return d;
 }
 class MovementSystem {
-    constructor(collision, getVehicles = () => []) {
+    constructor(collision, getVehicles = () => [], 
+    /** Os ônibus do horário: lataria na rua, e quem anda a pé bate nela. */
+    getBuses = () => []) {
         this.collision = collision;
         this.getVehicles = getVehicles;
+        this.getBuses = getBuses;
     }
     /** `flooded` = a água de um tsunami cobrindo o chão: ali também se nada, não se caminha. */
     updatePlayer(player, map, dt, runAllowed, flooded = false) {
@@ -161,7 +189,7 @@ class MovementSystem {
                 player.facingAngle = targetAngle;
             }
         }
-        movePlayerGround(player, map, this.collision, player.vx * dt, player.vy * dt, this.getVehicles());
+        movePlayerGround(player, map, this.collision, player.vx * dt, player.vy * dt, this.getVehicles(), this.getBuses());
         player.swimming = flooded || map.isWaterWorld(player.x, player.y);
         if (player.swimming) {
             player.anim = 'swim';
@@ -178,9 +206,9 @@ class MovementSystem {
             player.animTimer = 0;
         }
     }
-    updateVehicle(vehicle, map, dt) {
+    updateVehicle(vehicle, map, dt, ceu = AR_DE_SEMPRE) {
         if (vehicle.def.type === 'helicopter') {
-            this.updateHelicopter(vehicle, map, dt);
+            this.updateHelicopter(vehicle, map, dt, ceu);
             return;
         }
         const { vehicleAccel, vehicleBrake, vehicleLeft, vehicleRight } = InputState_1.inputState;
@@ -255,7 +283,7 @@ class MovementSystem {
             vehicle.speed = 0;
         }
     }
-    updateHelicopter(vehicle, map, dt) {
+    updateHelicopter(vehicle, map, dt, ceu) {
         const { heliUp, heliDown, dx, dy, magnitude } = InputState_1.inputState;
         const dead = GameConfig_1.GAME_CONFIG.JOYSTICK_DEADZONE;
         // Voo é por COTA (tiles acima do nível 0 do mundo), nunca por folga do solo: o chão
@@ -271,18 +299,31 @@ class MovementSystem {
         // helicóptero pelo talude sem ninguém tocar no pé de cabra. Muro é muro.
         const chao = map.heightSmoothAt(vehicle.x, vehicle.y);
         const levitacao = map.heightAt(vehicle.x, vehicle.y) + GameConfig_1.GAME_CONFIG.HELI_CRUISE_ALTITUDE;
+        // Lá em cima o rotor empurra a mesma pá de um ar que pesa menos. É por isso que o teto do voo
+        // não é uma parede no número: a subida vai murchando até a máquina parar sozinha, e o piloto
+        // sente o manche perder resposta em vez de bater num clamp. Sem coluna informada, `rarefeito`
+        // é zero e a taxa é a de sempre.
+        const iça = GameConfig_1.GAME_CONFIG.HELI_CLIMB_RATE * (1 - GameConfig_1.GAME_CONFIG.AR_PERDE_SUBIDA * ceu.rarefeito);
         let alvo = vehicle.elevation;
-        if (heliUp)
-            alvo += GameConfig_1.GAME_CONFIG.HELI_CLIMB_RATE * dt;
+        if (vehicle.motorDead) {
+            // Motor morto: o manche não iça nada, e nem o comando de descer muda o resultado — a
+            // máquina já está descendo sozinha, mais rápido do que qualquer mão faria. O que sobra ao
+            // piloto é o nariz: a frente continua valendo, e é ela que transforma a queda em pouso.
+            // O número é da física de voo (ficou ao lado do `HELI_SINK_RATE`), a decisão de matar o
+            // motor é da `FrontierFallSystem`.
+            alvo -= GameConfig_1.GAME_CONFIG.HELI_FALL_RATE * dt;
+        }
+        else if (heliUp)
+            alvo += iça * dt;
         else if (heliDown)
             alvo -= GameConfig_1.GAME_CONFIG.HELI_SINK_RATE * dt;
         // Só o manche, sem cabra: ele busca a altura de levitação e para ali. É o lift-off de
         // quem quer atravessar a cidade por cima, e sobe na taxa do comando — um voo que salta
         // 140px num frame não é decolagem, é teletransporte.
         else if (magnitude > dead && vehicle.elevation < levitacao) {
-            alvo = Math.min(levitacao, vehicle.elevation + GameConfig_1.GAME_CONFIG.HELI_CLIMB_RATE * dt);
+            alvo = Math.min(levitacao, vehicle.elevation + iça * dt);
         }
-        vehicle.elevation = Math.min(GameConfig_1.GAME_CONFIG.HELI_CEILING_ELEVATION, Math.max(chao, alvo));
+        vehicle.elevation = Math.min(ceu.teto, Math.max(chao, alvo));
         let vx = 0;
         let vy = 0;
         if (magnitude > dead) {
@@ -292,7 +333,8 @@ class MovementSystem {
             const curve = t * t * (3 - 2 * t);
             const { x: wx, y: wy } = (0, IsoUtils_1.screenToWorld)(nx, ny);
             const wlen = Math.hypot(wx, wy) || 1;
-            const spd = GameConfig_1.GAME_CONFIG.HELI_MAX_SPEED * curve;
+            const spd = GameConfig_1.GAME_CONFIG.HELI_MAX_SPEED * curve
+                * (1 - GameConfig_1.GAME_CONFIG.AR_PERDE_CURSO * ceu.rarefeito);
             vx = (wx / wlen) * spd;
             vy = (wy / wlen) * spd;
             vehicle.dir = (0, IsoUtils_1.angleToWorldDir)(Math.atan2(wy, wx));
@@ -309,9 +351,23 @@ class MovementSystem {
         vehicle.x += vx * dt;
         vehicle.y += vy * dt;
         vehicle.facingAngle = (0, IsoUtils_1.dirToAngle)(vehicle.dir);
+        // O vento da frente empurra o casco, e empurra mais quanto mais alto: no meio da rua o prédio
+        // barra o ar, lá em cima não há nada que o barra. É isso que faz alcançar um ponto do mapa
+        // sendo pilotagem e não apontar o nariz — e dentro da nuvem, sem chão na tela, é a única pista
+        // que sobra de para onde a máquina está indo. No solo o atrito segura: `noAr` só libera a
+        // deriva depois que a roda sai do chão.
+        const noAr = Math.max(0, Math.min(1, vehicle.altitude / 1.2));
+        if (noAr > 0) {
+            vehicle.x += ceu.ventoX * dt * noAr;
+            vehicle.y += ceu.ventoY * dt * noAr;
+        }
         const r = 0.4;
-        vehicle.x = Math.max(r, Math.min(map.worldW - r, vehicle.x));
-        vehicle.y = Math.max(r, Math.min(map.worldH - r, vehicle.y));
+        // Quem está no ar sobrevoa a mata: o limite do helicóptero é o mesmo alcance, sem tronco no
+        // caminho. Não é um licença para ir aonde quiser — é o que faz a fronteira aérea existir: se
+        // o ar parasse na borda como o chão para no tronco, não haveria queda, só uma parede. O que
+        // derruba a máquina é o motor, e quem o mata é a `FrontierFallSystem`.
+        vehicle.x = (0, Frontier_1.limiteJogável)(vehicle.x, map.worldW, r);
+        vehicle.y = (0, Frontier_1.limiteJogável)(vehicle.y, map.worldH, r);
         if (TerrainSystem_1.terrain.blockFlight(map, vehicle, prevX, prevY, vehicle.elevation))
             vehicle.speed = 0;
         // A folga é o que sobra entre a cota e o chão de agora. Saiu do platô para a
@@ -329,7 +385,10 @@ class MovementSystem {
         if (vehicle.def.type !== 'helicopter')
             return;
         const chao = map.heightSmoothAt(vehicle.x, vehicle.y);
-        vehicle.elevation = Math.max(chao, vehicle.elevation - GameConfig_1.GAME_CONFIG.HELI_SINK_RATE * dt);
+        // Abandonada com o motor morto, a máquina continua caindo em vez de descer civilizadamente:
+        // largar o helicóptero no ar da fronteira não apagou o que já estava acontecendo com ele.
+        const taxa = vehicle.motorDead ? GameConfig_1.GAME_CONFIG.HELI_FALL_RATE : GameConfig_1.GAME_CONFIG.HELI_SINK_RATE;
+        vehicle.elevation = Math.max(chao, vehicle.elevation - taxa * dt);
         vehicle.altitude = vehicle.elevation - chao;
     }
     slideMove(e, map, vx, vy, dt, radius) {
@@ -357,8 +416,12 @@ class MovementSystem {
         // Um talude no fim da rua para o carro como uma parede: o asfalto é suavizado,
         // então barrar aqui só pega quem tentou atalhar pelo mato.
         TerrainSystem_1.terrain.blockDrive(map, e, prevX, prevY);
-        e.x = Math.max(radius, Math.min(map.worldW - radius, e.x));
-        e.y = Math.max(radius, Math.min(map.worldH - radius, e.y));
+        // O mato é o fim do mapa para o carro também: quem atalha pela floresta é desviado por
+        // tronco, não por um limite que para o carro no meio de uma clareira vazia.
+        const corpo = { x: e.x, y: e.y, radius };
+        (0, Frontier_1.seguraNaFronteira)(corpo, map.worldW, map.worldH, map);
+        e.x = corpo.x;
+        e.y = corpo.y;
     }
 }
 exports.MovementSystem = MovementSystem;

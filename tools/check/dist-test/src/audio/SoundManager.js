@@ -71,6 +71,8 @@ const loopChannels = {
     engine: loopState(sounds_1.LOOPS),
     siren: loopState(sounds_1.LOOPS),
     cascade: loopState(sounds_1.LOOPS),
+    rotor: loopState(sounds_1.LOOPS),
+    ar: loopState(sounds_1.LOOPS),
 };
 function clampVolume(volume) {
     return Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 0;
@@ -204,9 +206,7 @@ function refreshLoops() {
     return Promise.all([
         refreshAmbient(),
         reconcileLoop(weatherChannel),
-        reconcileLoop(loopChannels.engine),
-        reconcileLoop(loopChannels.siren),
-        reconcileLoop(loopChannels.cascade),
+        ...Object.values(loopChannels).map((st) => reconcileLoop(st)),
     ]);
 }
 function finishSfx(playback) {
@@ -336,11 +336,20 @@ exports.sound = {
         const gain = clampVolume(volume);
         void requestLoop(weatherChannel, gain > 0 ? bed : null, gain);
     },
+    /** Leito do casco em voo: o corte das pás e o sopro do ar, cada um no seu canal. */
+    rotorLoop(volume) {
+        const gain = clampVolume(volume);
+        void requestLoop(loopChannels.rotor, gain > 0 ? 'rotor' : null, gain);
+    },
+    arLoop(volume) {
+        const gain = clampVolume(volume);
+        void requestLoop(loopChannels.ar, gain > 0 ? 'ar' : null, gain);
+    },
     setLoop(ch, key, volume = 0.5) {
         void requestLoop(loopChannels[ch], key, volume);
     },
     stopLoops() {
-        for (const ch of ['engine', 'siren', 'cascade']) {
+        for (const ch of Object.keys(loopChannels)) {
             void requestLoop(loopChannels[ch], null, 0);
         }
     },

@@ -133,6 +133,7 @@ async function test(name, fn) {
   };
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = () => reject(new Error('CDP falhou')); });
   await send('Runtime.enable'); await send('Page.enable'); await send('Log.enable');
+  await require('./bundle-identity.cjs').attach(socket, send);
 
   await launch();
   await test('o jogo abre em tempo normal, sem perigo na tela', async () => {
