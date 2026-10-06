@@ -2,6 +2,7 @@ import type { SharedValue } from 'react-native-reanimated';
 import type { AnimalVisualState } from '../entities/Animal';
 import type { GorilaVisualState } from '../entities/Gorila';
 import type { PiranhaVisualState } from '../entities/Piranha';
+import type { GuerreiroVisualState } from '../entities/Guerreiro';
 
 export interface CameraSV {
   x: number;
@@ -55,3 +56,11 @@ export const gorilaSVs = new Map<number, { position: SharedValue<EntitySV>; visu
  * dois ao mesmo tempo, e a fila de sprites é o que denunciaria isso na tela.
  */
 export const piranhaSVs = new Map<number, { position: SharedValue<EntitySV>; visual: SharedValue<PiranhaVisualState> }>();
+/**
+ * O bando tem a sua própria fila pelo mesmo motivo do gigante: o guerreiro não mora no array
+ * `animals` nem na grade `spatial` — ele vive dentro do `Bando`, num vetor de quatro a nove corpos por
+ * aldeia que o sistema recria quando a câmera entra na clareira. O par é por id de guerreiro, e é o
+ * id quem segura a identidade: dois bandos na tela têm corpos com o mesmo `posto`, e o que os
+ * distingue é justamente o número que o sistema lhes deu.
+ */
+export const guerreiroSVs = new Map<number, { position: SharedValue<EntitySV>; visual: SharedValue<GuerreiroVisualState> }>();

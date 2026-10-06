@@ -4,10 +4,11 @@ import { Canvas, Group, Path, Rect, Skia, useCanvasRef, type SkPath, type Transf
 import { useDerivedValue, useSharedValue, type DerivedValue } from 'react-native-reanimated';
 import { getGame } from '../game/GameState';
 import { GameLoop } from '../game/GameLoop';
-import { registerCameraSV, entitySVs, animalSVs, gorilaSVs, piranhaSVs } from './SharedValues';
+import { registerCameraSV, entitySVs, animalSVs, gorilaSVs, piranhaSVs, guerreiroSVs } from './SharedValues';
 import { animalVisualState } from '../entities/Animal';
 import { gorilaVisualState } from '../entities/Gorila';
 import { piranhaVisualState } from '../entities/Piranha';
+import { guerreiroVisualState } from '../entities/Guerreiro';
 import { isAboard } from '../entities/Player';
 import { GroundLayer } from './GroundLayer';
 import { FrontierLayer } from './FrontierLayer';
@@ -258,6 +259,18 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
         if (!peixe || peixe.id !== id) continue;
         sv.position.value = { x: peixe.x, y: peixe.y, h: game.map.heightSmoothAt(peixe.x, peixe.y) };
         sv.visual.value = piranhaVisualState(peixe, game.time);
+      }
+      // O bando inteiro, uma passada só: o getter `guerreiros` já devolve exatamente quem merece
+      // ser desenhado (vivos e os cadáveres ainda no prazo do fade), então percorrer os registros
+      // e ir caçando o corpo pelo id pagaria o mesmo trabalho duas vezes — e um corpo que saiu da
+      // clareira com a borda não encontraria SV nenhum, que é o jeito certo de ele sumir da tela.
+      for (const corpo of game.tribos.guerreiros) {
+        const sv = guerreiroSVs.get(corpo.id);
+        if (!sv) continue;
+        sv.position.value = {
+          x: corpo.x, y: corpo.y, h: game.map.heightSmoothAt(corpo.x, corpo.y),
+        };
+        sv.visual.value = guerreiroVisualState(corpo, game.time);
       }
       for (const [id, sv] of entitySVs) {
         if (id === 'player') {

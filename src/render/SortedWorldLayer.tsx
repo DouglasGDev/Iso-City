@@ -17,11 +17,13 @@ import { resolveEntityImage } from './entityImages';
 import { isNpcVisible } from '../entities/NPC';
 import { animalVisualState, isAnimalVisible, type Animal } from '../entities/Animal';
 import { AnimalSprite } from './AnimalSprite';
-import { animalSVs, gorilaSVs, piranhaSVs } from './SharedValues';
+import { animalSVs, gorilaSVs, piranhaSVs, guerreiroSVs } from './SharedValues';
 import { gorilaVisível, gorilaVisualState, type Gorila } from '../entities/Gorila';
 import { GorilaSprite } from './GorilaSprite';
 import { piranhaVisível, piranhaVisualState, type Piranha } from '../entities/Piranha';
 import { PiranhaSprite } from './PiranhaSprite';
+import { guerreiroVisualState, type Guerreiro } from '../entities/Guerreiro';
+import { GuerreiroSprite } from './GuerreiroSprite';
 import { SMOLDER_S, WreckSprite } from './WreckSprite';
 import type { Wreck } from '../systems/DestructionSystem';
 
@@ -133,8 +135,37 @@ function PiranhaViva({ peixe, game, clock }: {
   return <PiranhaSprite piranha={peixe} position={position} visual={visual} clock={clock} />;
 }
 
+/**
+ * Um guerreiro da aldeia. O mesmo contrato do gigante e da barbatana: um par de `SharedValue` por id,
+ * e o corpo mutável fica do lado da simulação — o `Guerreiro` é um objeto vivo que o bando escreve a
+ * cada tick, e a UI thread não pode capturar isso.
+ *
+ * Ele não podia entrar na fauna nem no `GorilaViva` por motivo de modelo, não de arrumação: o laço
+ * deles chama `animalVisualState`/`gorilaVisualState`, que leem `health`/`vida` e nada de `posto`,
+ * `trilhoθ` ou `carrega`. E não podia ser desenhado pela camada do acampamento (`TriboSprite`), que é
+ * estática e por célula: aí os corpos ficariam sempre atrás ou sempre na frente do jogador, e a cena
+ * que a aldeia existe para dar — um sentinela passando por trás da fogueira enquanto você entra pela
+ * boca — deixaria de existir. É a mesma razão da mata sem fim, e é por ela que ele entra na fila.
+ */
+function GuerreiroViva({ guerreiro, game, clock }: {
+  guerreiro: Guerreiro; game: GameState; clock: SharedValue<number>;
+}) {
+  const position = useSharedValue({
+    x: guerreiro.x, y: guerreiro.y, h: game.map.heightSmoothAt(guerreiro.x, guerreiro.y),
+  });
+  // A mesma lição do `WildlifeSprite`: ler `clock.value` em props é o aviso do Reanimated no
+  // aparelho, e aqui ele dispararia um por sentinela visível — nove na aldeia grande.
+  const visual = useSharedValue(guerreiroVisualState(guerreiro, 0));
+  useEffect(() => {
+    visual.value = guerreiroVisualState(guerreiro, clock.value);
+    guerreiroSVs.set(guerreiro.id, { position, visual });
+    return () => { if (guerreiroSVs.get(guerreiro.id)?.position === position) guerreiroSVs.delete(guerreiro.id); };
+  }, [guerreiro.id, position, visual]);
+  return <GuerreiroSprite guerreiro={guerreiro} position={position} visual={visual} clock={clock} />;
+}
+
 type DrawItem = { id: string; depth: number; node?: StaticNode; animal?: Animal; gorila?: Gorila;
-  piranha?: Piranha; wreck?: Wreck; tribo?: TriboNode };
+  piranha?: Piranha; guerreiro?: Guerreiro; wreck?: Wreck; tribo?: TriboNode };
 
 function entityVisible(game: GameState, view: FogView, id: string, x: number, y: number, lift = 0) {
   const image = resolveEntityImage(id);
@@ -258,6 +289,17 @@ function visibleItems(game: GameState, statics: StaticNode[], mata: StaticNode[]
       items.push({ id: `piranha:${peixe.id}`, depth: depth(peixe.x, peixe.y), piranha: peixe });
     }
   }
+  // O bando também não está na grade `spatial`: os corpos moram dentro do `Bando`, e a lista deles é
+  // o getter do sistema — que já devolve só quem merece ser desenhado (vivos e os cadáveres dentro do
+  // prazo do fade) e ordenado por id, então a fila aqui é determinística e o recorte fino decide o
+  // resto. A caixa é o quadro de 36x46 folgada no porrete erguido: o windup levanta o cabo acima da
+  // cabeça, e um recorte justo ao tronco cortaria o braço no quadro que antecede o golpe.
+  for (const corpo of game.tribos.guerreiros) {
+    const p = worldToScreen(corpo.x, corpo.y, game.map.heightSmoothAt(corpo.x, corpo.y));
+    if (game.fog.intersects(view, p.x - 30, p.y - 62, 60, 78)) {
+      items.push({ id: `guerreiro:${corpo.id}`, depth: depth(corpo.x, corpo.y), guerreiro: corpo });
+    }
+  }
   for (const i of spatial.query('wreck', window)) {
     const wreck = game.destruction.wrecks[i];
     if (!wreck) continue;
@@ -323,6 +365,7 @@ export function SortedWorldLayer({ game, focus, clock, children }: {
     : item.animal ? <WildlifeSprite key={item.id} animal={item.animal} game={game} clock={clock} />
       : item.gorila ? <GorilaViva key={item.id} gorila={item.gorila} game={game} clock={clock} />
       : item.piranha ? <PiranhaViva key={item.id} peixe={item.piranha} game={game} clock={clock} />
+      : item.guerreiro ? <GuerreiroViva key={item.id} guerreiro={item.guerreiro} game={game} clock={clock} />
       : item.wreck ? <WreckSprite key={item.id} wreck={item.wreck} clock={clock}
         h={game.map.heightSmoothAt(item.wreck.x, item.wreck.y)}
         smoking={game.time - item.wreck.explodedAt < SMOLDER_S} />

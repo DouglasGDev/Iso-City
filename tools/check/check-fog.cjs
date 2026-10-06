@@ -462,6 +462,10 @@ function entityGame() {
   game.gorilas = { fera: null, perigo: 0 };
   // A barbatana é o mesmo formato: um indivíduo por mundo, lido direto pela fila de desenho.
   game.piranhas = { fera: null, perigo: 0 };
+  // O bando é a terceira leitura direta da fila de desenho, e o formato dele é o contrário: não é um
+  // indivíduo, é o getter do sistema devolvendo os corpos visíveis. Sem o fake, o recorte do guerreiro
+  // leria `undefined.guerreiros` e as três provas da névoa morreriam em `TypeError` antes de medir.
+  game.tribos = { guerreiros: [], arrastado: false, perigo: 0 };
   // E a coluna de ar é o terceiro: a fila pergunta ao céu se ainda há chão para dividir. Com o
   // teto de nuvem alto e o céu aberto nada passa da barriga, então a ordem pintada aqui é a de
   // sempre — o que este check mede é o recorte, e a travessia da manta tem check próprio.
