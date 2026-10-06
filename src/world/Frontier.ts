@@ -1,4 +1,4 @@
-import type { Dir4 } from '../game/GameConfig';
+import type { Biome, Dir4 } from '../game/GameConfig';
 import { clareiraNoTile, empurraDoAcampamento } from './Tribo';
 
 /**
@@ -341,6 +341,19 @@ function beira(W: number, H: number, tx: number, ty: number): number {
 export function chãoDaFronteira(tiles: readonly { key: string }[],
   W: number, H: number, tx: number, ty: number): string {
   return tiles[beira(W, H, tx, ty)]?.key || GRAMA_DA_CIDADE;
+}
+
+/**
+ * O bioma de fora, pela mesma razão do chão: fora da grade não há tile, mas há vizinho.
+ *
+ * Quem lê `biome` é a névoa (e o áudio do lugar). Sem esta função, a terra sem nome caía no
+ * `?? 'residential'` de quem consulta o mapa, e a parede da moldura vestia o azul-cinza do asfalto
+ * sobre um chão que continua o material da beira — a fronteira inteira ficava com a cor de uma
+ * cidade que não está ali, e numa manhã de névoa isso é a única coisa que sobra do quadro.
+ */
+export function biomaDaFronteira(tiles: readonly { biome: Biome }[],
+  W: number, H: number, tx: number, ty: number): Biome {
+  return tiles[beira(W, H, tx, ty)]?.biome ?? 'forest';
 }
 
 /**

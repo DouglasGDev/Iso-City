@@ -492,6 +492,16 @@ test('a bruma do chão é um andar embaixo de tudo', () => {
   const acima = sistema.snapshot;
   check(noChao.visivel < 0.6, `a névoa da manhã não fechou a rua (${noChao.visivel.toFixed(2)})`);
   check(acima.visivel > 0.9, `subir não saiu da bruma (${acima.visivel.toFixed(2)})`);
+  // O outro lado do mesmo andar: a névoa fecha o ALCANCE, e quem desenha alcance é a moldura
+  // (`FogSystem`, que recebe o mesmo número do clima). Passar por `bruma` — o número que o render
+  // pinta sobre o quadro inteiro — era apagar a rua inteira numa manhã de névoa, centro incluso.
+  check(noChao.bruma === 0, `a névoa do chão pintou a tela (${noChao.bruma.toFixed(2)})`);
+  // E a nuvem continua tendo a tela toda para ela: é o único branco que fecha o quadro, porque é o
+  // único caso em que não há nada para ver através dele.
+  const naManta = new AltitudeSystem();
+  for (let i = 0; i < 80; i++) naManta.update(0.05,
+    { x: 10, y: 10, cota: 18, chao: 0, cobertura: 1, nevoia: 0, vento: 0, severidade: 0, tempo: 5 });
+  check(naManta.snapshot.bruma > 0.2, `dentro do algodão a tela ficou clara (${naManta.snapshot.bruma.toFixed(2)})`);
 });
 
 /**

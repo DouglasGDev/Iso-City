@@ -5,7 +5,7 @@ import { Map } from '../world/Map';
 import { generateCity, WORLD_SEED } from '../data/maps/city';
 import { createCamera, cameraFollow, clampToMap, clampToRoom, indoorZoom, type CameraState } from '../world/Camera';
 import { angleToWorldDir, dirToAngle, screenToWorld, worldToScreen } from '../world/IsoUtils';
-import { faceDaFronteira, nomeDaTerra, profundidade, seguraNaFronteira } from '../world/Frontier';
+import { biomaDaFronteira, faceDaFronteira, nomeDaTerra, profundidade, seguraNaFronteira } from '../world/Frontier';
 import { expulsaDaClareira, type Acampamento } from '../world/Tribo';
 import { createPlayer, isAboard, type Player } from '../entities/Player';
 import { createVehicle, type Vehicle } from '../entities/Vehicle';
@@ -1559,8 +1559,15 @@ export class GameState {
 
   private updateEnvironment(dt: number) {
     const position = this.worldPosition;
-    const biome = this.map.data.tiles[
-      Math.floor(position.y) * this.map.data.tilesW + Math.floor(position.x)]?.biome ?? 'residential';
+    // Fora da grade o tile não existe, mas a beira existe: a névoa da terra sem nome é a do bioma
+    // que o limite do mapa tinha, pela mesma regra que veste o chão sem fim. O `?? 'residential'`
+    // cru fazia duas coisas erradas de uma vez — o índice linear atravessava para a linha vizinha
+    // quando x ou y saíam da grade, e onde ele acertava um tile de verdade vestia a parede da
+    // moldura com a cor do asfalto sobre um chão de pinheiro. Num dia fechado a moldura é quase
+    // tudo o que se vê, e era ela que mentia.
+    const biome = this.map.biomeAt(position.x, position.y)
+      ?? biomaDaFronteira(this.map.data.tiles, this.map.data.tilesW, this.map.data.tilesH,
+        Math.floor(position.x), Math.floor(position.y));
     this.biomeAtCamera = biome;
     const environment = { timeOfDay: this.dayNight.t, rain: this.weather.intensity + this.hazard.wet,
       cover: this.weather.cover, mist: this.weather.mist, dark: this.hazard.dark, biome };

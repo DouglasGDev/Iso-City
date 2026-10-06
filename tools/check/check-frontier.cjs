@@ -879,6 +879,45 @@ test('o chão sem fim continua o material da beira, tile por tile', () => {
   }
 });
 
+test('a névoa da fronteira veste o bioma da beira, não o asfalto', () => {
+  // O chão de fora já continua o material da beira; a parede de névoa tem de continuar o MESMO
+  // vizinho. Sem isso, quem consulta o mapa fora da grade cai no `?? 'residential'` da chamada e a
+  // terra sem nome veste o azul-cinza do asfalto sobre um chão de pinheiro — e num dia fechado a
+  // moldura é praticamente tudo o que existe no quadro.
+  const lidos = new Set();
+  for (const prof of [1, 7, 140]) {
+    for (let i = 0; i < CH; i += 3) {
+      for (const [fora, dentro] of [[-prof, 0], [CW - 1 + prof, CW - 1]]) {
+        const esperado = tileDe(dentro, i).biome;
+        assert.equal(F.biomaDaFronteira(cidade.tiles, CW, CH, fora, i), esperado,
+          `coluna ${fora}, linha ${i}: a névoa veste ${F.biomaDaFronteira(cidade.tiles, CW, CH, fora, i)}, a beira é ${esperado}`);
+        lidos.add(esperado);
+      }
+    }
+    for (let i = 0; i < CW; i += 3) {
+      for (const [fora, dentro] of [[-prof, 0], [CH - 1 + prof, CH - 1]]) {
+        const esperado = tileDe(i, dentro).biome;
+        assert.equal(F.biomaDaFronteira(cidade.tiles, CW, CH, i, fora), esperado,
+          `linha ${fora}, coluna ${i}: a névoa veste ${F.biomaDaFronteira(cidade.tiles, CW, CH, i, fora)}, a beira é ${esperado}`);
+        lidos.add(esperado);
+      }
+    }
+  }
+  assert.ok(lidos.size > 1, `a beira inteira é um bioma só, o teste perdeu o sentido: ${[...lidos]}`);
+
+  // O tamanho do conserto, medido no perímetro: quanto dele a frente estava tingindo com a cor de
+  // uma cidade que não está ali.
+  let errado = 0, total = 0;
+  for (let i = 0; i < CH; i++) {
+    for (const dentro of [0, CW - 1]) { total++; if (tileDe(dentro, i).biome !== 'residential') errado++; }
+  }
+  for (let i = 0; i < CW; i++) {
+    for (const dentro of [0, CH - 1]) { total++; if (tileDe(i, dentro).biome !== 'residential') errado++; }
+  }
+  assert.ok(errado / total > 0.5,
+    `quase nada do perímetro era asfalto mesmo, e a régua abaixo não prova muito: ${errado}/${total}`);
+});
+
 test('a grama da fronteira é a MESMA grama que representa grama na cidade', () => {
   // Lido do gerador, não repetido no teste: se um dos lados trocar de arquivo, a emenda abre.
   const gramaDaCidade = CITY_SRC.match(/const GRASS = '([^']+)'/)?.[1];
