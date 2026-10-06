@@ -99,7 +99,7 @@ const source = (name) => load(srcPath(name));
 const { ChunkIndex } = source('world/streaming/ChunkIndex.ts');
 const { SpatialIndex } = source('world/streaming/SpatialIndex.ts');
 const { WorldStreamingManager } = source('world/streaming/WorldStreamingManager.ts');
-const { FogSystem, FOG, fogRadii, aberturaDaParede, nevoaCores } = source('systems/FogSystem.ts');
+const { FogSystem, FOG, fogRadii, aberturaDaParede, nevoaCores, bordaDaParede } = source('systems/FogSystem.ts');
 const { GAME_CONFIG: C } = source('game/GameConfig.ts');
 const { worldToScreen, screenToWorld } = source('world/IsoUtils.ts');
 const { visibleWorldAabb } = source('world/Visibility.ts');
@@ -130,6 +130,49 @@ function near(actual, expected, tolerance = 1e-8) {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`);
 }
 function label(ctx) { return `${ctx.viewW}x${ctx.viewH}@${ctx.camera.zoom}`; }
+const tintaDe = (color) => (/^#[0-9a-f]{6}$/i.test(color) ? 1 : Number(color.match(/,\s*([\d.]+)\)$/)[1]));
+/**
+ * A tinta da parede num ponto do quadro, interpolada da rampa publicada exatamente como a Skia faz
+ * com `mode="clamp"`. É o oracle do pixel: as provas de moldura varrem o quadro inteiro com ele em
+ * vez de conferir um stop solto, porque foi assim que a cortina entrou — cada stop parecia razoável.
+ */
+function tintaEm(positions, alphas, f) {
+  if (f <= positions[0]) return alphas[0];
+  for (let i = 1; i < positions.length; i++) {
+    if (f <= positions[i]) {
+      const t = (f - positions[i - 1]) / (positions[i] - positions[i - 1]);
+      return alphas[i - 1] + (alphas[i] - alphas[i - 1]) * t;
+    }
+  }
+  return alphas[alphas.length - 1];
+}
+const pincel = (snap, f) => tintaEm(snap.positions, snap.colors.map(tintaDe), f);
+/** A parede como era antes desta mudança: a mesma `clarity` publicada, escrita direto no raio da clareira. */
+const paredeAntiga = (snap, f) => {
+  const c = snap.clarity;
+  return tintaEm([0, c, c + (1 - c) * 0.32, c + (1 - c) * 0.62, c + (1 - c) * 0.84, 1],
+    [0, 0, 0.10, 0.32, 0.72, 1], f);
+};
+function paredeCom(environment) {
+  const f = new FogSystem();
+  for (let i = 0; i < 400; i++) f.update(0.05, environment);
+  return f.snapshot;
+}
+/** Varredura do quadro inteiro, de 3 em 3 pixels, contra a elipse real daquela câmera. */
+function moldura(snap, ctx, pincelada) {
+  const raio = fogRadii(ctx.viewW, ctx.viewH, ctx.camera.zoom);
+  let limpo = 0, tinta = 0, forte = 0, total = 0;
+  for (let py = -ctx.viewH / 2; py < ctx.viewH / 2; py += 3) {
+    for (let px = -ctx.viewW / 2; px < ctx.viewW / 2; px += 3) {
+      total++;
+      const a = pincelada(snap, Math.hypot(px / raio.x, py / raio.y));
+      if (a === 0) limpo++;
+      if (a > 0) tinta++;
+      if (a >= 0.5) forte++;
+    }
+  }
+  return { limpo: limpo / total, tinta: tinta / total, forte: forte / total };
+}
 // Independent oracle: transform the expanded rectangle to the unit circle, then clamp its origin.
 function intersects(view, x, y, width, height, padding = FOG.padding) {
   const left = (x - padding - view.x) / view.radiusX;
@@ -306,6 +349,84 @@ test('a parede de névoa abre com a altura da câmera, e a moldura é o teto del
     assert.deepEqual(tree.props.children.props.colors.value.map(alpha),
       FOG.positions.map(() => 0), 'a parede do chão continuou pintada acima da manta');
   }
+});
+
+/**
+ * A parede é MOLDURA, não cortina.
+ *
+ * A régua antiga escrevia `positions[1] = clarity`, então uma frente de névoa levava a tinta para
+ * dentro de 24% do centro do quadro: o mundo todo atrás de um vidro leitoso, e nenhuma asserção de
+ * stop isolado reclamava — cada um dos seis degraus continuava no lugar. Estas provas varrem o quadro
+ * inteiro e comparam com a fórmula que estava no ar, porque o que se cobra aqui não é um número, é
+ * uma proporção de pixel que ninguém olhou.
+ */
+test('a névoa fecha na beira e nunca no meio: o quadro inteiro varrido, clima por clima', () => {
+  const LIMPO = { timeOfDay: 0.5, rain: 0, biome: 'residential' };
+  const NEVOADA = { timeOfDay: 0.5, rain: 0, cover: 0.3, mist: 1, biome: 'residential' };
+  const TEMPESTADE = { timeOfDay: 0.5, rain: 1, cover: 1, mist: 1, dark: 1, biome: 'pinewood' };
+  const NEVASCA = { timeOfDay: 0.25, rain: 0.6, cover: 0.9, dark: 0.7, snow: true, biome: 'pinewood' };
+  const paredes = [['limpo', LIMPO], ['névoa', NEVOADA], ['tempestade', TEMPESTADE], ['nevasca', NEVASCA]]
+    .map(([nome, env]) => ({ nome, snap: paredeCom(env) }));
+
+  for (const { nome, snap } of paredes) {
+    // O piso geométrico: 70% do raio continua sem uma gota de tinta, não importa o que o clima diga.
+    assert.ok(snap.positions[1] >= 0.70 - 1e-9,
+      `${nome}: a tinta começou a ${snap.positions[1]} do raio — o meio do quadro ficou atrás do vidro`);
+    // E o teto: a moldura continua sendo uma faixa, e não o quadro.
+    assert.ok(1 - snap.positions[1] <= 0.30 + 1e-9, `${nome}: a faixa tem ${1 - snap.positions[1]} do raio`);
+    // E o piso da mesma largura: 0,12 é abaixo da faixa do céu limpo (0,14) e acima de um traço de
+    // tinta no canto do quadro — apertar mais trocaria o horizonte por uma linha pintada.
+    assert.ok(1 - snap.positions[1] >= 0.12, `${nome}: a moldura tem só ${(1 - snap.positions[1]).toFixed(3)} do raio — virou traço`);
+    assert.equal(pincel(snap, 0.69), 0, `${nome}: vazou tinta dentro dos 70% limpos`);
+    // O corte em si não se moveu: a parede ainda fecha opaca no raio do recorte, e é isso que esconde
+    // o chão que nasce atrás dele. Sem isso, a moldura viria com uma costura visível no lugar da névoa.
+    near(pincel(snap, 1), 1);
+    assert.equal(snap.colors.at(-1), snap.color);
+    // A faixa tem que ter ombro: no meio dela a parede está na meia-tinta. Sem isso a moldura vira
+    // uma tesoura no mundo, e o contrato é um horizonte que chega aos poucos.
+    const meio = pincel(snap, snap.positions[1] + (1 - snap.positions[1]) * 0.5);
+    assert.ok(meio >= 0.15 && meio <= 0.85, `${nome}: a meia-faixa tem ${meio.toFixed(3)} de tinta — corte seco`);
+    // O clima ainda tem que ser legível na moldura: mais fechado, faixa mais larga.
+    assert.ok(snap.clarity > 0.1 && snap.clarity <= 0.601, `${nome} clarity ${snap.clarity}`);
+  }
+  const [limpo, nevoada] = paredes;
+  assert.ok(1 - nevoada.snap.positions[1] >= (1 - limpo.snap.positions[1]) * 1.4,
+    'a névoa quase não alargou a moldura: o clima parou de ser legível na beira');
+  for (const clarity of [0, 0.15, 0.2, 0.4, 0.6, 0.601, 0.9, NaN]) {
+    const b = bordaDaParede(clarity);
+    assert.ok(b >= 0.70 && b <= 0.86, `bordaDaParede(${clarity}) = ${b} fora da faixa`);
+  }
+  assert.equal(bordaDaParede(0.6), 0.86); assert.equal(bordaDaParede(0.2), 0.70);
+  assert.ok(bordaDaParede(0.5) > bordaDaParede(0.3), 'a moldura não responde ao clima');
+
+  let antes = 0, agora = 0, antesForte = 0, agoraForte = 0;
+  const medido = [];
+  for (const ctx of contexts) {
+    const raio = fogRadii(ctx.viewW, ctx.viewH, ctx.camera.zoom);
+    for (const { nome, snap } of paredes) {
+      const nova = moldura(snap, ctx, pincel);
+      const velha = moldura(snap, ctx, paredeAntiga);
+      assert.ok(nova.tinta <= velha.tinta + 1e-9,
+        `${label(ctx)}/${nome}: a moldura pintou ${(nova.tinta * 100).toFixed(1)}% do quadro, a cortina pintava ${(velha.tinta * 100).toFixed(1)}%`);
+      assert.ok(nova.forte <= velha.forte + 1e-9,
+        `${label(ctx)}/${nome}: a meia-tinta subiu de ${(velha.forte * 100).toFixed(1)}% para ${(nova.forte * 100).toFixed(1)}% do quadro`);
+      // O canto do quadro continua selado: é ele que prova que o chão novo continua nascendo atrás de
+      // tinta opaca. Sem isso a moldura teria uma costura clara no lugar onde o mundo aparece.
+      assert.ok(pincel(snap, Math.hypot(ctx.viewW / 2 / raio.x, ctx.viewH / 2 / raio.y)) >= 0.999,
+        `${label(ctx)}/${nome}: o canto do quadro abriu`);
+      antes += velha.tinta; agora += nova.tinta; antesForte += velha.forte; agoraForte += nova.forte;
+      if (nome === 'limpo') medido.push(`${label(ctx)}: ${(velha.tinta * 100).toFixed(1)}% -> ${(nova.tinta * 100).toFixed(1)}% com tinta, `
+        + `${(velha.forte * 100).toFixed(1)}% -> ${(nova.forte * 100).toFixed(1)}% acima de meia, centro ${(nova.limpo * 100).toFixed(1)}% limpo`);
+    }
+  }
+  for (const linha of medido) console.log('  ' + linha);
+  const amostras = contexts.length * paredes.length;
+  assert.ok(agora / amostras < (antes / amostras) * 0.7,
+    `a varredura mal se moveu: ${(antes / amostras * 100).toFixed(1)}% -> ${(agora / amostras * 100).toFixed(1)}% do quadro com tinta`);
+  // O pedido não era apagar a névoa: é ela que se lê como horizonte. Uma moldura invisível é o
+  // contrato do recorte perdido de volta, então a faixa tem que continuar presente no quadro.
+  assert.ok(agora / amostras > 0.05, `a moldura sumiu: só ${(agora / amostras * 100).toFixed(1)}% do quadro pinta`);
+  assert.ok(agoraForte / amostras > 0.02, `nada chega a meia tinta: ${(agoraForte / amostras * 100).toFixed(1)}%`);
 });
 
 test('zero padding handles tangencies, ellipse corners, enclosing rectangles and tall roofs', () => {

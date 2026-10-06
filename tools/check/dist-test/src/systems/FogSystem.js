@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.FogSystem = exports.FOG = void 0;
 exports.nevoaCores = nevoaCores;
 exports.aberturaDaParede = aberturaDaParede;
+exports.bordaDaParede = bordaDaParede;
 exports.fogRadii = fogRadii;
 const GameConfig_1 = require("../game/GameConfig");
 const IsoUtils_1 = require("../world/IsoUtils");
@@ -37,8 +38,10 @@ function target({ timeOfDay, rain, cover, mist, dark, snow, biome }) {
     return { rgb, clarity: 0.60 - wet * 0.09 - white * 0.11 - cloud * 0.03 - haze * 0.24 - gloom * 0.05
             - (1 - daylight) * 0.035 - (wooded ? 0.025 : 0) };
 }
-/** Os degraus de tinta até a borda. O stop final é a cor cheia da parede, publicada no instantâneo. */
-const NEVOA = [0, 0, 0.10, 0.32, 0.72];
+/** Os degraus de tinta até a borda. O stop final é a cor cheia da parede, publicada no instantâneo.
+ * É uma rampa curta e alta de propósito: dentro da faixa o olho tem que ler o muro chegando, e fora
+ * dela não pode haver muro nenhum. */
+const NEVOA = [0, 0, 0.14, 0.44, 0.82];
 /**
  * As tintas da parede com o quanto da névoa já ficou para baixo de quem olha.
  *
@@ -73,13 +76,34 @@ function aberturaDaParede(alturaDaCamera) {
     const t = Math.min(1, (alturaDaCamera - 5) / 6);
     return t * t * (3 - 2 * t);
 }
+/**
+ * Onde a tinta começa, em fração do raio do recorte.
+ *
+ * A `clarity` do clima continua a mesma régua de sempre — 0,6 no céu limpo, ~0,2 no furacão — mas ela
+ * deixou de ser o raio da clareira. Escrever `positions[1] = clarity` significava que uma frente de
+ * névoa levava a tinta para dentro de 24% do quadro: a rua inteira atrás de um vidro leitoso, e o
+ * jogador lia isso como "não dá para ver nada" em vez de "o horizonte fecha ali". Agora o clima só
+ * alarga a faixa da beira (0,86 limpo → 0,70 fechado, no máximo), e os 70% de dentro do quadro nunca
+ * recebem tinta nenhuma, em frente nenhuma.
+ *
+ * O corte em si não se moveu um pixel: a tinta continua fechando opaca exatamente no raio do recorte,
+ * então o chão que nasce atrás dele continua escondido — o que mudou é só o quão longe da beira esse
+ * muro começa a subir.
+ */
+const FAIXA = { mínima: 0.70, máxima: 0.86, piso: 0.20, teto: 0.60 };
+function bordaDaParede(clarity) {
+    const cru = Number.isFinite(clarity) ? clarity : FAIXA.piso;
+    const t = Math.max(0, Math.min(1, (cru - FAIXA.piso) / (FAIXA.teto - FAIXA.piso)));
+    return FAIXA.mínima + (FAIXA.máxima - FAIXA.mínima) * t;
+}
 function publish(rgb, clarity) {
     const [r, g, b] = rgb.map((v) => Math.round(Math.max(0, Math.min(255, v))));
     const color = '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+    const borda = bordaDaParede(clarity);
     return {
         color, clarity, rgb: [r, g, b],
-        positions: [0, clarity, clarity + (1 - clarity) * 0.32, clarity + (1 - clarity) * 0.62,
-            clarity + (1 - clarity) * 0.84, 1],
+        positions: [0, borda, borda + (1 - borda) * 0.32, borda + (1 - borda) * 0.62,
+            borda + (1 - borda) * 0.84, 1],
         colors: nevoaCores([r, g, b], 0, color),
     };
 }

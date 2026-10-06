@@ -23,7 +23,7 @@ import { GorilaSprite } from './GorilaSprite';
 import { piranhaVisível, piranhaVisualState, type Piranha } from '../entities/Piranha';
 import { PiranhaSprite } from './PiranhaSprite';
 import { guerreiroVisualState, type Guerreiro } from '../entities/Guerreiro';
-import { GuerreiroSprite } from './GuerreiroSprite';
+import { GuerreiroSprite, caixaDoGuerreiro } from './GuerreiroSprite';
 import { SMOLDER_S, WreckSprite } from './WreckSprite';
 import type { Wreck } from '../systems/DestructionSystem';
 
@@ -292,11 +292,13 @@ function visibleItems(game: GameState, statics: StaticNode[], mata: StaticNode[]
   // O bando também não está na grade `spatial`: os corpos moram dentro do `Bando`, e a lista deles é
   // o getter do sistema — que já devolve só quem merece ser desenhado (vivos e os cadáveres dentro do
   // prazo do fade) e ordenado por id, então a fila aqui é determinística e o recorte fino decide o
-  // resto. A caixa é o quadro de 36x46 folgada no porrete erguido: o windup levanta o cabo acima da
-  // cabeça, e um recorte justo ao tronco cortaria o braço no quadro que antecede o golpe.
+  // resto. A caixa vem de `caixaDoGuerreiro`, e não de um número escrito aqui: é o mesmo contrato do
+  // acampamento, a arte é que sabe o próprio tamanho, e o windup do porrete levanta tinta acima do
+  // quadro — um recorte justo ao tronco cortaria o braço no quadro que antecede o golpe.
   for (const corpo of game.tribos.guerreiros) {
     const p = worldToScreen(corpo.x, corpo.y, game.map.heightSmoothAt(corpo.x, corpo.y));
-    if (game.fog.intersects(view, p.x - 30, p.y - 62, 60, 78)) {
+    const b = caixaDoGuerreiro(p.x, p.y);
+    if (game.fog.intersects(view, b.x, b.y, b.width, b.height)) {
       items.push({ id: `guerreiro:${corpo.id}`, depth: depth(corpo.x, corpo.y), guerreiro: corpo });
     }
   }

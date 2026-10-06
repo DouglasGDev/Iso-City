@@ -40,6 +40,22 @@ const ALTURA = 46;
 /** O chão do desenho: os pés encostam aqui e o porrete erguido tem de caber acima. */
 const SOLO = 45;
 
+/**
+ * A caixa que a neblina corta, no ponto do mundo onde o corpo pisa. Vive ao lado da arte porque é a
+ * arte que sabe o próprio tamanho: se o porrete crescer, o recorte cresce junto, e um número escrito
+ * na camada de desenho seria um guerreiro decepado na beira da tela.
+ *
+ * Os números são o quadro de `LARGURA`x`ALTURA` ancorado no pé folgado no que a pose faz com ele: o
+ * `bob` da passada desce 2,2 px e o `offsetY` da queda levanta 3, o `scaleX` do espelho inverte o
+ * meio-quadro, e a tinta dos traços tem de caber com sobra. O cadáver tombando gira até 1,35 rad em
+ * volta do pé, e aí a cabeça sai da caixa por uns pixels — é aceito de propósito: isto é um teste de
+ * descarte, não um recorte de pintura, e alargar a caixa até o ângulo morto do caído pagaria custo de
+ * névoa por um corpo que já está sumindo.
+ */
+export function caixaDoGuerreiro(sx: number, sy: number) {
+  return { x: sx - 30, y: sy - 62, width: 60, height: 78 };
+}
+
 type Frame = SkPath[];
 
 function pintor(): {

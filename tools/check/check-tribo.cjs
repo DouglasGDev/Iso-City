@@ -96,6 +96,15 @@ function test(name, fn) {
 }
 
 /**
+ * O código de uma fonte, sem as linhas que explicam o que está sob prova. Uma régua de texto que varre
+ * a fonte inteira proíbe comentário, e é justamente o comentário que documenta a regra — varrer o
+ * código é o que deixa o porquê escrito e o quê ainda medido.
+ */
+function semComentário(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+}
+
+/**
  * O mundo real, gerado uma vez. As provas abaixo não inventam canal nem borda: elas medem a
  * aldeia no mapa que o jogo carrega, porque a pergunta que importa é "onde o rio sai da grade,
  * tem cabana em cima?" — e só a borda gerada sabe responder.
@@ -473,7 +482,7 @@ test('nada do território é decoração: cada campo do acampamento é lido por 
  */
 const SPR = load(path.join(root, 'src/render/TriboSprite.tsx'));
 const ST = load(path.join(root, 'src/render/TriboStatics.ts'));
-const { FogSystem } = load(path.join(root, 'src/systems/FogSystem.ts'));
+const { FogSystem, FOG } = load(path.join(root, 'src/systems/FogSystem.ts'));
 const { GAME_CONFIG } = load(path.join(root, 'src/game/GameConfig.ts'));
 const { worldToScreen, depthOf } = load(path.join(root, 'src/world/IsoUtils.ts'));
 const { quadroDaCabana, quadroDoTotem, quadroDaFogueira, quadroDoOsso, quadroDoPoste,
@@ -2869,11 +2878,228 @@ test('o orquestrador do cativeiro só orquestra: dois relógios no mesmo tick e 
   // sistema. Um `0.075` aqui seria uma segunda corda, e a régua do check não enxergaria a diferença.
   // A varredura é do código, não da fonte: os comentários do orquestrador explicam a corda usando o
   // nome dela, e proibir isso seria calar o porquê para proteger o quê.
-  const código = GS_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const código = semComentário(GS_SRC);
   for (const nome of ['integridade', 'ordensa', 'janela', 'puxões', 'FORÇA_DO_PUXÃO', 'MORTO_DO_PUXÃO', 'APERTO_DO_NÓ', 'PRAZO_DA_SACIEDADE']) {
     assert.ok(!new RegExp(`\\b${nome}\\b`).test(código),
       `o GameState voltou a conhecer a corda por dentro: \`${nome}\` aparece no código do orquestrador`);
   }
+});
+
+/* ===========================================================================
+ * fase 3b: o corpo na tela
+ *
+ * O bando chegou na fase 3a e a tinta na fase 2, e o jogador ainda não via ninguém: existia o
+ * `GuerreiroSprite` e não existia fila nenhuma que o chamasse. Estas provas cobrem a costura de três
+ * pontas — o registro (`SharedValues`), a publicação por tick (`GameCanvas`) e a fila ordenada
+ * (`SortedWorldLayer`) — e fecham a última delas medindo: a caixa que a neblina corta tem de conter a
+ * tinta que o sprite pinta, em cada quadro e em cada pose. Escrever a caixa e conferir a caixa seria
+ * um número contra ele mesmo; aqui o traçado é o que o dublê de `SkPath` gravou, e a caixa é a que o
+ * próprio módulo de arte exporta.
+ * ========================================================================= */
+
+const SHARED_SRC = fs.readFileSync(path.join(root, 'src/render/SharedValues.ts'), 'utf8');
+const CANVAS_SRC = fs.readFileSync(path.join(root, 'src/render/GameCanvas.tsx'), 'utf8');
+// As réguas abaixo varrem o CÓDIGO, não a fonte. Desligar o desenho com `//` é exatamente o jeito por
+// onde o bando ficou invisível uma vez, e uma régua que lê a fonte inteira continuaria verde com o
+// trabalho paradinho num comentário.
+const REGISTRO = semComentário(SHARED_SRC);
+const BORDA = semComentário(CANVAS_SRC);
+const FILA = semComentário(SORTED_SRC);
+const TINTA = semComentário(GSPRITE_SRC);
+const { caixaDoGuerreiro } = GSPR;
+/** A caixa com a âncora na origem: o que está sob prova é o deslocamento do corpo em relação ao pé. */
+const CAIXA = caixaDoGuerreiro(0, 0);
+const { guerreiroPose, GUERREIRO_CADENCIA, GUERREIRO_IMPACTO_S, GUERREIRO_QUEDA_S, GUERREIRO_CADAVER_S } = GUER;
+
+test('o guerreiro tem registro, publicação e fila: as três pontas da mesma costura', () => {
+  // O registro é por id de corpo, não por posto: dois bandos na tela têm sentinelas com o mesmo
+  // `posto`, e o que os distingue é o número que o sistema deu a eles.
+  assert.match(REGISTRO, /import type \{ GuerreiroVisualState \} from '\.\.\/entities\/Guerreiro'/,
+    'SharedValues voltou a publicar a pose do guerreiro sem importar o tipo do dono dela');
+  assert.match(REGISTRO, /export const guerreiroSVs = new Map<number, \{ position: SharedValue<EntitySV>;/,
+    'a fila de SharedValue do bando deixou de ser um par de posição por id de corpo');
+  assert.match(REGISTRO, /visual: SharedValue<GuerreiroVisualState> \}>\(\)/,
+    'o valor registrado deixou de ser a pose que o dono do corpo publica');
+
+  assert.match(BORDA, /import \{[^}]*\bguerreiroSVs\b[^}]*\} from '\.\/SharedValues'/,
+    'o laço de publicação deixou de importar o registro do bando');
+  assert.match(BORDA, /import \{ guerreiroVisualState \} from '\.\.\/entities\/Guerreiro'/,
+    'o laço de publicação deixou de usar a pose do dono do corpo: o sprite animaria um estado inventado na borda');
+  assert.match(BORDA, /for \(const corpo of game\.tribos\.guerreiros\) \{/,
+    'a publicação deixou de percorrer o getter do sistema — ele é quem decide quem merece ser desenhado');
+  assert.match(BORDA, /if \(!sv\) continue;/,
+    'um corpo que saiu da clareira com a borda voltou a dar trabalho no laço: sem SV ele some da tela, e é assim que deve ser');
+  assert.match(BORDA, /sv\.position\.value = \{\s*x: corpo\.x, y: corpo\.y, h: game\.map\.heightSmoothAt\(corpo\.x, corpo\.y\)\s*\};/,
+    'a posição publicada deixou de perguntar a cota contínua ao mapa: o corpo saltaria um degrau a cada tile');
+  assert.match(BORDA, /sv\.visual\.value = guerreiroVisualState\(corpo, game\.time\);/,
+    'a pose publicada deixou de ser a do `game.time`: duas telas, dois relógios, e o windup do porrete atrasado');
+  // O getter aloca um array novo por chamada. Percorrê-lo duas vezes no mesmo tick pagaria o bando
+  // inteiro duas vezes, e é exatamente o trabalho que a fila do gigante já não faz.
+  assert.equal((BORDA.match(/game\.tribos\.guerreiros/g) || []).length, 1,
+    'o tick de publicação lê o bando mais de uma vez: o getter aloca por chamada');
+
+  assert.match(FILA, /import \{[^}]*\bguerreiroSVs\b[^}]*\} from '\.\/SharedValues'/,
+    'a fila ordenada deixou de importar o registro do bando');
+  assert.match(FILA, /import \{ GuerreiroSprite, caixaDoGuerreiro \} from '\.\/GuerreiroSprite'/,
+    'a fila deixou de pedir a caixa à própria arte: um número escrito aqui seria um guerreiro decepado na beira');
+  assert.match(FILA, /for \(const corpo of game\.tribos\.guerreiros\) \{/,
+    'a fila deixou de varrer o bando: sem corpo na janela, nada a ordenar');
+  assert.match(FILA, /const p = worldToScreen\(corpo\.x, corpo\.y, game\.map\.heightSmoothAt\(corpo\.x, corpo\.y\)\);/,
+    'o corte do guerreiro deixou de ancorar no pé com a cota do terreno');
+  assert.match(FILA, /const b = caixaDoGuerreiro\(p\.x, p\.y\);/,
+    'o recorte voltou a ser uma caixa inventada na camada');
+  assert.ok(FILA.includes('items.push({ id: `guerreiro:${corpo.id}`, depth: depth(corpo.x, corpo.y), guerreiro: corpo })'),
+    'o guerreiro não entra mais na ordenação por profundidade — e o jogador passaria por trás da própria fogueira');
+  assert.match(FILA, /guerreiro\?: Guerreiro/, 'o `DrawItem` deixou de saber do guerreiro');
+  assert.match(FILA, /item\.guerreiro \? <GuerreiroViva key=\{item\.id\} guerreiro=\{item\.guerreiro\} game=\{game\} clock=\{clock\} \/>/,
+    'o item da fila deixou de cair no sprite');
+  assert.ok(!fs.existsSync(path.join(root, 'src/render/GuerreiroLayer.tsx')),
+    'o bando virou camada própria, e o contrato isométrico morreu com ela');
+
+  // O par de SV é registrado no efeito e descartado pela IDENTIDADE da posição, não pelo id: se o
+  // corpo remountou enquanto o efeito antigo rodava o cleanup, o registro do novo corpo é intocado.
+  assert.match(FILA, /guerreiroSVs\.set\(guerreiro\.id, \{ position, visual \}\)/,
+    'o corpo deixou de registrar o próprio par de SharedValue');
+  assert.match(FILA, /if \(guerreiroSVs\.get\(guerreiro\.id\)\?\.position === position\) guerreiroSVs\.delete\(guerreiro\.id\)/,
+    'a limpeza voltou a apagar por id: um remount derrubaria o SV do corpo que acabou de se registrar');
+
+  const início = FILA.indexOf('function GuerreiroViva');
+  assert.ok(início > 0, 'sumiu o componente do guerreiro na fila ordenada');
+  const componente = FILA.slice(início, FILA.indexOf('return <GuerreiroSprite', início));
+  assert.ok(!/clock\.value/.test(componente.slice(0, componente.indexOf('useEffect('))),
+    'o `clock.value` voltou a ser lido no render: é o aviso do Reanimated no aparelho, e dispararia um por sentinela visível');
+  assert.match(componente, /useSharedValue\(guerreiroVisualState\(guerreiro, 0\)\)/,
+    'a pose inicial deixou de ser a do corpo no tempo zero: o primeiro quadro viria do relógio do render');
+  assert.match(TINTA, /guerreiroPose\(visual\.value, clock\.value\)/,
+    'o sprite deixou de animar a pose a partir do que a borda publica');
+});
+
+/**
+ * Toda pose que o sprite pode receber: os nove estados do modelo, as quatro vistas, vivo e morto em
+ * quatro instantes da queda, carregando e não carregando, e o relógio em três batidas. A dedupe é
+ * pela assinatura geométrica — o que importa para a caixa são frame, away, espelho, giro, escala,
+ * deslocamento e bob, e não as centenas de combinações que os produzem.
+ */
+function posesDoBando() {
+  const vistas = new Map();
+  for (const estado of [...CALMA, ...ACORDADO]) {
+    for (const dir of ['SE', 'NE', 'SW', 'NW']) {
+      for (const morto of [false, true]) {
+        for (const deathTimer of [0, GUERREIRO_QUEDA_S / 2, GUERREIRO_QUEDA_S, GUERREIRO_CADAVER_S - 0.2]) {
+          for (const carrega of [false, true]) {
+            for (const animTime of [0, 0.35, 0.9, 1.8, 2.7, 3.5]) {
+              for (const velocidade of [0, 2.5, 6]) {
+                for (const golpe of [0, GUERREIRO_CADENCIA - GUERREIRO_IMPACTO_S / 2]) {
+                  for (const esperando of [false, true]) {
+                    for (const clock of [0, 0.6, 1.9]) {
+                      const visual = { dir, estado, olhar: 0, velocidade, morto, deathTimer, esperando,
+                        golpe, animTime, carrega, sampledAt: clock };
+                      const pose = guerreiroPose(visual, clock);
+                      const chave = [pose.frame, pose.away, pose.mirror, pose.rotation, pose.scaleY,
+                        pose.offsetY, pose.bob].join('|');
+                      if (!vistas.has(chave)) vistas.set(chave, pose);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return [...vistas.values()];
+}
+
+/** O retângulo que a matriz do `corpo` devolve para a caixa de tinta de um quadro, numa pose dada. */
+function caixaNaTela(b, pose) {
+  const c = Math.cos(pose.rotation), s = Math.sin(pose.rotation);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [cx, cy] of [[b.x0, b.y0], [b.x1, b.y0], [b.x0, b.y1], [b.x1, b.y1]]) {
+    // A ordem é a da lista de transform do sprite: translada para a âncora, espelha, escala em Y, gira
+    // no pé e só então aplica o bob e a subida da queda. Giro de 1,35 rad num corpo de 46 px de altura
+    // joga a cabeça para o lado — é por isso que a caixa se mede, e não se chuta.
+    const x = pose.mirror * (cx - LARGURA_GUER / 2);
+    const y = (cy - ALTURA_GUER) * pose.scaleY;
+    const px = x * c - y * s;
+    const py = x * s + y * c + pose.offsetY + pose.bob;
+    if (px < x0) x0 = px; if (px > x1) x1 = px;
+    if (py < y0) y0 = py; if (py > y1) y1 = py;
+  }
+  return { x0, y0, x1, y1 };
+}
+
+test('a caixa que a neblina corta contém a tinta pintada: cada quadro, cada pose, o quadro inteiro', () => {
+  const poses = posesDoBando();
+  const artes = new Map(QUADROS_DO_GUERREIRO.map((q) => [`${q.away ? 'c' : 'f'}${q.frame}`, caixaDaArte(q.path)]));
+  const alcançados = new Set(poses.map((p) => `${p.away ? 'c' : 'f'}${p.frame}`));
+  assert.equal(alcançados.size, QUADROS_DO_GUERREIRO.length,
+    `as poses amostradas alcançam ${alcançados.size} de ${QUADROS_DO_GUERREIRO.length} quadros do atlas: `
+      + 'a régua da caixa estaria medindo metade do sprite');
+  const eretos = poses.filter((p) => Math.abs(p.rotation) < 0.02);
+  const caídos = poses.filter((p) => Math.abs(p.rotation) >= 0.02);
+  assert.ok(eretos.length > 0 && caídos.length > 0, 'as amostras não têm nem corpo em pé nem corpo tombando');
+  const giro = Math.max(...poses.map((p) => Math.abs(p.rotation)));
+  assert.ok(giro > 1.3, `nenhuma amostra passou de ${giro.toFixed(2)} rad de queda: a régua não mediu o corpo esticado no chão`);
+
+  // O arredondamento da âncora: a camada corta pela projeção contínua, o sprite desenha na inteira
+  // (`Math.round`), então meio pixel de cada lado é a borda do que a própria tela pode mostrar.
+  const MEIO_PIXEL = 0.5;
+  for (const pose of poses) {
+    const b = caixaNaTela(artes.get(`${pose.away ? 'c' : 'f'}${pose.frame}`), pose);
+    // O quanto a tinta sai da caixa: positivo é corte, negativo é folga.
+    const sobra = Math.max(CAIXA.x - b.x0, b.x1 - (CAIXA.x + CAIXA.width),
+      CAIXA.y - b.y0, b.y1 - (CAIXA.y + CAIXA.height));
+    const rótulo = `${pose.away ? 'costas' : 'frente'} q${pose.frame} giro ${pose.rotation.toFixed(2)}`;
+    if (Math.abs(pose.rotation) < 0.02) {
+      // Em pé, o corpo é o que o jogador vê a vida inteira — e tem de caber NA caixa, sem o favor da
+      // folga da neblina: é ela que decide a ordem de pintura e a ocultação pela fogueira.
+      assert.ok(sobra <= MEIO_PIXEL, `${rótulo}: a tinta escapa ${sobra.toFixed(1)} px da caixa `
+        + `${CAIXA.width}×${CAIXA.height} com o corpo em pé — o guerreiro seria decepado no recorte`);
+    }
+    // Tombando, a cabeça descreve um arco de 46 px em torno do pé e sai da caixa por design: o que
+    // segura o cadáver na tela é a folga que a própria neblina já dá antes de cortar, e é isso que se
+    // mede aqui — não uma permissão escrita, mas o número que o `FogSystem` usa.
+    assert.ok(sobra <= FOG.padding, `${rótulo}: a tinta escapa ${sobra.toFixed(1)} px da caixa e a folga da neblina é `
+      + `${FOG.padding} — o corpo sumiria enquanto ainda estivesse visível`);
+  }
+  // E a caixa não pode virar terreno baldio: se ela crescer demais, a fila passa a desenhar guerreiro
+  // fora da tela, e o corte que existe para poupar o aparelho some.
+  const alturaDaTinta = Math.max(...QUADROS_DO_GUERREIRO.map((q) => {
+    const b = caixaDaArte(q.path);
+    return b.y1 - b.y0;
+  }));
+  assert.ok(CAIXA.height <= alturaDaTinta * 2.2, `a caixa tem ${CAIXA.height} px de altura para tinta de `
+    + `${alturaDaTinta.toFixed(0)} px: o recorte está chamando corpo que não está na tela`);
+});
+
+test('com a câmera no terreiro o bando está inteiro na janela, e na cidade não sobra nenhum', () => {
+  const A = aldeiaEm({ x: NOSSO_AC.entrada.x, y: NOSSO_AC.entrada.y }, { ac: NOSSO_AC });
+  anda(A, 0.4);
+  const corpos = A.corpos();
+  assert.ok(corpos.length >= 2, 'a câmera na porta da aldeia não materializou bando nenhum');
+
+  const game = jogoEm(NOSSO_AC.x, NOSSO_AC.y);
+  const view = game.fog.view(game);
+  const dentro = (g) => {
+    const p = worldToScreen(g.x, g.y, RIO.heightSmoothAt(g.x, g.y));
+    const b = caixaDoGuerreiro(p.x, p.y);
+    return game.fog.intersects(view, b.x, b.y, b.width, b.height);
+  };
+  const visíveis = corpos.filter(dentro).length;
+  assert.equal(visíveis, corpos.length, `no meio do terreiro a neblina cortou ${corpos.length - visíveis} de `
+    + `${corpos.length} corpos — quem está na frente do jogador não pode depender de sorte de anel`);
+
+  // De volta à cidade com o MESMO bando: a fila não desenha aldeia nenhum, e é isso que separa um
+  // getter de um array que só cresce.
+  const cidade = jogoEm(CW / 2, CH / 2);
+  const vista = cidade.fog.view(cidade);
+  const naCidade = corpos.filter((g) => {
+    const p = worldToScreen(g.x, g.y, RIO.heightSmoothAt(g.x, g.y));
+    const b = caixaDoGuerreiro(p.x, p.y);
+    return cidade.fog.intersects(vista, b.x, b.y, b.width, b.height);
+  }).length;
+  assert.equal(naCidade, 0, 'a cidade tem guerreiro na janela de desenho');
 });
 
 test('typecheck isolado do modelo, do nó, da corda, da tinta e da banca', () => {

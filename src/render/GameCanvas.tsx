@@ -267,9 +267,7 @@ export function GameCanvas({ suspended }: { suspended: boolean }) {
       for (const corpo of game.tribos.guerreiros) {
         const sv = guerreiroSVs.get(corpo.id);
         if (!sv) continue;
-        sv.position.value = {
-          x: corpo.x, y: corpo.y, h: game.map.heightSmoothAt(corpo.x, corpo.y),
-        };
+        sv.position.value = { x: corpo.x, y: corpo.y, h: game.map.heightSmoothAt(corpo.x, corpo.y) };
         sv.visual.value = guerreiroVisualState(corpo, game.time);
       }
       for (const [id, sv] of entitySVs) {
