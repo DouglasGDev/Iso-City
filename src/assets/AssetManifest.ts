@@ -248,6 +248,26 @@ export const ASSET_FILES: Record<string, number> = {
   "Characters/char_b_walk_SW_f02.png": require("../../assets/sprites/Characters/char_b_walk_SW_f02.png"),
   "Characters/char_b_walk_SW_f03.png": require("../../assets/sprites/Characters/char_b_walk_SW_f03.png"),
   "Characters/char_b_walk_SW_f04.png": require("../../assets/sprites/Characters/char_b_walk_SW_f04.png"),
+  "Characters/char_bombeiro_idle_NE_f01.png": require("../../assets/sprites/Characters/char_bombeiro_idle_NE_f01.png"),
+  "Characters/char_bombeiro_idle_NW_f01.png": require("../../assets/sprites/Characters/char_bombeiro_idle_NW_f01.png"),
+  "Characters/char_bombeiro_idle_SE_f01.png": require("../../assets/sprites/Characters/char_bombeiro_idle_SE_f01.png"),
+  "Characters/char_bombeiro_idle_SW_f01.png": require("../../assets/sprites/Characters/char_bombeiro_idle_SW_f01.png"),
+  "Characters/char_bombeiro_walk_NE_f01.png": require("../../assets/sprites/Characters/char_bombeiro_walk_NE_f01.png"),
+  "Characters/char_bombeiro_walk_NE_f02.png": require("../../assets/sprites/Characters/char_bombeiro_walk_NE_f02.png"),
+  "Characters/char_bombeiro_walk_NE_f03.png": require("../../assets/sprites/Characters/char_bombeiro_walk_NE_f03.png"),
+  "Characters/char_bombeiro_walk_NE_f04.png": require("../../assets/sprites/Characters/char_bombeiro_walk_NE_f04.png"),
+  "Characters/char_bombeiro_walk_NW_f01.png": require("../../assets/sprites/Characters/char_bombeiro_walk_NW_f01.png"),
+  "Characters/char_bombeiro_walk_NW_f02.png": require("../../assets/sprites/Characters/char_bombeiro_walk_NW_f02.png"),
+  "Characters/char_bombeiro_walk_NW_f03.png": require("../../assets/sprites/Characters/char_bombeiro_walk_NW_f03.png"),
+  "Characters/char_bombeiro_walk_NW_f04.png": require("../../assets/sprites/Characters/char_bombeiro_walk_NW_f04.png"),
+  "Characters/char_bombeiro_walk_SE_f01.png": require("../../assets/sprites/Characters/char_bombeiro_walk_SE_f01.png"),
+  "Characters/char_bombeiro_walk_SE_f02.png": require("../../assets/sprites/Characters/char_bombeiro_walk_SE_f02.png"),
+  "Characters/char_bombeiro_walk_SE_f03.png": require("../../assets/sprites/Characters/char_bombeiro_walk_SE_f03.png"),
+  "Characters/char_bombeiro_walk_SE_f04.png": require("../../assets/sprites/Characters/char_bombeiro_walk_SE_f04.png"),
+  "Characters/char_bombeiro_walk_SW_f01.png": require("../../assets/sprites/Characters/char_bombeiro_walk_SW_f01.png"),
+  "Characters/char_bombeiro_walk_SW_f02.png": require("../../assets/sprites/Characters/char_bombeiro_walk_SW_f02.png"),
+  "Characters/char_bombeiro_walk_SW_f03.png": require("../../assets/sprites/Characters/char_bombeiro_walk_SW_f03.png"),
+  "Characters/char_bombeiro_walk_SW_f04.png": require("../../assets/sprites/Characters/char_bombeiro_walk_SW_f04.png"),
   "Characters/char_c_idle_NE_f01.png": require("../../assets/sprites/Characters/char_c_idle_NE_f01.png"),
   "Characters/char_c_idle_NW_f01.png": require("../../assets/sprites/Characters/char_c_idle_NW_f01.png"),
   "Characters/char_c_idle_SE_f01.png": require("../../assets/sprites/Characters/char_c_idle_SE_f01.png"),
@@ -714,4 +734,4 @@ export const ASSET_FILES: Record<string, number> = {
 };
 
 export const ASSET_KEYS: string[] = Object.keys(ASSET_FILES);
-export const ASSET_COUNT = 708;
+export const ASSET_COUNT = 728;

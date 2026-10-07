@@ -22,8 +22,7 @@ function load(filename) {
   return mod.exports;
 }
 const source = (relative) => load(path.join(root, 'src', relative));
-const { JumpSystem, JUMP_DURATION, JUMP_HEIGHT_PX } = source('systems/JumpSystem.ts');
-const { MovementSystem, movePlayerGround, solidVehicleColliders, FENCE_CLEARANCE_PX } = source('systems/MovementSystem.ts');
+const { JumpSystem, JUMP_DURATION, JUMP_HEIGHT_PX } = source('systems/JumpSystem.ts');const { MovementSystem, movePlayerGround, solidVehicleColliders, FENCE_CLEARANCE_PX } = source('systems/MovementSystem.ts');
 const { CollisionSystem } = source('systems/CollisionSystem.ts');
 const { createPlayer, playerCollider, crouchPose } = source('entities/Player.ts');
 const { CrouchSystem, CROUCH_SPEED } = source('systems/CrouchSystem.ts');
@@ -31,6 +30,11 @@ const { StaminaSystem } = source('systems/StaminaSystem.ts');
 const { GAME_CONFIG: C } = source('game/GameConfig.ts');
 const input = source('game/InputState.ts');
 const { worldToScreen } = source('world/IsoUtils.ts');
+// As duas últimas provas descem ao mapa de verdade: o bug morava justamente na diferença entre o
+// grid gerado e a terra sem fim, e um `map` fake com `worldW: 20` é exatamente como ela foi escrita
+// no fonte e nunca foi contestada.
+const { generateCity, WORLD_SEED } = source('data/maps/city.ts');
+const { Map: CityMap } = source('world/Map.ts');
 let passed = 0;
 const near = (a, b, tolerance = 1e-8) => assert.ok(Math.abs(a - b) <= tolerance, `${a} != ${b}`);
 function test(name, fn) {
@@ -146,7 +150,7 @@ test('blocked destination/path never selects vault through buildings, props, thi
   assert.equal(f.player.jumpEnd, null);
 });
 
-test('vault refuses water along the diagonal path, wet landing footprint and world boundaries', () => {
+test('vault refuses water and a wet landing, but not the edge of the grid', () => {
   const dry = fixture([fence()], 9.7, 10.4);
   input.setJoystickInput(128, 0, 1); start(dry); assert.ok(dry.player.jumpEnd);
   assert.ok(dry.player.jumpEnd.y + C.PLAYER_RADIUS < 10, 'landing footprint is dry; only route clips water');
@@ -154,7 +158,14 @@ test('vault refuses water along the diagonal path, wet landing footprint and wor
   diagonal.water.add('10,10'); start(diagonal); assert.equal(diagonal.player.jumpEnd, null);
   input.resetInputState();
   const wet = fixture([fence()]); wet.water.add('10,10'); start(wet); assert.equal(wet.player.jumpEnd, null);
-  const boundary = fixture([fence()]); boundary.map.worldW = 10.3; start(boundary); assert.equal(boundary.player.jumpEnd, null);
+  // O fim da grade NUNCA foi o fim do mundo. Esta mesma linha já cobrou `jumpEnd === null` com
+  // `worldW = 10.3`, e era isso que fazia o personagem não pular na terra sem fim: a régua de
+  // bounds do `dryPath` mandava em tudo que `isWaterWorld` já responde sozinho fora do mapa.
+  // Aqui a grade termina antes do outro lado da cerca, então o pouso certified é fora dela — e
+  // com a régua velha na cabeça o vault nem era selecionado, que é o bug em forma de assert.
+  const alémDaGrade = fixture([fence()]); alémDaGrade.map.worldW = 10; start(alémDaGrade);
+  assert.ok(alémDaGrade.player.jumpEnd, 'a borda da grade ainda valia como parede');
+  assert.ok(alémDaGrade.player.jumpEnd.x > 10, `o vault não saiu da grade: pousa em ${alémDaGrade.player.jumpEnd.x}`);
   const startWet = fixture(); startWet.water.add('9,10');
   assert.equal(startWet.jump.tryJump(startWet.player, startWet.map, startWet.collision), false);
 });
@@ -331,6 +342,62 @@ test('crouch visual folds legs at fixed feet and aligns the torso seam, weapon a
     // Same rigid translation is applied to the shoulder and to both held-weapon renderers.
     near(-18 + pose.torsoOffsetY, -18 + height * 0.25);
   }
+});
+
+test('a terra sem fim não tem linha de grade: o pulo vale fora do mapa', () => {
+  for (const [x, y] of [[-2.4, 10], [22.6, 9.9], [9.7, -12.5], [-0.05, -0.05]]) {
+    const f = fixture([], x, y);
+    assert.equal(f.jump.tryJump(f.player, f.map, f.collision), true, `não pulou em (${x}, ${y})`);
+    let evento = null;
+    for (let i = 0; i < 90 && evento !== 'landed'; i++) evento = tick(f);
+    assert.equal(evento, 'landed', `o salto de (${x}, ${y}) nunca pousou`);
+    grounded(f.player);
+  }
+  const quebrado = fixture([], NaN, 10);
+  assert.equal(quebrado.jump.tryJump(quebrado.player, quebrado.map, quebrado.collision), false,
+    'posição NaN voltou a derrubar o tick');
+});
+
+test('no mapa real a borda continua o mundo, e o rio que sai da grade continua água', () => {
+  const cidade = generateCity(WORLD_SEED);
+  const map = new CityMap(cidade);
+  const W = cidade.tilesW, H = cidade.tilesH;
+  const roda = (x, y) => ({ player: createPlayer(x, y), collision: new CollisionSystem(),
+    jump: new JumpSystem(() => []), map });
+  const pula = (x, y) => {
+    const f = roda(x, y);
+    if (!f.jump.tryJump(f.player, f.map, f.collision)) return false;
+    for (let i = 0; i < 90; i++) {
+      if (f.jump.update(f.player, f.map, f.collision, 1 / 60) === 'landed') return true;
+    }
+    return false;
+  };
+  // O anel de um tile além de cada borda é a única coisa que distingue este bug do fonte: dentro
+  // da cidade o pulo sempre funcionou. Varre o anel inteiro e exige que TODO lugar seco e livre
+  // pulo, não um amostra qualquer — um caso escolhido a dedo passaria com a régua de grade no
+  // lugar, exatamente como passou até hoje.
+  const anel = [];
+  for (let i = 0; i < W; i += 7) anel.push([i + 0.5, -0.5], [i + 0.5, H + 0.5]);
+  for (let j = 0; j < H; j += 7) anel.push([-0.5, j + 0.5], [W + 0.5, j + 0.5]);
+  const secos = anel.filter(([x, y]) => !map.isWaterWorld(x, y) &&
+    map.queryNearby(x, y, C.PLAYER_RADIUS + 0.2).length === 0);
+  assert.ok(secos.length > 0, `nenhum tile seco e livre fora da grade (${anel.length} olhados)`);
+  const recusados = secos.filter(([x, y]) => !pula(x, y));
+  // A mensagem é avaliada antes de o assert olhar a condição, então não pode indexar o primeiro
+  // recusado sem ele existir: no caminho feliz este laço é o que arrebenta, e o check morria
+  // com `TypeError` em vez de dizer que todos os tiles pulavam.
+  assert.ok(recusados.length === 0, recusados.length === 0 ? 'todos pulam' :
+    `${recusados.length} de ${secos.length} tiles fora da grade ainda recusam o pulo, ` +
+    `começando em (${recusados[0][0]}, ${recusados[0][1]})`);
+  console.log(`   ${secos.length}/${anel.length} tiles do anel pulam`);
+  // E a água não virou chão seco por ter saído da grade: o canal que sai do mapa barra o pulo do
+  // mesmo jeito que o leito dentro dele — a prova de cima só vale se esta continuar valendo.
+  const boca = [];
+  for (let j = 0; j < H; j++) if (map.isWaterWorld(-0.5, j + 0.5)) boca.push(j);
+  assert.ok(boca.length > 0, 'o rio não sai mais da grade a oeste: a prova de cima é oca');
+  const nadando = roda(-0.5, boca[0] + 0.5);
+  assert.equal(nadando.jump.tryJump(nadando.player, nadando.map, nadando.collision), false,
+    `pulou em cima da boca do rio fora do mapa (linha ${boca[0] + 0.5})`);
 });
 
 console.log(`Jump/crouch checks passed: ${passed}`);

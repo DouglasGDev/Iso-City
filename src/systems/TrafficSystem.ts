@@ -418,8 +418,10 @@ export class TrafficSystem {
     const farReach = GAME_CONFIG.NPC_SIM_FAR;
     TrafficSystem.near(this.npcGrid, v.x, v.y, (n) => {
       // Match the existing NPC culling contract: frozen offscreen actors cannot hold queues forever.
+      // Cops and the fire brigade are driven by their own systems at any distance, so they always
+      // hold the queue; only civilians freeze out there. `kind === 'civ'` is that rule by type.
       const pdx = n.x - player.x, pdy = n.y - player.y;
-      if (n.kind !== 'cop' && n.state !== 'fleeing' && pdx * pdx + pdy * pdy > farReach * farReach) return false;
+      if (n.kind === 'civ' && n.state !== 'fleeing' && pdx * pdx + pdy * pdy > farReach * farReach) return false;
       const dx = n.x - v.x, dy = n.y - v.y;
       let fwd = axis.wx * dx + axis.wy * dy;
       let side = Math.abs(axis.wy * dx - axis.wx * dy);

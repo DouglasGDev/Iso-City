@@ -166,6 +166,22 @@ export function terraDaTribo(prof: number): boolean {
 }
 
 /**
+ * O multiplicador que rareia o território inteiro, de uma só vez.
+ *
+ * Ele existe por medida, não por gosto: com a curva crua o censo do mapa gerado dava 52 acampamentos
+ * ao redor da cidade, e um mundo com 52 aldeias não é uma posse escondida — é um arquipélago de
+ * forte, onde a tribo deixa de ser descoberta e vira trânsito. Meio a menos devolve o raro ao
+ * lugar, e a progressão (ralo na orla, fechado no fundo) continua sendo a mesma curva.
+ *
+ * É um multiplicador e não um troca-troca de números da curva por duas razões: a forma da progressão
+ * fica intacta, e o corte é um subconjunto puro. O sorteio da célula é um hash fixo comparado contra
+ * a densidade (`sorteio >= densidade`), então baixar a densidade só dispensa aldeias — nenhuma
+ * acampamento existente se move de lugar, nenhum totem muda de lado, e quem já achou uma vila no
+ * save continua achando a mesma vila. Somar e subtrair na curva teria embaralhado o mundo inteiro.
+ */
+const RARIDADE_DA_TRIBO = 0.45;
+
+/**
  * Quantos acampamentos por célula conforme a profundidade.
  *
  * Começa ralo na orla do território e fecha no fundo, do mesmo jeito que `densidadeDaMata`
@@ -182,7 +198,7 @@ export function densidadeDoTerritório(prof: number): number {
   const fundo = FRONTEIRA_ALCANCE - FOLGA_DA_BORDA_EXTERNA;
   if (prof > fundo) return 0;
   const t = (prof - PROFUNDIDADE_SEM_NOME) / (fundo - PROFUNDIDADE_SEM_NOME);
-  return 0.1 + Math.min(1, Math.max(0, t)) * 0.35;
+  return (0.1 + Math.min(1, Math.max(0, t)) * 0.35) * RARIDADE_DA_TRIBO;
 }
 
 /** O centro do acampamento desta célula, ou `null` quando a célula não tem aldeia nenhuma. */

@@ -46,6 +46,7 @@ import { CascadeSystem, type CascadeSweepContext } from '../systems/CascadeSyste
 import { TransportSystem, type RuaCorpo, type StreetBody, type RuaVisivel } from '../systems/TransportSystem';
 import { JourneySystem, stationName, type JourneyContext } from '../systems/JourneySystem';
 import { DestructionSystem } from '../systems/DestructionSystem';
+import { IncendioSystem, type IncendioContext } from '../systems/IncendioSystem';
 import { FogSystem, type FogView } from '../systems/FogSystem';
 import { AltitudeSystem, ancoraDaCamera, folgaDoQuadro, zoomDaAltura, type SkyEnvironment } from '../systems/AltitudeSystem';
 import type { AirSky } from '../systems/AirSupportSystem';
@@ -145,7 +146,7 @@ export class GameState {
   missions: MissionSystem;
   pickups = new PickupSystem();
   dayNight = new DayNightSystem();
-  weather = new WeatherSystem(() => sound.play('thunder'));
+  weather = new WeatherSystem(() => this.trovão());
   /** A neve que fica depois que a frente passa; lê o clima, não o contrário. */
   snow = new SnowSystem();
   hazard = new HazardSystem();
@@ -159,6 +160,14 @@ export class GameState {
    */
   journeys = new JourneySystem();
   destruction = new DestructionSystem();
+  /**
+   * O incêndio que sobra quando a bola de fogo do casco se apaga — e a brigada que vem apagá-lo.
+   * Fica um sistema separado do `DestructionSystem` porque o casco é um objeto gráfico que expira em
+   * sete segundos, enquanto o fogo é um lugar do mapa com combustível próprio; e separado da
+   * `PoliceSystem` porque quem atende um incêndio desce do caminhão com uma mangueira, não com uma
+   * pistola. A única coisa que os dois têm em comum é a condução, e essa mora em `Pilotagem`.
+   */
+  incendio = new IncendioSystem();
   fog = new FogSystem();
   /**
    * O ar acima da linha onde o iso ainda desenha altura. Lê o clima e a cota de quem está no
@@ -351,6 +360,10 @@ export class GameState {
     this.pickups.init(this.map, this.rnd);
     this.missions = new MissionSystem(this.map, this.rnd);
     this.police.init(this.policeContext());
+    // Os dois serviços armam a frota no mesmo instante e pelo mesmo motivo: o veículo tem de estar
+    // na porta do quartel desde o primeiro quadro, para o jogador descobrir que ele existe antes de
+    // precisar dele.
+    this.incendio.init(this.incendioContext());
 
     for (const npc of this.npcs) {
       if (npc.inVehicle || npc.dead) continue;
@@ -685,6 +698,10 @@ export class GameState {
       shake: (a) => this.shake(a),
       onStructChange: () => this.notifyEntityChange(),
     });
+
+    // O casco que acabou de nascer pega no mesmo quadro. Chamado antes, o fogo do carro nasceria
+    // um tick depois da explosão e o jogador veria a bola de fogo sumir sem deixar nada no chão.
+    this.incendio.update(dt, this.incendioContext(outdoorPlayer, !!room));
 
     // Depois de tudo ter se movido: é assim que a roda pega o corpo onde ele realmente está.
     this.impact.update(dt, this.impactContext(!!room));
@@ -1290,6 +1307,41 @@ export class GameState {
     };
   }
 
+  /**
+   * O raio que chega com o estampido. O trovão é do clima, mas o fogo que ele acende é do mundo,
+   * por isso a ligação mora aqui e não dentro do `WeatherSystem`: o clima não sabe o que é
+   * combustível. Dentro de uma sala o estrondo continua — a janela existe — mas o relâmpago não
+   * acende nada que o jogador não possa ver da rua.
+   */
+  private trovão(): void {
+    sound.play('thunder');
+    if (this.interiors.active) return;
+    this.incendio.descarga(this.incendioContext());
+  }
+
+  /**
+   * O incêndio enxerga o mesmo mundo que a ronda: mapa, lataria, corpos e relógio. Duas coisas ele
+   * pede e a polícia não. Os `wrecks` entram inteiros, porque o casco é a fonte primária da cidade —
+   * se fosse um callback que o `DestructionSystem` dispara, cada caminho novo de explosão seria um
+   * caminho que esqueceu de deixar fogo. E o dano passa por `dentroDeSala`, porque o fogo é estado
+   * do lugar, não do enquadramento: ele continua queimando na rua enquanto você está numa sala, só
+   * que ninguém toma calor de um incêndio que não está vendo.
+   */
+  private incendioContext(player = this.player, dentroDeSala = false): IncendioContext {
+    return {
+      map: this.map, player, vehicles: this.vehicles, npcs: this.npcs,
+      collision: this.collision,
+      wrecks: this.destruction.wrecks,
+      // A mesma água que molha o chão apaga o fogo: chuva do clima mais o encharcado do perigo.
+      chuva: this.weather.intensity + this.hazard.wet,
+      time: this.time,
+      dano: (amount) => { if (!dentroDeSala) this.health.damage(this.player, amount, this.time); },
+      shake: (amount) => { if (!dentroDeSala) this.shake(amount); },
+      allocVehicleId: () => this.nextVehicleId++, allocNpcId: () => this.nextNpcId++,
+      onStructChange: () => this.notifyEntityChange(), rng: this.rnd,
+    };
+  }
+
   private skyDaRondaCache: AirSky | null = null;
 
   /**
@@ -1489,7 +1541,7 @@ export class GameState {
       const dx = n.x - x, dy = n.y - y;
       if (dx * dx + dy * dy > raio * raio) continue;
       const pdx = n.x - px, pdy = n.y - py;
-      if (n.kind !== 'cop' && n.state !== 'fleeing' && pdx * pdx + pdy * pdy > longeDoMundo2) continue;
+      if (n.kind === 'civ' && n.state !== 'fleeing' && pdx * pdx + pdy * pdy > longeDoMundo2) continue;
       if (this.map.tileKindAt(n.x, n.y) !== 'road') continue;
       corpo.x = n.x; corpo.y = n.y;
       corpo.angle = dirToAngle(n.dir);
@@ -1541,8 +1593,9 @@ export class GameState {
       const npc = this.npcs[i];
       if (!npc) continue;
       const wasDead = npc.dead;
-      // cops são dirigidos pelo PoliceSystem (a pé) ou pelo carro (dentro)
-      if (npc.kind === 'cop') {
+      // cops são dirigidos pelo PoliceSystem (a pé) ou pelo carro (dentro); bombeiros, pelo
+      // IncendioSystem. A multidão só decide dos civis — `!== 'civ'` é a regra, não o nome.
+      if (npc.kind !== 'civ') {
         if (npc.dead && !wasDead) this.notifyEntityChange();
         continue;
       }

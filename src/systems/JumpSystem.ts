@@ -63,8 +63,14 @@ export class JumpSystem {
     const maxX = Math.max(a.x, b.x) + r;
     const minY = Math.min(a.y, b.y) - r;
     const maxY = Math.max(a.y, b.y) + r;
-    if (![minX, maxX, minY, maxY].every(Number.isFinite) ||
-        minX < 0 || minY < 0 || maxX > map.worldW || maxY > map.worldH) return false;
+    // A régua é de NÚMERO, não de grade. Este clause já foi `minX < 0 || maxX > map.worldW`, e
+    // protegia o laço de baixo de indexar tile fora do array — mas `isWaterWorld` respondeu essa
+    // pergunta sozinho desde que o rio passou a continuar fora do mapa (e já recusa NaN), então o
+    // que a comparação de grade fazia mesmo era avisar o jogador que o mundo acabava numa linha de
+    // coordenada: na terra sem fim, a um salto de casa, o personagem não pulava. O que barra aqui
+    // é água e paredão, não borda — exatamente como na névoa e no chão, onde o limite do mapa é a
+    // mata, não a grade.
+    if (![minX, maxX, minY, maxY].every(Number.isFinite)) return false;
     // Water is tile-based. Test every touched tile, not just the endpoints or
     // sparse samples: even a diagonal corner of a water tile blocks a vault.
     for (let y = Math.floor(minY); y <= Math.floor(maxY); y++) {

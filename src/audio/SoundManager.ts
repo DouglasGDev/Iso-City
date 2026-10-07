@@ -71,6 +71,9 @@ const loopChannels: Record<LoopChannel, LoopState<LoopKey>> = {
   cascade: loopState<LoopKey>(LOOPS),
   rotor: loopState<LoopKey>(LOOPS),
   ar: loopState<LoopKey>(LOOPS),
+  // A brigada tem alto-falante próprio: no mesmo `siren` da polícia as duas respostas se calariam
+  // em cada tick, e ouvir só uma delas dependeria da ordem em que os sistemas rodam.
+  alarme: loopState<LoopKey>(LOOPS),
 };
 
 function clampVolume(volume: number) {

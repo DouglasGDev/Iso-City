@@ -178,7 +178,13 @@ export const LOOPS = {
 export type WeatherBed = 'rain' | 'wind' | 'tornado' | 'wave';
 
 export type LoopKey = keyof typeof LOOPS;
-export type LoopChannel = 'engine' | 'siren' | 'cascade' | 'rotor' | 'ar';
+/**
+ * Cada serviço tem o próprio alto-falante. `siren` é o da polícia e `alarme` o do corpo de
+ * bombeiros — os dois tocam o mesmo `siren_loop.wav` (o pack não tem buzina de caminhão de fogo),
+ * mas em canais separados porque dois atendimentos diferentes acontecem ao mesmo tempo na cidade e
+ * um único canal faria um calar o outro no meio do tick.
+ */
+export type LoopChannel = 'engine' | 'siren' | 'cascade' | 'rotor' | 'ar' | 'alarme';
 
 export type SfxKey = keyof typeof SFX;
 export type AmbientKey = keyof typeof AMBIENT;

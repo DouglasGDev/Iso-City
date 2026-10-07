@@ -34,8 +34,10 @@ export class NPCSystem {
   constructor(private collision: CollisionSystem) {}
 
   update(npc: NPC, map: Map, vehicles: Vehicle[], dt: number, playerX: number, playerY: number, wanted: number, signals?: TrafficSignalSystem) {
-    // PoliceSystem exclusively owns cops, including their knockdown timers.
-    if (npc.dead || npc.inVehicle || npc.kind === 'cop' || !Number.isFinite(dt) || dt <= 0) return;
+    // PoliceSystem exclusively owns cops, including their knockdown timers. The fire brigade owns
+    // its own crew the same way; `kind !== 'civ'` is the rule, so a new service cannot be hijacked
+    // by the crowd until someone remembers to write the exception here.
+    if (npc.dead || npc.inVehicle || npc.kind !== 'civ' || !Number.isFinite(dt) || dt <= 0) return;
     if (npc.state !== 'walking') crossings.delete(npc);
     if (npc.callingPolice && npc.state !== 'knocked') {
       npc.anim = 'idle';

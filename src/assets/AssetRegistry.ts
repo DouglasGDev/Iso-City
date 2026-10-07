@@ -23,6 +23,16 @@ export function policeCharacterKey(anim: CharAnim, dir: Dir4, frame: number): st
   return characterKey('a', anim, dir, frame).replace('char_a_', 'char_police_');
 }
 
+/**
+ * O uniforme do bombeiro é o corpo 'a' recolorido por `tools/prepare-bombeiro.cjs`: capacete
+ * amarelo, casaco areia e faixas reflexivas. Ele existe porque `kind === 'bombeiro'` é uma
+ * profissão no mundo — se ele vestisse o pedestre, a brigada seria indistinguível da multidão
+ * exatamente no incêndio, que é o lugar onde o jogador precisa ver quem chegou para apagar.
+ */
+export function bombeiroCharacterKey(anim: CharAnim, dir: Dir4, frame: number): string {
+  return characterKey('a', anim, dir, frame).replace('char_a_', 'char_bombeiro_');
+}
+
 export function vehicleKey(
   type: string,
   color: string | null,

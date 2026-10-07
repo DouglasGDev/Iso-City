@@ -151,10 +151,19 @@ function acampamentosDoMundo() {
 const ACAMPAMENTOS = acampamentosDoMundo();
 
 test('o território existe no mapa de verdade: a tribo não é uma pasta vazia', () => {
+  // O censo impresso é a medida, não um assert: a densidade do território é uma função da
+  // profundidade num mundo infinito, então o número que importa para quem mexe nela é este.
+  console.log(`   ${ACAMPAMENTOS.length} acampamentos no censo do mundo`);
   // Antes de provar qualquer regra, provar que há regra: se a densidade, a água ou a banda de
   // profundidade estivessem erradas, todo o resto passaria por vacuidade.
   assert.ok(ACAMPAMENTOS.length >= 6,
     `só ${ACAMPAMENTOS.length} acampamento(s) no mundo inteiro — a tribo sumiu`);
+  // O teto é o pedido, não um número de conforto: com a curva crua o censo dava 52 aldeias e o
+  // território virava arquipélago — tribo demais deixa de ser descoberta e passa a ser trânsito.
+  // Menos da metade é contrato, e é por isto que a raridade mora num multiplicador (subconjunto
+  // puro: nenhuma aldeia que sobra muda de lugar, ver `RARIDADE_DA_TRIBO`).
+  assert.ok(ACAMPAMENTOS.length <= 30,
+    `${ACAMPAMENTOS.length} acampamentos no censo — mais que meia tribo é mapa temático`);
   const profs = ACAMPAMENTOS.map((a) => a.prof);
   assert.ok(Math.max(...profs) - Math.min(...profs) > 20,
     'todos os acampamentos estão na mesma profundidade: a progressão do território não existe');
@@ -1113,40 +1122,58 @@ test('a casa no meio do caminho tapa a vista: o mesmo ângulo, com e sem cabana 
 
 test('um avistamento acorda o bando inteiro no mesmo quadro, e quem só ouviu corta pela frente', () => {
   const ac = NOSSO_AC;
-  const A = aldeiaEm({ x: ac.x, y: ac.y }, { ac });
+  // A emboscada é de quem ENTRA, e é assim que `pontoDeCorte` fala ("fecha na frente de quem
+  // entra"). Com o corpo parado no meio do terreiro a corda entre dois pontos do anel passa por
+  // cima dele, o flanco bate no corpo a caminho do corte, e a medição deixaria de ler a ROTA para
+  // ler onde o golpe aconteceu — foi o que uma aldeia sortuda escondeu enquanto o índice 0 do
+  // censo caía numa clareira grande o bastante.
+  const boca = { x: ac.entrada.x, y: ac.entrada.y };
+  const A = aldeiaEm(boca, { ac });
   A.sys.update(1 / 30, A.ctx);
   const corpos = A.corpos();
   assert.ok(corpos.length >= 3, 'precisa de um bando com pelo menos três corpos para provar o flanco');
-  // O vidente vai para um posto de lacuna olhando para o centro; os outros ficam apontando para
-  // longe dele. Assim a única fonte de "alguém viu" é o cone do primeiro.
-  const postos = S.postosDoBando(ac);
-  const vidente = corpos.find((g) => g.posto === 1) ?? corpos[1];
-  const pVidente = S.pontoDoTrilho(ac, postos[1] ?? vidente.trilhoθ);
-  pôr(vidente, pVidente.x, pVidente.y, Math.atan2(ac.y - pVidente.y, ac.x - pVidente.x));
-  const outros = corpos.filter((g) => g !== vidente);
-  for (const g of outros) {
-    const p = S.pontoDoTrilho(ac, g.trilhoθ);
-    pôr(g, p.x, p.y, Math.atan2(p.y - ac.y, p.x - ac.x));
+  // Cada corpo fica no SEU posto do anel; o que muda é só o olhar. Vidente é o posto mais perto
+  // da boca — a porta é o vão mais largo do anel, então é de lá que a linha até a entrada não tem
+  // casa no meio. Os outros apontam para longe da boca: a única fonte de "alguém viu" é o cone do
+  // primeiro, e nenhum deles viu por acaso por estar de frente para a porta.
+  const lugares = corpos.map((g) => ({ g, p: S.pontoDoTrilho(ac, g.trilhoθ) })).sort((a, b) =>
+    Math.hypot(a.p.x - boca.x, a.p.y - boca.y) - Math.hypot(b.p.x - boca.x, b.p.y - boca.y));
+  const vidente = lugares[0].g;
+  pôr(vidente, lugares[0].p.x, lugares[0].p.y,
+    Math.atan2(boca.y - lugares[0].p.y, boca.x - lugares[0].p.x));
+  const outros = lugares.slice(1).map((l) => l.g);
+  for (const l of lugares.slice(1)) {
+    pôr(l.g, l.p.x, l.p.y, Math.atan2(l.p.y - boca.y, l.p.x - boca.x));
   }
   A.sys.update(1 / 30, A.ctx);
-  assert.equal(vidente.estado, 'avistando', 'quem viu não levantou o braço');
+  assert.equal(vidente.estado, 'avistando', 'quem viu da porta não levantou o braço');
+  assert.equal(outros.some((g) => g.estado === 'avistando'), false,
+    'mais de um corpo viu: o que corre depois não é reação ao grito, são duas vistas');
   for (const g of outros) {
     assert.equal(g.estado, 'cercando', `o guerreiro ${g.id} que só ouviu o grito ficou em ${g.estado}`);
   }
-  // E o flanco é um LUGAR, não um corpo: os que não viram têm de acabar num ponto do trilho, longe
-  // do jogador — se estivessem seguindo o corpo, estariam em cima dele e não na borda.
-  let chegou = null;
-  for (let i = 0; i < 240 && !chegou; i++) {
+  // E o corte é um LUGAR, não um corpo: cada flanco só vira perseguição depois de encostar no SEU
+  // ponto de corte, medido pela regra do sistema (`pontoDeCorte`) e não por uma distância chutada
+  // até o centro — a régua chutada muda com o tamanho da aldeia sorteada e foi exatamente assim
+  // que esta prova deixou de provar alguma coisa. 0,5 é a chegada declarada em `cercando`; 0,15 é
+  // um quadro de 1/30 no passo mais rápido do bando, e é a única folga além disso.
+  const saíram = new Map();
+  for (let i = 0; i < 240 && saíram.size < outros.length; i++) {
     A.sys.update(1 / 30, A.ctx);
     for (const g of outros) {
-      if (g.estado !== 'perseguindo') continue;
-      chegou = { g, r: raioDe(ac, g.x, g.y), d: Math.hypot(g.x - ac.x, g.y - ac.y) };
-      break;
+      if (saíram.has(g) || g.estado === 'cercando') continue;
+      const alvo = S.pontoDeCorte(g, ac, A.ctx.player);
+      saíram.set(g, { estado: g.estado, doCorte: Math.hypot(alvo.x - g.x, alvo.y - g.y) });
     }
   }
-  assert.ok(chegou, 'nenhum flanco chegou ao ponto de corte em 8 s de emboscada');
-  assert.ok(Math.abs(chegou.r - S.ALTURA_DO_TRAILHO) < 1e-6 || chegou.d > 3,
-    'o flanco perseguiu o corpo em vez de fechar no trilho da frente');
+  assert.ok(saíram.size > 0, 'nenhum flanco saiu do cerco em 8 s de emboscada');
+  for (const [g, saída] of saíram) {
+    assert.equal(saída.estado, 'perseguindo',
+      `o flanco ${g.id} largou o cerco para ${saída.estado} (aldeia ${ac.id})`);
+    assert.ok(saída.doCorte <= 0.65,
+      `o flanco ${g.id} perseguiu o corpo em vez de fechar no trilho da frente: virou perseguição a ` +
+      `${saída.doCorte.toFixed(2)} tiles do seu corte (aldeia ${ac.id} ${ac.meiaLargura}×${ac.meiaAltura})`);
+  }
 });
 
 test('a patrulha anda no trilho: o circuito é a elipse publicada, com pausa e varredura de olhos', () => {
