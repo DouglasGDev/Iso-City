@@ -8,14 +8,13 @@ const Vehicle_1 = require("../entities/Vehicle");
 const vehicles_1 = require("../data/vehicles");
 const IsoUtils_1 = require("../world/IsoUtils");
 const SoundManager_1 = require("../audio/SoundManager");
-const TerrainSystem_1 = require("./TerrainSystem");
-const CollisionSystem_1 = require("./CollisionSystem");
 const WeaponSystem_1 = require("./WeaponSystem");
 const CoverSystem_1 = require("./CoverSystem");
 const VisionSystem_1 = require("./VisionSystem");
 const DetectionResponse_1 = require("./DetectionResponse");
 const TacticsSystem_1 = require("./TacticsSystem");
 const AirSupportSystem_1 = require("./AirSupportSystem");
+const Pilotagem_1 = require("./Pilotagem");
 const nav = () => ({ route: [], routeIndex: 0, refreshTimer: 0, goal: null, sweep: 0, wait: 0 });
 const SEARCH_MIN = 4;
 const SEARCH_MAX = 18;
@@ -243,11 +242,6 @@ class PoliceSystem {
         if (changed)
             ctx.onStructChange();
     }
-    clearLine(map, from, to) {
-        const radius = Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y)) / 2;
-        return !map.queryNearby((from.x + to.x) / 2, (from.y + to.y) / 2, radius + 0.01)
-            .some((box) => (0, WeaponSystem_1.segmentAabb)(from.x, from.y, to.x, to.y, box) !== null);
-    }
     /**
      * Visão de um inimigo: cone (alcance + arco conforme o quanto está tenso) e depois
      * obstrução real por prédios e carros. De costas, nem a 1 tile ele percebe alguém.
@@ -324,30 +318,12 @@ class PoliceSystem {
         }
         return agent.goal;
     }
-    waypoint(agent, from, goal, dt, ctx, onFoot, patrol = false) {
-        agent.refreshTimer -= dt;
-        const distance = Math.hypot(from.x - goal.x, from.y - goal.y);
-        let dry = true;
-        if (distance < 6) {
-            const steps = Math.max(1, Math.ceil(distance * 3));
-            for (let i = 1; i <= steps; i++)
-                if (ctx.map.isWaterWorld(from.x + (goal.x - from.x) * i / steps, from.y + (goal.y - from.y) * i / steps))
-                    dry = false;
-        }
-        if (onFoot && distance < 6 && dry && this.clearLine(ctx.map, from, goal))
-            return goal;
-        if (agent.refreshTimer <= 0) {
-            agent.route = onFoot ? ctx.map.findSidewalkPath(from.x, from.y, goal.x, goal.y) :
-                patrol ? ctx.map.findRoadPath(from.x, from.y, goal.x, goal.y) : ctx.map.findUndirectedRoadPath(from.x, from.y, goal.x, goal.y);
-            agent.routeIndex = agent.route.length > 1 && Math.hypot(agent.route[0].x - from.x, agent.route[0].y - from.y) < 0.75 ? 1 : 0;
-            agent.refreshTimer = patrol ? 12 : 2.2 + ctx.rng() * 0.4;
-        }
-        while (agent.routeIndex < agent.route.length && Math.hypot(from.x - agent.route[agent.routeIndex].x, from.y - agent.route[agent.routeIndex].y) < 0.2)
-            agent.routeIndex++;
-        if (agent.routeIndex < agent.route.length)
-            return agent.route[agent.routeIndex];
-        return onFoot && distance < 5 && dry && this.clearLine(ctx.map, from, goal) ? goal : from;
-    }
+    /**
+     * A rota é mecânica compartilhada (`Pilotagem`), com o mapa e o sorteio da polícia entregues em
+     * cada chamada. Tirar daqui o corpo e deixar só a decisão — para onde ir, quando parar — é o que
+     * faz o caminhão de fogo e a ambulância dirigirem pela mesma malha que a viatura, sem uma cópia
+     * da régua envelhecendo em três arquivos diferentes.
+     */
     updateUnit(dt, unit, ctx, level) {
         const v = this.vehicle(ctx, unit.vehicleId);
         if (!v)
@@ -431,8 +407,8 @@ class PoliceSystem {
             }
             goal = unit.goal;
         }
-        const target = unit.mode === 'return' && Math.hypot(v.x - goal.x, v.y - goal.y) < 2 && this.clearLine(ctx.map, v, goal)
-            ? goal : this.waypoint(unit, v, goal, dt, ctx, false, unit.mode === 'patrol');
+        const target = unit.mode === 'return' && Math.hypot(v.x - goal.x, v.y - goal.y) < 2 && (0, Pilotagem_1.linhaLivre)(ctx.map, v, goal)
+            ? goal : (0, Pilotagem_1.waypoint)(unit, v, goal, dt, ctx.map, ctx.rng, false, unit.mode === 'patrol');
         const dx = target.x - v.x, dy = target.y - v.y, distance = Math.hypot(dx, dy);
         if (distance < 0.05) {
             v.speed = 0;
@@ -446,7 +422,7 @@ class PoliceSystem {
         v.speed = Math.min(speed, v.speed + GameConfig_1.GAME_CONFIG.VEHICLE_ACCEL * dt, distance / dt);
         v.state = 'driving';
         const before = { x: v.x, y: v.y };
-        this.slide(v, ctx, dx / distance * v.speed, dy / distance * v.speed, dt);
+        (0, Pilotagem_1.deslizaViatura)(v, ctx.map, ctx.collision, ctx.vehicles, dx / distance * v.speed, dy / distance * v.speed, dt);
         const moved = Math.hypot(v.x - before.x, v.y - before.y);
         if (moved < v.speed * dt * 0.15) {
             unit.stuckTimer += dt;
@@ -461,27 +437,9 @@ class PoliceSystem {
                 n.y = v.y;
             }
     }
+    /** O lado livre de onde a tripulação desce: a régua é de `Pilotagem`, igual à do caminhão de fogo. */
     exitPoint(v, npc, ctx) {
-        const box = (0, CollisionSystem_1.vehicleGroundCollider)(v);
-        const margin = GameConfig_1.GAME_CONFIG.NPC_RADIUS + 0.12;
-        const points = [
-            { x: box.x - margin, y: v.y }, { x: box.x + box.width + margin, y: v.y },
-            { x: v.x, y: box.y - margin }, { x: v.x, y: box.y + box.height + margin },
-        ].sort((a, b) => Math.hypot(a.x - npc.x, a.y - npc.y) - Math.hypot(b.x - npc.x, b.y - npc.y));
-        for (const p of points) {
-            const circle = { ...p, radius: GameConfig_1.GAME_CONFIG.NPC_RADIUS };
-            if (!ctx.map.isInside(p.x, p.y, circle.radius) || ctx.map.isWaterWorld(p.x, p.y) ||
-                ctx.collision.overlapsAny(circle, ctx.map.queryNearby(p.x, p.y, 1)) ||
-                !this.clearLine(ctx.map, v, p))
-                continue;
-            if (ctx.vehicles.some((other) => other !== v && other.altitude <= 0.5 &&
-                ctx.collision.overlapsAny(circle, [(0, CollisionSystem_1.vehicleGroundCollider)(other)])))
-                continue;
-            if (ctx.npcs.some((n) => n !== npc && !n.dead && !n.inVehicle && Math.hypot(n.x - p.x, n.y - p.y) < 0.4))
-                continue;
-            return p;
-        }
-        return null;
+        return (0, Pilotagem_1.pontoDeSaída)(v, npc, ctx.map, ctx.collision, ctx.vehicles, ctx.npcs);
     }
     disembark(unit, ctx) {
         const v = this.vehicle(ctx, unit.vehicleId);
@@ -538,7 +496,7 @@ class PoliceSystem {
         if (returning && vehicle && vehicle.health > 0 && ctx.player.currentVehicleId !== vehicle.id) {
             goal = this.exitPoint(vehicle, npc, ctx) ?? { x: vehicle.x + 0.9, y: vehicle.y };
             this.tactics.forget(npc.id);
-            if (Math.hypot(npc.x - goal.x, npc.y - goal.y) < 0.45 && this.clearLine(ctx.map, npc, goal)) {
+            if (Math.hypot(npc.x - goal.x, npc.y - goal.y) < 0.45 && (0, Pilotagem_1.linhaLivre)(ctx.map, npc, goal)) {
                 npc.inVehicle = true;
                 npc.vehicleId = vehicle.id;
                 npc.x = vehicle.x;
@@ -581,32 +539,13 @@ class PoliceSystem {
             const memory = Math.atan2(goal.y - npc.y, goal.x - npc.x);
             cop.aimAngle = (0, IsoUtils_1.rotateAngleToward)(cop.aimAngle, memory + Math.sin(cop.sweep * 1.1) * 0.8, COP_AIM_TURN * dt);
         }
-        const step = this.waypoint(cop, npc, order.anchor, dt, ctx, true);
+        const step = (0, Pilotagem_1.waypoint)(cop, npc, order.anchor, dt, ctx.map, ctx.rng, true);
         const dx = step.x - npc.x, dy = step.y - npc.y, d = Math.hypot(dx, dy);
         npc.speed = d < 0.12 ? 0 : Math.min(level === 1 ? 1.9 : 1.75, d / dt);
         npc.state = npc.speed || order.engaged ? 'chasing' : 'idle';
         npc.anim = npc.speed ? 'walk' : 'idle';
         if (npc.speed) {
-            const steps = Math.max(1, Math.ceil(npc.speed * dt / 0.1));
-            for (let i = 0; i < steps; i++) {
-                const prevX = npc.x, prevY = npc.y;
-                const circle = { x: npc.x + dx / d * npc.speed * dt / steps, y: npc.y + dy / d * npc.speed * dt / steps, radius: GameConfig_1.GAME_CONFIG.NPC_RADIUS };
-                ctx.collision.resolveCircle(circle, ctx.map.queryNearby(circle.x, circle.y, 1.5));
-                ctx.collision.resolveCircleVsVehicles(circle, ctx.vehicles);
-                // O talude não deixa o policial cortar pela montanha: ele contorna pela rua,
-                // exatamente como o muro de uma casa já o faz hoje.
-                TerrainSystem_1.terrain.blockWalk(ctx.map, circle, prevX, prevY);
-                if (ctx.map.isInside(circle.x, circle.y, circle.radius) && !ctx.map.isWaterWorld(circle.x, circle.y)) {
-                    npc.x = circle.x;
-                    npc.y = circle.y;
-                }
-            }
-            npc.dir = (0, IsoUtils_1.velocityToDir)(dx, dy);
-            npc.animTimer += dt * 1000;
-            if (npc.animTimer > 110) {
-                npc.animTimer = 0;
-                npc.frame = (npc.frame + 1) % 4;
-            }
+            (0, Pilotagem_1.passaAndando)(npc, dx, dy, dt, ctx.map, ctx.collision, ctx.vehicles);
         }
         else
             npc.frame = 0;
@@ -729,22 +668,6 @@ class PoliceSystem {
         this.sirenTimer = 0.3;
         const volume = Math.max(0, Math.min(0.65, 0.7 * (1 - this.nearestPoliceDist / 28)));
         SoundManager_1.sound.setLoop('siren', volume > 0 && this.active ? 'siren' : null, volume);
-    }
-    slide(v, ctx, vx, vy, dt) {
-        const steps = Math.max(1, Math.ceil(Math.hypot(vx, vy) * dt / 0.15));
-        const radius = Math.min(v.def.footprintW, v.def.footprintH) / 2;
-        for (let i = 0; i < steps; i++) {
-            const prevX = v.x, prevY = v.y;
-            const circle = { x: v.x + vx * dt / steps, y: v.y + vy * dt / steps, radius };
-            ctx.collision.resolveCircle(circle, ctx.map.queryNearby(circle.x, circle.y, 2));
-            ctx.collision.resolveCircleVsVehicles(circle, ctx.vehicles, v.id);
-            // A viatura em patrulha respeita o mesmo talude que barra o jogador: morro não é atalho.
-            TerrainSystem_1.terrain.blockDrive(ctx.map, circle, prevX, prevY);
-            if (ctx.map.isInside(circle.x, circle.y, radius) && !ctx.map.isWaterWorld(circle.x, circle.y)) {
-                v.x = circle.x;
-                v.y = circle.y;
-            }
-        }
     }
 }
 exports.PoliceSystem = PoliceSystem;

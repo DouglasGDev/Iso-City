@@ -33,6 +33,17 @@ export function bombeiroCharacterKey(anim: CharAnim, dir: Dir4, frame: number): 
   return characterKey('a', anim, dir, frame).replace('char_a_', 'char_bombeiro_');
 }
 
+/**
+ * O jaleco do paramédico é o corpo 'a' recolorido por `tools/prepare-paramedico.cjs`: boné verde,
+ * jaleco branco e faixas verdes. Ele existe porque `kind === 'paramedico'` é uma profissão no mundo —
+ * vestido de pedestre, o resgate seria indistinguível da multidão exatamente na cena onde o jogador
+ * precisa ver quem chegou para socorrer. Branco e verde, nunca o amarelo/areia do bombeiro nem o
+ * azul da polícia: três serviços diferentes no mesmo acidente têm de ler como três coisas.
+ */
+export function paramedicoCharacterKey(anim: CharAnim, dir: Dir4, frame: number): string {
+  return characterKey('a', anim, dir, frame).replace('char_a_', 'char_paramedico_');
+}
+
 export function vehicleKey(
   type: string,
   color: string | null,

@@ -736,7 +736,7 @@ test('nada é decoração: o GameState liga o casco, o trovão e o tick do incê
 
 test('a posse do profissional é o predicado, não o nome da classe', () => {
   const NPC = fs.readFileSync(src('entities/NPC.ts'), 'utf8');
-  assert.match(NPC, /export type NPCKind = 'civ' \| 'cop' \| 'bombeiro'/,
+  assert.match(NPC, /export type NPCKind = 'civ' \| 'cop' \| 'bombeiro' \| 'paramedico'/,
     'o bombeiro não é um tipo de NPC reconhecido pela cidade');
   const pares = [
     ['systems/NPCSystem.ts', /npc\.kind !== 'civ'/],

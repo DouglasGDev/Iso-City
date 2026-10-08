@@ -47,6 +47,7 @@ import { TransportSystem, type RuaCorpo, type StreetBody, type RuaVisivel } from
 import { JourneySystem, stationName, type JourneyContext } from '../systems/JourneySystem';
 import { DestructionSystem } from '../systems/DestructionSystem';
 import { IncendioSystem, type IncendioContext } from '../systems/IncendioSystem';
+import { SamuSystem, type SamuContext } from '../systems/SamuSystem';
 import { FogSystem, type FogView } from '../systems/FogSystem';
 import { AltitudeSystem, ancoraDaCamera, folgaDoQuadro, zoomDaAltura, type SkyEnvironment } from '../systems/AltitudeSystem';
 import type { AirSky } from '../systems/AirSupportSystem';
@@ -168,6 +169,14 @@ export class GameState {
    * pistola. A única coisa que os dois têm em comum é a condução, e essa mora em `Pilotagem`.
    */
   incendio = new IncendioSystem();
+  /**
+   * O resgate do chão. É sistema separado do `IncendioSystem` porque um corpo no fogo e um corpo na
+   * calçada pedem coisas diferentes: a brigada desce com mangueira, a equipe desce com maca. E
+   * separado da `PoliceSystem` porque quem socorre não prende. A única coisa que os três têm em
+   * comum é a condução, e essa mora em `Pilotagem`. O SAMU é o que fecha a janela que o incêndio
+   * abre: o `knocked` de vida negativa do fogo é exatamente a vítima "que não devia morrer".
+   */
+  samu = new SamuSystem();
   fog = new FogSystem();
   /**
    * O ar acima da linha onde o iso ainda desenha altura. Lê o clima e a cota de quem está no
@@ -360,10 +369,11 @@ export class GameState {
     this.pickups.init(this.map, this.rnd);
     this.missions = new MissionSystem(this.map, this.rnd);
     this.police.init(this.policeContext());
-    // Os dois serviços armam a frota no mesmo instante e pelo mesmo motivo: o veículo tem de estar
-    // na porta do quartel desde o primeiro quadro, para o jogador descobrir que ele existe antes de
-    // precisar dele.
+    // Os serviços armam a frota no mesmo instante e pelo mesmo motivo: o veículo tem de estar na
+    // porta do quartel/hospital desde o primeiro quadro, para o jogador descobrir que ele existe
+    // antes de precisar dele.
     this.incendio.init(this.incendioContext());
+    this.samu.init(this.samuContext());
 
     for (const npc of this.npcs) {
       if (npc.inVehicle || npc.dead) continue;
@@ -702,6 +712,10 @@ export class GameState {
     // O casco que acabou de nascer pega no mesmo quadro. Chamado antes, o fogo do carro nasceria
     // um tick depois da explosão e o jogador veria a bola de fogo sumir sem deixar nada no chão.
     this.incendio.update(dt, this.incendioContext(outdoorPlayer, !!room));
+
+    // Depois do fogo: é a queimadura aberta que ele deixa no chão a vítima crítica que o SAMU vem
+    // fechar. Rodar antes do incêndio faria o resgate sair atrás de um corpo que ainda não caiu.
+    this.samu.update(dt, this.samuContext(outdoorPlayer));
 
     // Depois de tudo ter se movido: é assim que a roda pega o corpo onde ele realmente está.
     this.impact.update(dt, this.impactContext(!!room));
@@ -1337,6 +1351,21 @@ export class GameState {
       time: this.time,
       dano: (amount) => { if (!dentroDeSala) this.health.damage(this.player, amount, this.time); },
       shake: (amount) => { if (!dentroDeSala) this.shake(amount); },
+      allocVehicleId: () => this.nextVehicleId++, allocNpcId: () => this.nextNpcId++,
+      onStructChange: () => this.notifyEntityChange(), rng: this.rnd,
+    };
+  }
+
+  /**
+   * O resgate enxerga o mesmo mundo que o incêndio, menos o fogo: ele não precisa dos cascos nem da
+   * chuva, porque quem ele procura já está no chão. `dentroDeSala` continua valendo — um corpo na
+   * calçada queima e sangra mesmo sem o jogador olhando, mas ninguém vê a ambulância de dentro de
+   * uma sala, então o resgate roda só no mundo aberto.
+   */
+  private samuContext(player = this.player): SamuContext {
+    return {
+      map: this.map, player, vehicles: this.vehicles, npcs: this.npcs,
+      collision: this.collision,
       allocVehicleId: () => this.nextVehicleId++, allocNpcId: () => this.nextNpcId++,
       onStructChange: () => this.notifyEntityChange(), rng: this.rnd,
     };

@@ -7,6 +7,7 @@ exports.normalDoTrilho = normalDoTrilho;
 exports.rumoDoTrilho = rumoDoTrilho;
 exports.tamanhoDoBando = tamanhoDoBando;
 exports.postosDoBando = postosDoBando;
+exports.pontoDeCorte = pontoDeCorte;
 const Guerreiro_1 = require("../entities/Guerreiro");
 const Tribo_1 = require("../world/Tribo");
 const Frontier_1 = require("../world/Frontier");
@@ -788,7 +789,13 @@ class TriboSystem {
     }
 }
 exports.TriboSystem = TriboSystem;
-/** O ponto que corta o caminho do jogador: o trilho do lado de fora, adiante dele. */
+/**
+ * O ponto que corta o caminho do jogador: o trilho do lado de fora, adiante dele.
+ *
+ * Exportado porque a rota do flanco só é provável de medir contra a própria regra: o check que
+ * cobra "quem só ouviu o grito corta pela frente" teria de copiar o arco de meia volta e o
+ * sentido de cada corpo, e uma cópia aqui envelheceria justo quando o ângulo do corte mudar.
+ */
 function pontoDeCorte(g, ac, player) {
     const θ = Math.atan2((player.y - ac.y) / ac.meiaAltura, (player.x - ac.x) / ac.meiaLargura)
         + Math.PI * 0.62 * (g.trilhoSentido >= 0 ? 1 : -1);

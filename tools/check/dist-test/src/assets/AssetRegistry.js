@@ -5,6 +5,8 @@ exports.weaponKey = weaponKey;
 exports.tileKey = tileKey;
 exports.characterKey = characterKey;
 exports.policeCharacterKey = policeCharacterKey;
+exports.bombeiroCharacterKey = bombeiroCharacterKey;
+exports.paramedicoCharacterKey = paramedicoCharacterKey;
 exports.vehicleKey = vehicleKey;
 exports.damagedVehicleKey = damagedVehicleKey;
 exports.buildingKey = buildingKey;
@@ -29,6 +31,25 @@ function characterKey(char, anim, dir, frame) {
 }
 function policeCharacterKey(anim, dir, frame) {
     return characterKey('a', anim, dir, frame).replace('char_a_', 'char_police_');
+}
+/**
+ * O uniforme do bombeiro é o corpo 'a' recolorido por `tools/prepare-bombeiro.cjs`: capacete
+ * amarelo, casaco areia e faixas reflexivas. Ele existe porque `kind === 'bombeiro'` é uma
+ * profissão no mundo — se ele vestisse o pedestre, a brigada seria indistinguível da multidão
+ * exatamente no incêndio, que é o lugar onde o jogador precisa ver quem chegou para apagar.
+ */
+function bombeiroCharacterKey(anim, dir, frame) {
+    return characterKey('a', anim, dir, frame).replace('char_a_', 'char_bombeiro_');
+}
+/**
+ * O jaleco do paramédico é o corpo 'a' recolorido por `tools/prepare-paramedico.cjs`: boné verde,
+ * jaleco branco e faixas verdes. Ele existe porque `kind === 'paramedico'` é uma profissão no mundo —
+ * vestido de pedestre, o resgate seria indistinguível da multidão exatamente na cena onde o jogador
+ * precisa ver quem chegou para socorrer. Branco e verde, nunca o amarelo/areia do bombeiro nem o
+ * azul da polícia: três serviços diferentes no mesmo acidente têm de ler como três coisas.
+ */
+function paramedicoCharacterKey(anim, dir, frame) {
+    return characterKey('a', anim, dir, frame).replace('char_a_', 'char_paramedico_');
 }
 function vehicleKey(type, color, dir, rotorFrame = 0) {
     if (type === 'helicopter') {

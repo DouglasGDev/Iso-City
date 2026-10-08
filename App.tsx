@@ -20,6 +20,7 @@ import { MiniMap, FullMap } from './src/ui/MiniMap';
 import { RoundOverlay } from './src/ui/RoundOverlay';
 import { ShopMenu } from './src/ui/ShopMenu';
 import { DeparturesMenu } from './src/ui/DeparturesMenu';
+import { CheatMenu } from './src/ui/CheatMenu';
 import { PauseMenu } from './src/ui/PauseMenu';
 import { MainMenu } from './src/ui/MainMenu';
 import { getGame, peekGame, resetGame } from './src/game/GameState';
@@ -170,6 +171,7 @@ export default function App() {
   const mapOpen = useGameStore((s) => s.mapOpen);
   const shopOpen = useGameStore((s) => s.shopOpen);
   const departuresOpen = useGameStore((s) => s.departuresOpen);
+  const cheatOpen = useGameStore((s) => s.cheatOpen);
   const overlay = useGameStore((s) => s.overlay);
   const gameGen = useGameStore((s) => s.gameGen);
   const playing = screen === 'playing';
@@ -179,7 +181,7 @@ export default function App() {
   const aboard = useAboard(booted);
   const prev = useRef(driving);
   const suspended = !booted || screen !== 'playing' || paused || mapOpen || shopOpen || departuresOpen
-    || overlay !== null;
+    || cheatOpen || overlay !== null;
   const inputMode = useHardwareInput(suspended);
 
   useEffect(() => {
@@ -351,6 +353,7 @@ export default function App() {
                 {mapOpen && <FullMap onClose={() => useGameStore.closeMap()} />}
                 <ShopMenu />
                 <DeparturesMenu />
+                <CheatMenu />
               </SpriteProvider>
             )}
             {screen === 'menu' && (

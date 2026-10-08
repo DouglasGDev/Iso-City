@@ -9,5 +9,5 @@
     "outDir": "dist-test",
     "rootDir": "../.."
   },
-  "include": ["../../src/data/**/*.ts", "../../src/game/GameConfig.ts", "../../src/entities/types.ts", "../../src/systems/WeaponSystem.ts", "../../src/game/InputState.ts", "../../src/game/GameState.ts"]
+  "include": ["../../src/data/**/*.ts", "../../src/game/GameConfig.ts", "../../src/entities/types.ts", "../../src/systems/WeaponSystem.ts", "../../src/systems/CheatSystem.ts", "../../src/game/InputState.ts", "../../src/game/GameState.ts"]
 }

@@ -3,11 +3,11 @@ import type { CharAnim, CharId, Collider } from './types';
 
 export type NPCState = 'idle' | 'walking' | 'fleeing' | 'chasing' | 'knocked' | 'dead';
 /**
- * `civ` é quem a multidão dirige. `cop` e `bombeiro` são profissionais: têm um sistema próprio
- * que decide para onde eles vão, e a multidão não pode tocar neles — nem o trânsito, nem a
- * vizinhança, nem a vista. Por isso os dois são excluídos com `kind !== 'civ'` e não por nome.
+ * `civ` é quem a multidão dirige. `cop`, `bombeiro` e `paramedico` são profissionais: têm um sistema
+ * próprio que decide para onde eles vão, e a multidão não pode tocar neles — nem o trânsito, nem a
+ * vizinhança, nem a vista. Por isso os três são excluídos com `kind !== 'civ'` e não por nome.
  */
-export type NPCKind = 'civ' | 'cop' | 'bombeiro';
+export type NPCKind = 'civ' | 'cop' | 'bombeiro' | 'paramedico';
 
 /** Simulation seconds, shared by LifeSystem and render worklets. */
 export const DEATH_FALL_S = 0.65;
@@ -118,8 +118,9 @@ export function createNPC(id: number, char: CharId, x: number, y: number, kind: 
     kind,
     // O bombeiro aguenta mais que o pedestre porque ele entra onde o pedestre não entra: o
     // IncendioSystem dá dano contínuo por proximidade da boca, e sem equipamento ele derreteria
-    // no primeiro jato de água errada. O valor é o da roupa, não uma dificuldade.
-    health: kind === 'cop' ? 70 : kind === 'bombeiro' ? 90 : 45,
+    // no primeiro jato de água errada. O valor é o da roupa, não uma dificuldade. O paramédico fica
+    // um degrau abaixo: ele atravessa o trânsito para chegar ao ferido, mas não entra no fogo.
+    health: kind === 'cop' ? 70 : kind === 'bombeiro' ? 90 : kind === 'paramedico' ? 80 : 45,
     downTimer: 0,
     punchCooldown: 0,
     x,

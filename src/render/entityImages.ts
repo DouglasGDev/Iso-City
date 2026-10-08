@@ -1,6 +1,6 @@
 import type { SkImage } from '@shopify/react-native-skia';
 import {
-  bombeiroCharacterKey, characterKey, policeCharacterKey, spriteKeyForVehicle,
+  bombeiroCharacterKey, characterKey, paramedicoCharacterKey, policeCharacterKey, spriteKeyForVehicle,
 } from '../assets/AssetRegistry';
 import { spriteStore } from '../assets/SpriteStore';
 import { solicitarSprite } from '../assets/SpriteRequests';
@@ -38,7 +38,8 @@ export function resolveEntityImage(id: string): SkImage | null {
     const frame = npc.dead ? 0 : npc.frame;
     const key = npc.kind === 'cop' ? policeCharacterKey(anim, npc.dir, frame)
       : npc.kind === 'bombeiro' ? bombeiroCharacterKey(anim, npc.dir, frame)
-        : characterKey(npc.char, anim, npc.dir, frame);
+        : npc.kind === 'paramedico' ? paramedicoCharacterKey(anim, npc.dir, frame)
+          : characterKey(npc.char, anim, npc.dir, frame);
     return spriteStore[key] ?? faltar(key);
   }
   if (kind === 'veh') {

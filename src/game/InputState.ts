@@ -253,7 +253,7 @@ export function resetInputState() {
 }
 
 export type HardwareMode = 'touch' | 'keyboard' | 'gamepad';
-export type InputMenuAction = 'map' | 'pause';
+export type InputMenuAction = 'map' | 'pause' | 'cheat';
 /** Ações de menu: só existem enquanto a simulação está suspensa (pausa, loja, mapa). */
 export type InputUiAction = 'up' | 'down' | 'left' | 'right' | 'confirm' | 'back' | 'prev' | 'next' | 'zoomIn' | 'zoomOut';
 
@@ -317,7 +317,7 @@ export interface StandardGamepad {
 const HARDWARE_KEYS = new Set([
   'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight',
   'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'Space', 'KeyE', 'KeyF', 'KeyQ', 'KeyZ', 'KeyC', 'KeyR', 'KeyM', 'KeyH', 'Escape',
-  'Enter', 'NumpadEnter', 'Backspace', 'PageUp', 'PageDown', 'Equal', 'Minus',
+  'Enter', 'NumpadEnter', 'Backspace', 'PageUp', 'PageDown', 'Equal', 'Minus', 'F4',
 ]);
 /** Teclas que só significam algo com a simulação congelada. */
 const UI_KEYS = new Map<string, InputUiAction>([
@@ -443,9 +443,9 @@ export class HardwareInput {
     }
     if (repeat || this.down.has(code)) return true;
     this.down.add(code);
-    if (code === 'KeyM' || code === 'Escape') {
+    if (code === 'KeyM' || code === 'Escape' || code === 'F4') {
       this.claim('keyboard');
-      this.menu(code === 'KeyM' ? 'map' : 'pause');
+      this.menu(code === 'KeyM' ? 'map' : code === 'F4' ? 'cheat' : 'pause');
       return true;
     }
     if (this.suspended) return false;
@@ -584,6 +584,16 @@ export class HardwareInput {
         this.claim('gamepad');
         this.selectedPad = pad.index;
         this.menu(buttons[9] ? 'pause' : 'map');
+        return;
+      }
+      // O clique do analógico direito (11) é o único botão de gatilho sobrando no jogo: é
+      // ele que abre e fecha o cheat. Vem antes da trava de suspensão de propósito — assim o
+      // mesmo toque que ligou o painel serve para desligá-lo — e pede o pad neutro em Start/
+      // Select para um gatilho já segurado na hora de abrir não disparar sozinho.
+      if (menuReady && buttons[11] && !previous[11]) {
+        this.claim('gamepad');
+        this.selectedPad = pad.index;
+        this.menu('cheat');
         return;
       }
       if (this.suspended) {

@@ -283,6 +283,9 @@ export function useHardwareInput(suspended: boolean): HardwareMode {
       onMenu: (action) => {
         const ui = useGameStore.getState();
         if (ui.screen !== 'playing' || ui.overlay !== null) return;
+        if (action === 'cheat') { useGameStore.toggleCheat(); return; }
+        // Com o cheat aberto, Esc/Start fecha o painel por cima, não abre a pausa atrás dele.
+        if (ui.cheatOpen && action === 'pause') { useGameStore.closeCheat(); return; }
         if (ui.mapOpen) useGameStore.closeMap();
         else if (action === 'pause' && ui.shopOpen) useGameStore.closeShop();
         else if (action === 'pause' && ui.departuresOpen) useGameStore.closeDepartures();

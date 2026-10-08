@@ -9,6 +9,7 @@ let state = {
     mapOpen: false,
     shopOpen: false,
     departuresOpen: false,
+    cheatOpen: false,
     gameGen: 0,
     mapMarker: null,
     mapRoute: [],
@@ -38,6 +39,7 @@ function startGame() {
         mapOpen: false,
         shopOpen: false,
         departuresOpen: false,
+        cheatOpen: false,
         gameGen: state.gameGen + 1,
         mapMarker: null,
         mapRoute: [],
@@ -47,7 +49,7 @@ function startGame() {
 function goToMenu() {
     set({
         screen: 'menu', paused: false, mapOpen: false, shopOpen: false, departuresOpen: false,
-        mapMarker: null, mapRoute: [], overlay: null,
+        cheatOpen: false, mapMarker: null, mapRoute: [], overlay: null,
     });
 }
 function openShop() {
@@ -70,6 +72,24 @@ function closeDepartures() {
     if (!state.departuresOpen)
         return;
     set({ departuresOpen: false });
+}
+function openCheat() {
+    if (state.screen !== 'playing' || state.overlay !== null)
+        return;
+    // O cheat é um painel por cima de tudo: fecha balcão e telão, abre sobre a pausa se houver.
+    set({ cheatOpen: true, shopOpen: false, departuresOpen: false });
+}
+function closeCheat() {
+    if (!state.cheatOpen)
+        return;
+    set({ cheatOpen: false });
+}
+/** Uma tecla só, para ligar e desligar: o mesmo F4/estouro de pad que abre tem de fechar. */
+function toggleCheat() {
+    if (state.cheatOpen)
+        closeCheat();
+    else
+        openCheat();
 }
 function showOverlay(kind) {
     if (overlayTimer)
@@ -142,6 +162,9 @@ useGameStore.openShop = openShop;
 useGameStore.closeShop = closeShop;
 useGameStore.openDepartures = openDepartures;
 useGameStore.closeDepartures = closeDepartures;
+useGameStore.openCheat = openCheat;
+useGameStore.closeCheat = closeCheat;
+useGameStore.toggleCheat = toggleCheat;
 useGameStore.setMapMarker = setMapMarker;
 useGameStore.setMapDestination = setMapDestination;
 useGameStore.clearMapMarker = clearMapMarker;

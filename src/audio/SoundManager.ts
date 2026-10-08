@@ -74,6 +74,9 @@ const loopChannels: Record<LoopChannel, LoopState<LoopKey>> = {
   // A brigada tem alto-falante próprio: no mesmo `siren` da polícia as duas respostas se calariam
   // em cada tick, e ouvir só uma delas dependeria da ordem em que os sistemas rodam.
   alarme: loopState<LoopKey>(LOOPS),
+  // O SAMU é o terceiro serviço com sirene própria: ambulância, caminhão de fogo e viatura atendem
+  // ocorrências diferentes ao mesmo tempo, e um leito compartilhado deixaria mudo dois deles.
+  socorro: loopState<LoopKey>(LOOPS),
 };
 
 function clampVolume(volume: number) {
