@@ -2,7 +2,7 @@
   "expo": {
     "name": "iso-city",
     "slug": "iso-city",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "orientation": "landscape",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
@@ -18,7 +18,12 @@
       "edgeToEdgeEnabled": true,
       "adaptiveIcon": {
         "backgroundColor": "#0a0e14"
-      }
+      },
+      "permissions": [
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "package": "com.anonymous.isocity"
     },
     "web": {
       "bundler": "metro"

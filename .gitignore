@@ -111,3 +111,6 @@ assets/Audio/**
 !assets/Audio/ui/switch5.mp3
 !assets/Audio/ui/switch6.mp3
 !assets/Audio/ui/switch7.mp3
+
+# Projeto nativo Android gerado por `expo prebuild` (regenerável, 4,5 GB com build/): não versionar.
+/android/
